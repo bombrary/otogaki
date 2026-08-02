@@ -10,15 +10,18 @@ import Data.Chord
 import Data.Chord.Detect
 import Data.ChordTrack
 import Data.DrumPattern
+import Data.Key
+import Data.Meter
 import Data.Note
 import Data.Project exposing (Project)
 import Data.Time
+import Data.Timeline exposing (Timeline)
 import Data.Track exposing (TrackKind(..))
 import Dict exposing (Dict)
 import File
 import File.Download
 import File.Select
-import Html exposing (Html, button, div, h1, input, label, span, text)
+import Html exposing (Html, button, div, h1, input, label, span, text, textarea)
 import Html.Attributes exposing (disabled, style, type_, value)
 import Html.Events exposing (onBlur, onClick, onInput)
 import Json.Decode as Decode
@@ -109,6 +112,7 @@ type alias Model =
     , undoStack : List Project
     , redoStack : List Project
     , editBurst : Bool
+    , insertCountInput : String
     }
 
 
@@ -172,6 +176,14 @@ type Msg
     | ChangedRefVolume String
     | ToggledRefMute
     | ToggledDrumView
+    | ChangedMemo String
+    | ChangedSectionKey Int String
+    | ChangedSectionMode Int String
+    | ChangedSectionMeter Int String
+    | TransposedSong Int
+    | ChangedInsertCount String
+    | InsertedBarsBeforeSection Int
+    | RemovedBarsFromSection Int
 
 
 init : Decode.Value -> ( Model, Cmd Msg )
@@ -189,7 +201,7 @@ init flags =
       , dragState = NoDrag
       , instrumentLoad = Dict.empty
       , selectedSectionId = Nothing
-      , bpmInput = String.fromInt project.bpm
+      , bpmInput = String.fromFloat project.bpm
       , selectedNoteIds = Set.empty
       , clipboard = []
       , rubberBand = Nothing
@@ -204,6 +216,7 @@ init flags =
       , undoStack = []
       , redoStack = []
       , editBurst = False
+      , insertCountInput = "1"
       }
     , Cmd.none
     )
@@ -299,22 +312,16 @@ firstTrackId project =
         |> Maybe.withDefault 1
 
 
+{-| 小節計算は Data.Timeline に集約されている。ここは既存呼び出し側を変えないための薄いラッパ。
+-}
 songEndTicks : Project -> Int
 songEndTicks project =
-    let
-        sectionsEnd =
-            List.foldl (\s acc -> acc + s.lengthBars * Data.Time.ticksPerBar) 0 project.sections
-
-        eventsEnd =
-            Performance.toEvents project
-                |> List.foldl (\e acc -> Basics.max acc (e.ticks + e.durationTicks)) 0
-    in
-    Basics.max Data.Time.ticksPerBar (Basics.max sectionsEnd eventsEnd)
+    Data.Timeline.totalTicks (Data.Project.timeline project)
 
 
 totalBarsFor : Project -> Int
 totalBarsFor project =
-    Basics.max 16 ((songEndTicks project + Data.Time.ticksPerBar - 1) // Data.Time.ticksPerBar)
+    Data.Timeline.totalBars (Data.Project.timeline project)
 
 
 sectionSpans : Project -> List PianoRoll.SectionSpan
@@ -377,6 +384,12 @@ isCoalescing msg =
         ChangedChordVolume _ ->
             True
 
+        ChangedMemo _ ->
+            True
+
+        ChangedInsertCount _ ->
+            True
+
         DraggedTo _ ->
             True
 
@@ -409,7 +422,7 @@ restoreProject project model =
     { model
         | project = project
         , selectedNoteIds = Set.empty
-        , bpmInput = String.fromInt project.bpm
+        , bpmInput = String.fromFloat project.bpm
         , refOffsetInput = String.fromInt project.referenceAudio.offsetMs
         , dragState = NoDrag
         , rubberBand = Nothing
@@ -529,26 +542,20 @@ loopModeFromString raw =
 
 sectionAtTicks : Int -> Project -> Maybe Int
 sectionAtTicks ticks project =
-    project.sections
-        |> List.foldl
-            (\s ( start, found ) ->
-                let
-                    end =
-                        start + s.lengthBars * Data.Time.ticksPerBar
-                in
-                case found of
-                    Just _ ->
-                        ( end, found )
+    Data.Timeline.sectionAt ticks (Data.Project.timeline project)
 
-                    Nothing ->
-                        if ticks >= start && ticks < end then
-                            ( end, Just s.id )
 
-                        else
-                            ( end, Nothing )
-            )
-            ( 0, Nothing )
-        |> Tuple.second
+{-| セクションが始まる 0-based 小節番号。小節挿入・削除の基準点を決めるのに使う。
+-}
+sectionStartBar : Int -> Project -> Maybe Int
+sectionStartBar sectionId project =
+    Data.Project.sectionBounds sectionId project
+        |> Maybe.map (\b -> (Data.Timeline.ticksToBarBeat b.startTicks (Data.Project.timeline project)).bar - 1)
+
+
+parseInsertCount : String -> Int
+parseInsertCount raw =
+    String.toInt raw |> Maybe.withDefault 1 |> clamp 1 64
 
 
 currentLoop : Model -> Maybe Performance.Loop
@@ -942,7 +949,7 @@ updateCore msg model =
                 modelWithInput =
                     { model | bpmInput = raw }
             in
-            case String.toInt raw of
+            case String.toFloat raw of
                 Just bpm ->
                     if bpm >= 30 && bpm <= 300 then
                         let
@@ -964,7 +971,7 @@ updateCore msg model =
                     ( modelWithInput, Cmd.none )
 
         BlurredBpm ->
-            ( { model | bpmInput = String.fromInt model.project.bpm }, Cmd.none )
+            ( { model | bpmInput = String.fromFloat model.project.bpm }, Cmd.none )
 
         GotAudio event ->
             case event of
@@ -992,7 +999,14 @@ updateCore msg model =
                         | refLoaded = True
                         , refPeaks = info.peaks
                         , refPeakDt = info.peakDt
-                        , project = { project | referenceAudio = { ra | fileName = Just info.name } }
+                        , project =
+                            { project
+                                | referenceAudio =
+                                    { ra
+                                        | fileName = Just info.name
+                                        , durationMs = Just (round (info.durationSecs * 1000))
+                                    }
+                            }
                       }
                     , Cmd.none
                     )
@@ -1244,11 +1258,49 @@ updateCore msg model =
             else if (k.ctrl || k.meta) && k.key == "v" then
                 ( pasteClipboard model, Cmd.none )
 
+            else if (k.ctrl || k.meta) && k.shift && (k.key == "a" || k.key == "A") then
+                case model.selectedSectionId |> Maybe.andThen (\sid -> Data.Project.sectionBounds sid model.project) of
+                    Just bounds ->
+                        ( { model
+                            | selectedNoteIds =
+                                trackNotes model
+                                    |> List.filter (\n -> n.start >= bounds.startTicks && n.start < bounds.endTicks)
+                                    |> List.map .id
+                                    |> Set.fromList
+                          }
+                        , Cmd.none
+                        )
+
+                    Nothing ->
+                        ( model, Cmd.none )
+
+            else if (k.ctrl || k.meta) && (k.key == "a" || k.key == "A") then
+                ( { model | selectedNoteIds = Set.fromList (List.map .id (trackNotes model)) }, Cmd.none )
+
             else if k.key == "Delete" || k.key == "Backspace" then
                 ( deleteSelection model, Cmd.none )
 
             else if k.key == "Escape" then
                 ( { model | selectedNoteIds = Set.empty }, Cmd.none )
+
+            else if not k.ctrl && not k.meta && not k.repeat && List.member k.key [ "1", "2", "3", "4", "5", "6", "7", "8", "9" ] then
+                case String.toInt k.key |> Maybe.andThen (\n -> List.drop (n - 1) model.project.sections |> List.head) of
+                    Just section ->
+                        case Data.Project.sectionBounds section.id model.project of
+                            Just bounds ->
+                                ( { model | playheadTicks = bounds.startTicks }
+                                , if model.playState == Playing then
+                                    Ports.toAudio (Performance.encodeSeek bounds.startTicks)
+
+                                  else
+                                    Cmd.none
+                                )
+
+                            Nothing ->
+                                ( model, Cmd.none )
+
+                    Nothing ->
+                        ( model, Cmd.none )
 
             else if k.key == "ArrowUp" || k.key == "ArrowDown" then
                 transposeSelection k model
@@ -1371,7 +1423,7 @@ updateCore msg model =
                         , selectedTrackId = firstTrackId project
                         , playState = Idle
                         , playheadTicks = 0
-                        , bpmInput = String.fromInt project.bpm
+                        , bpmInput = String.fromFloat project.bpm
                         , selectedNoteIds = Set.empty
                       }
                     , Ports.toAudio Performance.encodeStop
@@ -1400,7 +1452,7 @@ updateCore msg model =
                     model.project
 
                 pitchTriples =
-                    Data.ChordTrack.resolved project.chordTrack
+                    Data.ChordTrack.resolved (Data.Project.timeline project) project.chordTrack
                         |> List.concatMap
                             (\ev ->
                                 Data.Chord.toPitches ev.chord
@@ -1488,6 +1540,53 @@ updateCore msg model =
             ( { model | project = Data.Project.updateSection sectionId (\s -> { s | memo = memo }) model.project }
             , Cmd.none
             )
+
+        ChangedSectionKey sectionId raw ->
+            case String.toInt raw of
+                Just tonic ->
+                    ( { model
+                        | project =
+                            Data.Project.updateSection sectionId
+                                (\s -> { s | key = { tonic = tonic, mode = s.key.mode } })
+                                model.project
+                      }
+                    , Cmd.none
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        ChangedSectionMode sectionId raw ->
+            case Data.Key.modeFromString raw of
+                Just mode ->
+                    ( { model
+                        | project =
+                            Data.Project.updateSection sectionId
+                                (\s -> { s | key = { tonic = s.key.tonic, mode = mode } })
+                                model.project
+                      }
+                    , Cmd.none
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        ChangedSectionMeter sectionId raw ->
+            case Data.Meter.fromString raw of
+                Just meter ->
+                    ( { model | project = Data.Project.updateSection sectionId (\s -> { s | meter = meter }) model.project }
+                    , Cmd.none
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        ChangedMemo raw ->
+            let
+                project =
+                    model.project
+            in
+            ( { model | project = { project | memo = raw } }, Cmd.none )
 
         MovedSection sectionId delta ->
             ( { model | project = Data.Project.moveSection sectionId delta model.project }, Cmd.none )
@@ -1676,6 +1775,44 @@ updateCore msg model =
         ToggledDrumView ->
             ( { model | drumViewRoll = not model.drumViewRoll, selectedNoteIds = Set.empty }, Cmd.none )
 
+        TransposedSong delta ->
+            let
+                withPitches =
+                    Data.Project.mapNoteTrackNotes
+                        (List.map (\n -> { n | pitch = clamp PianoRoll.minPitch PianoRoll.maxPitch (n.pitch + delta) }))
+                        model.project
+
+                withChords =
+                    { withPitches | chordTrack = Data.ChordTrack.transpose delta withPitches.chordTrack }
+
+                withKeys =
+                    { withChords | sections = List.map (\s -> { s | key = Data.Key.transpose delta s.key }) withChords.sections }
+            in
+            ( { model | project = withKeys }, Cmd.none )
+
+        ChangedInsertCount raw ->
+            ( { model | insertCountInput = raw }, Cmd.none )
+
+        InsertedBarsBeforeSection sectionId ->
+            case sectionStartBar sectionId model.project of
+                Just beforeBar ->
+                    ( { model | project = Data.Project.insertBars { beforeBar = beforeBar, count = parseInsertCount model.insertCountInput } model.project }
+                    , Cmd.none
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        RemovedBarsFromSection sectionId ->
+            case sectionStartBar sectionId model.project of
+                Just fromBar ->
+                    ( { model | project = Data.Project.removeBars { fromBar = fromBar, count = parseInsertCount model.insertCountInput } model.project }
+                    , Cmd.none
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
 
 dragMove : ClientPos -> DragInfo -> Model -> ( Model, Cmd Msg )
 dragMove pos d model =
@@ -1742,11 +1879,11 @@ dragMove pos d model =
 view : Model -> Html Msg
 view model =
     let
-        bar =
-            model.playheadTicks // Data.Time.ticksPerBar + 1
+        timeline =
+            Data.Project.timeline model.project
 
-        beat =
-            modBy Data.Time.ticksPerBar model.playheadTicks // Data.Time.ppq + 1
+        barBeat =
+            Data.Timeline.ticksToBarBeat model.playheadTicks timeline
 
         stateLabel =
             case model.playState of
@@ -1811,6 +1948,7 @@ view model =
                 [ text " BPM: "
                 , input
                     [ type_ "number"
+                    , Html.Attributes.step "0.1"
                     , value model.bpmInput
                     , onInput ChangedBpm
                     , onBlur BlurredBpm
@@ -1818,11 +1956,29 @@ view model =
                     ]
                     []
                 ]
+            , label [ style "margin-left" "0.5rem" ]
+                [ text "移調: "
+                , button [ onClick (TransposedSong -12), Html.Attributes.title "1オクターブ下げる" ] [ text "-12" ]
+                , button [ onClick (TransposedSong -1), Html.Attributes.title "半音下げる" ] [ text "-1" ]
+                , button [ onClick (TransposedSong 1), Html.Attributes.title "半音上げる" ] [ text "+1" ]
+                , button [ onClick (TransposedSong 12), Html.Attributes.title "1オクターブ上げる" ] [ text "+12" ]
+                ]
             , button [ onClick ClickedExport, style "margin-left" "1rem" ] [ text "JSON書出" ]
             , button [ onClick ClickedImport ] [ text "JSON読込" ]
             , button [ onClick ClickedExportMidi ] [ text "MIDI書出" ]
-            , text ("  " ++ stateLabel ++ " — " ++ String.fromInt bar ++ " 小節 " ++ String.fromInt beat ++ " 拍目")
+            , text ("  " ++ stateLabel ++ " — " ++ String.fromInt barBeat.bar ++ " 小節 " ++ String.fromInt barBeat.beat ++ " 拍目")
             ]
+        , textarea
+            [ value model.project.memo
+            , onInput ChangedMemo
+            , Html.Attributes.placeholder "曲全体メモ：雰囲気、参考曲、やりたいことなど"
+            , style "width" "98%"
+            , style "min-height" "2.4rem"
+            , style "margin-top" "0.4rem"
+            , style "font-family" "inherit"
+            , style "font-size" "0.85rem"
+            ]
+            []
         , div [ style "font-size" "0.75rem", style "color" "#888", style "margin-top" "0.2rem" ]
             [ text "Space: 再生/停止 ・ Ctrl/Cmd+Z: 元に戻す（Shiftでやり直し） ・ ルーラーか Ctrl/Cmd+クリック: 再生位置移動 ・ Shift+ドラッグ: 矩形選択 ・ ↑↓: 半音移動（Shiftでオクターブ） ・ ←→: 隣のノートを選択（Ctrl/Cmdで横移動、+Shiftで1小節） ・ Ctrl/Cmd+C・X・V: コピー・カット・貼付 ・ Delete: 削除 ・ ダブルクリック/右クリック: ノート削除" ]
         , SectionBar.view
@@ -1832,9 +1988,16 @@ view model =
             , rename = ChangedSectionName
             , changeBars = ChangedSectionBars
             , changeMemo = ChangedSectionMemo
+            , changeKey = ChangedSectionKey
+            , changeMode = ChangedSectionMode
+            , changeMeter = ChangedSectionMeter
             , move = MovedSection
+            , changedInsertCount = ChangedInsertCount
+            , insertBefore = InsertedBarsBeforeSection
+            , removeFromStart = RemovedBarsFromSection
             }
             model.selectedSectionId
+            model.insertCountInput
             model.project.sections
         , Arrange.view
             { selectTrack = SelectedTrack
@@ -1845,6 +2008,7 @@ view model =
             , changeVolume = ChangedVolume
             , renameTrack = ChangedTrackName
             }
+            (totalBarsFor model.project)
             model.selectedTrackId
             model.instrumentLoad
             model.project.tracks
@@ -1863,6 +2027,7 @@ view model =
             , convertToTrack = ClickedConvertChords
             , changedVolume = ChangedChordVolume
             }
+            timeline
             model.playheadTicks
             model.project.chordTrack
         , ScrapShelf.view
@@ -1908,9 +2073,10 @@ view model =
                             Just
                                 { peaks = model.refPeaks
                                 , peakDt = model.refPeakDt
-                                , secsPerTick = 60 / toFloat (model.project.bpm * Data.Time.ppq)
+                                , secsPerTick = 60 / (model.project.bpm * toFloat Data.Time.ppq)
                                 , offsetMs = model.project.referenceAudio.offsetMs
                                 }
+                    , timeline = timeline
                     }
           in
           case selectedTrackKind model of
@@ -1934,6 +2100,7 @@ view model =
                             , appliedPreset = AppliedDrumPreset
                             , changedFillBars = ChangedDrumFillBars
                             }
+                            (totalBarsFor model.project)
                             model.drumFillBars
                             (trackNotes model)
                             model.playheadTicks

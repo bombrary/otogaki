@@ -1,10 +1,12 @@
 module View.ChordEditor exposing (Config, view)
 
 import Data.ChordTrack exposing (ChordCell, ChordTrack, TokenKind(..))
-import Data.Time
+import Data.Key exposing (Key)
+import Data.Timeline exposing (Timeline)
 import Html exposing (Html, button, div, span, text, textarea)
 import Html.Attributes as HA
 import Html.Events as HE
+import View.Palette as Palette
 
 
 type alias Config msg =
@@ -15,8 +17,8 @@ type alias Config msg =
     }
 
 
-view : Config msg -> Int -> ChordTrack -> Html msg
-view config playheadTicks track =
+view : Config msg -> Timeline -> Int -> ChordTrack -> Html msg
+view config timeline playheadTicks track =
     div
         [ HA.style "margin-top" "1rem"
         , HA.style "padding" "0.5rem"
@@ -80,26 +82,38 @@ view config playheadTicks track =
             , HA.style "margin-top" "0.4rem"
             , HA.style "flex-wrap" "wrap"
             ]
-            (List.map (cellView playheadTicks) (Data.ChordTrack.cells track))
+            (List.map (cellView timeline playheadTicks) (Data.ChordTrack.cells timeline track))
         ]
 
 
-cellView : Int -> ChordCell -> Html msg
-cellView playheadTicks cell =
+cellView : Timeline -> Int -> ChordCell -> Html msg
+cellView timeline playheadTicks cell =
     let
-        barStart =
-            cell.barIndex * Data.Time.ticksPerBar
-
         isCurrentBar =
-            playheadTicks >= barStart && playheadTicks < barStart + Data.Time.ticksPerBar
+            playheadTicks >= cell.startTicks && playheadTicks < cell.startTicks + cell.lengthTicks
 
         -- セル内のトークンは小節を等分割するので、位置から逆算できる
         currentToken =
             if isCurrentBar then
-                (playheadTicks - barStart) * List.length cell.chords // Data.Time.ticksPerBar
+                (playheadTicks - cell.startTicks) * List.length cell.chords // Basics.max 1 cell.lengthTicks
 
             else
                 -1
+
+        key =
+            Data.Timeline.keyAt cell.startTicks timeline
+
+        background =
+            if isCurrentBar then
+                "#fff6dd"
+
+            else
+                case Data.Timeline.sectionIndexAt cell.startTicks timeline of
+                    Just idx ->
+                        Palette.sectionTint idx
+
+                    Nothing ->
+                        Palette.neutral
     in
     div
         [ HA.style "border"
@@ -112,13 +126,7 @@ cellView playheadTicks cell =
         , HA.style "border-radius" "3px"
         , HA.style "padding" "0.2rem 0.4rem"
         , HA.style "min-width" "3.5rem"
-        , HA.style "background"
-            (if isCurrentBar then
-                "#fff6dd"
-
-             else
-                "#fafafa"
-            )
+        , HA.style "background" background
         ]
         (span
             [ HA.style "font-size" "0.7rem"
@@ -126,12 +134,12 @@ cellView playheadTicks cell =
             , HA.style "margin-right" "0.3rem"
             ]
             [ text (String.fromInt (cell.barIndex + 1)) ]
-            :: List.indexedMap (\i c -> chordView (i == currentToken) c) cell.chords
+            :: List.indexedMap (\i c -> chordView key (i == currentToken) c) cell.chords
         )
 
 
-chordView : Bool -> { token : String, result : Result String TokenKind } -> Html msg
-chordView isCurrent c =
+chordView : Key -> Bool -> { token : String, result : Result String TokenKind } -> Html msg
+chordView key isCurrent c =
     let
         highlight =
             if isCurrent then
@@ -142,27 +150,39 @@ chordView isCurrent c =
 
             else
                 []
+
+        degree =
+            case c.result of
+                Ok (TChord chord) ->
+                    Just (Data.Key.degreeLabel key { spelledFlat = Data.Key.isFlatSpelled c.token } chord)
+
+                _ ->
+                    Nothing
+
+        withDegree color =
+            span
+                ([ HA.style "display" "inline-flex"
+                 , HA.style "flex-direction" "column"
+                 , HA.style "align-items" "center"
+                 , HA.style "margin-right" "0.3rem"
+                 ]
+                    ++ highlight
+                )
+                [ span [ HA.style "color" color, HA.style "font-weight" "bold" ] [ text c.token ]
+                , case degree of
+                    Just d ->
+                        span [ HA.style "font-size" "0.6rem", HA.style "color" "#aaa" ] [ text d ]
+
+                    Nothing ->
+                        text ""
+                ]
     in
     case c.result of
         Ok (TChord _) ->
-            span
-                ([ HA.style "color" "#2c7a2c"
-                 , HA.style "font-weight" "bold"
-                 , HA.style "margin-right" "0.3rem"
-                 ]
-                    ++ highlight
-                )
-                [ text c.token ]
+            withDegree "#2c7a2c"
 
         Ok _ ->
-            span
-                ([ HA.style "color" "#888"
-                 , HA.style "font-weight" "bold"
-                 , HA.style "margin-right" "0.3rem"
-                 ]
-                    ++ highlight
-                )
-                [ text c.token ]
+            withDegree "#888"
 
         Err reason ->
             span

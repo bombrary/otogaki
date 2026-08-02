@@ -39,19 +39,14 @@ rowHeight =
     22
 
 
-totalBars : Int
-totalBars =
-    16
-
-
-totalSteps : Int
-totalSteps =
+totalSteps : Int -> Int
+totalSteps totalBars =
     totalBars * 16
 
 
-gridWidth : Int
-gridWidth =
-    totalSteps * cellWidth
+gridWidth : Int -> Int
+gridWidth totalBars =
+    totalSteps totalBars * cellWidth
 
 
 gridHeight : Int
@@ -68,8 +63,8 @@ rowIndexOf pitch =
         |> Maybe.map Tuple.first
 
 
-view : Config msg -> Int -> List Note -> Int -> Html msg
-view config fillBars notes playheadTicks =
+view : Config msg -> Int -> Int -> List Note -> Int -> Html msg
+view config totalBars fillBars notes playheadTicks =
     div [ HA.style "margin-top" "1rem" ]
         [ div [ HA.style "display" "flex", HA.style "gap" "0.4rem", HA.style "align-items" "center", HA.style "flex-wrap" "wrap" ]
             (span [ HA.style "font-size" "0.85rem" ] [ text "プリセット（選択セクションがあればその範囲、なければ先頭から右の長さ）: " ]
@@ -88,13 +83,13 @@ view config fillBars notes playheadTicks =
                                     ]
                                     [ text (String.fromInt n ++ "小節") ]
                             )
-                            [ 1, 2, 4, 8, 16 ]
+                            [ 1, 2, 4, 8, 16, 32, 64 ]
                         )
                    ]
             )
         , div [ HA.style "display" "flex", HA.style "margin-top" "0.4rem" ]
             [ labelColumn
-            , gridView config notes playheadTicks
+            , gridView config totalBars notes playheadTicks
             ]
         ]
 
@@ -117,16 +112,16 @@ labelColumn =
         )
 
 
-gridView : Config msg -> List Note -> Int -> Html msg
-gridView config notes playheadTicks =
+gridView : Config msg -> Int -> List Note -> Int -> Html msg
+gridView config totalBars notes playheadTicks =
     div
         [ HA.style "overflow-x" "auto"
         , HA.style "border" "1px solid #ccc"
         ]
         [ Svg.svg
-            [ SA.width (String.fromInt gridWidth)
+            [ SA.width (String.fromInt (gridWidth totalBars))
             , SA.height (String.fromInt gridHeight)
-            , SA.viewBox ("0 0 " ++ String.fromInt gridWidth ++ " " ++ String.fromInt gridHeight)
+            , SA.viewBox ("0 0 " ++ String.fromInt (gridWidth totalBars) ++ " " ++ String.fromInt gridHeight)
             , HA.style "display" "block"
             , HA.style "cursor" "pointer"
             , Html.Events.on "mousedown"
@@ -152,18 +147,18 @@ gridView config notes playheadTicks =
                     (Decode.field "offsetY" Decode.float)
                 )
             ]
-            (backgroundRows ++ verticalLines ++ List.filterMap activeCell notes ++ playheadView playheadTicks)
+            (backgroundRows totalBars ++ verticalLines totalBars ++ List.filterMap activeCell notes ++ playheadView playheadTicks)
         ]
 
 
-backgroundRows : List (Svg.Svg msg)
-backgroundRows =
+backgroundRows : Int -> List (Svg.Svg msg)
+backgroundRows totalBars =
     List.indexedMap
         (\i _ ->
             Svg.rect
                 [ SA.x "0"
                 , SA.y (String.fromInt (i * rowHeight))
-                , SA.width (String.fromInt gridWidth)
+                , SA.width (String.fromInt (gridWidth totalBars))
                 , SA.height (String.fromInt rowHeight)
                 , SA.fill
                     (if modBy 2 i == 0 then
@@ -180,9 +175,9 @@ backgroundRows =
         rows
 
 
-verticalLines : List (Svg.Svg msg)
-verticalLines =
-    List.range 0 totalSteps
+verticalLines : Int -> List (Svg.Svg msg)
+verticalLines totalBars =
+    List.range 0 (totalSteps totalBars)
         |> List.map
             (\i ->
                 Svg.line

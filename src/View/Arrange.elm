@@ -23,10 +23,10 @@ type alias Config msg =
     }
 
 
-view : Config msg -> Int -> Dict String String -> List Track -> Html msg
-view config selectedTrackId loadStates tracks =
+view : Config msg -> Int -> Int -> Dict String String -> List Track -> Html msg
+view config totalBars selectedTrackId loadStates tracks =
     div [ HA.style "margin-top" "1rem" ]
-        (List.map (trackRow config selectedTrackId loadStates) tracks
+        (List.map (trackRow config totalBars selectedTrackId loadStates) tracks
             ++ [ button [ HE.onClick config.addTrack, HA.style "margin-top" "0.5rem" ] [ text "+ トラック追加" ] ]
         )
 
@@ -36,8 +36,8 @@ stopClick msg =
     HE.stopPropagationOn "click" (Decode.succeed ( msg, True ))
 
 
-trackRow : Config msg -> Int -> Dict String String -> Track -> Html msg
-trackRow config selectedTrackId loadStates track =
+trackRow : Config msg -> Int -> Int -> Dict String String -> Track -> Html msg
+trackRow config totalBars selectedTrackId loadStates track =
     let
         selected =
             track.id == selectedTrackId
@@ -84,7 +84,7 @@ trackRow config selectedTrackId loadStates track =
         , loadBadge loadState
         , muteButton config track
         , volumeSlider config track
-        , clipPreview track
+        , clipPreview totalBars track
         , button [ stopClick (config.removeTrack track.id), HA.title "トラック削除" ] [ text "✕" ]
         ]
 
@@ -168,8 +168,8 @@ notesOf kind =
             notes
 
 
-clipPreview : Track -> Html msg
-clipPreview track =
+clipPreview : Int -> Track -> Html msg
+clipPreview totalBars track =
     let
         width =
             240
@@ -178,7 +178,7 @@ clipPreview track =
             32
 
         totalTicks =
-            16 * Data.Time.ticksPerBar
+            Basics.max 1 totalBars * Data.Time.ticksPerBar
 
         noteRect note =
             let

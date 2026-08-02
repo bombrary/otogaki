@@ -10,7 +10,7 @@ type AudioEvent
     | AudioReady
     | InstrumentLoaded String
     | InstrumentLoadFailed String
-    | RefAudioReady { name : String, peaks : Array Float, peakDt : Float }
+    | RefAudioReady { name : String, peaks : Array Float, peakDt : Float, durationSecs : Float }
     | Unknown
 
 
@@ -42,11 +42,12 @@ decoder =
                         Decode.map InstrumentLoadFailed (Decode.at [ "payload", "instrument" ] Decode.string)
 
                     "refAudioReady" ->
-                        Decode.map3
-                            (\name peaks peakDt -> RefAudioReady { name = name, peaks = peaks, peakDt = peakDt })
+                        Decode.map4
+                            (\name peaks peakDt durationSecs -> RefAudioReady { name = name, peaks = peaks, peakDt = peakDt, durationSecs = durationSecs })
                             (Decode.at [ "payload", "name" ] Decode.string)
                             (Decode.at [ "payload", "peaks" ] (Decode.array Decode.float))
                             (Decode.at [ "payload", "peakDt" ] Decode.float)
+                            (Decode.at [ "payload", "duration" ] Decode.float)
 
                     _ ->
                         Decode.succeed Unknown

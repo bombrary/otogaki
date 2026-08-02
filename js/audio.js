@@ -24,7 +24,12 @@ export async function loadRefAudio(file) {
   const peakDt = Math.max(0.02, refBuffer.duration / 6000);
   send({
     tag: "refAudioReady",
-    payload: { name: file.name, peaks: computePeaks(refBuffer, peakDt), peakDt: peakDt },
+    payload: {
+      name: file.name,
+      peaks: computePeaks(refBuffer, peakDt),
+      peakDt: peakDt,
+      duration: refBuffer.duration,
+    },
   });
 }
 

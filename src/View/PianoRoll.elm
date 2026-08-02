@@ -10,8 +10,10 @@ module View.PianoRoll exposing
     )
 
 import Array exposing (Array)
+import Data.Key exposing (Key)
 import Data.Note exposing (Note)
 import Data.Time
+import Data.Timeline exposing (Timeline)
 import Html exposing (Html)
 import Html.Attributes as HA
 import Html.Events
@@ -20,6 +22,7 @@ import Set exposing (Set)
 import Svg
 import Svg.Attributes as SA
 import Svg.Lazy
+import View.Palette as Palette
 
 
 type alias Config msg =
@@ -47,6 +50,7 @@ type alias ViewOpts =
     , totalBars : Int
     , rubberBand : Maybe { x : Float, y : Float, w : Float, h : Float }
     , waveform : Maybe Waveform
+    , timeline : Timeline
     }
 
 
@@ -116,28 +120,6 @@ gridWidth totalBars =
 gridHeight : Int
 gridHeight =
     (maxPitch - minPitch + 1) * rowHeight
-
-
-palette : Int -> String
-palette i =
-    case modBy 6 i of
-        0 ->
-            "#4a90d9"
-
-        1 ->
-            "#e67e22"
-
-        2 ->
-            "#2ecc71"
-
-        3 ->
-            "#9b59b6"
-
-        4 ->
-            "#e74c3c"
-
-        _ ->
-            "#1abc9c"
 
 
 view : Config msg -> ViewOpts -> Html msg
@@ -334,7 +316,7 @@ sectionBand idx span =
         , SA.y "0"
         , SA.width (String.fromInt (span.lengthBars * barWidth))
         , SA.height "16"
-        , SA.fill (palette idx)
+        , SA.fill (Palette.sectionColor idx)
         , SA.fillOpacity "0.85"
         ]
         []
@@ -385,12 +367,73 @@ gridView config opts =
         , Html.Events.on "mousedown" (Decode.map config.pressedEmpty emptyPressDecoder)
         ]
         (rowBackgrounds opts.totalBars
+            ++ scaleGuideView opts.timeline
             ++ List.concat (List.indexedMap sectionTint opts.sections)
             ++ verticalLines opts.totalBars
             ++ List.concatMap (noteView config opts.selectedIds) opts.notes
             ++ rubberBandView opts.rubberBand
             ++ [ playheadLine gridHeight opts.playheadTicks ]
         )
+
+
+{-| キーのスケール外の行を暗く塗る。雑に置いても外れないようの目安。
+同じキーが連続する小節をまとめて（セクションごとに）1行あたり1矩形にする。
+-}
+scaleGuideView : Timeline -> List (Svg.Svg msg)
+scaleGuideView timeline =
+    keySegments timeline
+        |> List.concatMap
+            (\seg ->
+                let
+                    scaleSet =
+                        Data.Key.scalePitchClasses seg.key
+
+                    x =
+                        seg.startBar * barWidth
+
+                    w =
+                        seg.lengthBars * barWidth
+                in
+                List.range minPitch maxPitch
+                    |> List.filter (\p -> not (Set.member (modBy 12 p) scaleSet))
+                    |> List.map
+                        (\p ->
+                            Svg.rect
+                                [ SA.x (String.fromInt x)
+                                , SA.y (String.fromInt ((maxPitch - p) * rowHeight))
+                                , SA.width (String.fromInt w)
+                                , SA.height (String.fromInt rowHeight)
+                                , SA.fill "#000"
+                                , SA.fillOpacity "0.06"
+                                , SA.pointerEvents "none"
+                                ]
+                                []
+                        )
+            )
+
+
+{-| Timeline の bars を、同じキーが連続する区間ごとにまとめる。
+-}
+keySegments : Timeline -> List { startBar : Int, lengthBars : Int, key : Key }
+keySegments timeline =
+    let
+        bars =
+            List.range 0 (Data.Timeline.totalBars timeline - 1)
+                |> List.filterMap (\i -> Data.Timeline.barAt i timeline)
+
+        step bar segs =
+            case segs of
+                seg :: rest ->
+                    if seg.key == bar.key then
+                        { seg | lengthBars = seg.lengthBars + 1 } :: rest
+
+                    else
+                        { startBar = bar.index, lengthBars = 1, key = bar.key } :: segs
+
+                [] ->
+                    [ { startBar = bar.index, lengthBars = 1, key = bar.key } ]
+    in
+    List.foldl step [] bars |> List.reverse
 
 
 sectionTint : Int -> SectionSpan -> List (Svg.Svg msg)
@@ -400,7 +443,7 @@ sectionTint idx span =
         , SA.y "0"
         , SA.width (String.fromInt (span.lengthBars * barWidth))
         , SA.height (String.fromInt gridHeight)
-        , SA.fill (palette idx)
+        , SA.fill (Palette.sectionColor idx)
         , SA.fillOpacity "0.05"
         , SA.pointerEvents "none"
         ]

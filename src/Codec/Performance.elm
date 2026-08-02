@@ -19,6 +19,7 @@ import Data.ChordTrack exposing (ChordTrack)
 import Data.Project exposing (Project)
 import Data.ReferenceAudio exposing (ReferenceAudio)
 import Data.Time
+import Data.Timeline
 import Data.Track exposing (Track, TrackKind(..))
 import Json.Encode as Encode
 
@@ -33,7 +34,7 @@ encodePlay : { loop : Maybe Loop, startTicks : Int } -> Project -> Encode.Value
 encodePlay opts project =
     command "play"
         (Encode.object
-            [ ( "bpm", Encode.int project.bpm )
+            [ ( "bpm", Encode.float project.bpm )
             , ( "ppq", Encode.int Data.Time.ppq )
             , ( "events", Encode.list encodeEvent (toEvents project) )
             , ( "tracks", trackMetas project )
@@ -87,9 +88,9 @@ encodeStop =
     command "stop" (Encode.object [])
 
 
-encodeSetBpm : Int -> Encode.Value
+encodeSetBpm : Float -> Encode.Value
 encodeSetBpm bpm =
-    command "setBpm" (Encode.object [ ( "bpm", Encode.int bpm ) ])
+    command "setBpm" (Encode.object [ ( "bpm", Encode.float bpm ) ])
 
 
 encodeSeek : Int -> Encode.Value
@@ -165,16 +166,16 @@ type alias Event =
 
 toEvents : Project -> List Event
 toEvents project =
-    List.concatMap trackEvents project.tracks ++ chordEvents project.chordTrack
+    List.concatMap trackEvents project.tracks ++ chordEvents (Data.Project.timeline project) project.chordTrack
 
 
-chordEvents : ChordTrack -> List Event
-chordEvents chordTrack =
+chordEvents : Data.Timeline.Timeline -> ChordTrack -> List Event
+chordEvents timeline chordTrack =
     let
         instrument =
             Data.Track.instrumentToString chordTrack.instrument
     in
-    Data.ChordTrack.resolved chordTrack
+    Data.ChordTrack.resolved timeline chordTrack
         |> List.concatMap
             (\ev ->
                 Data.Chord.toPitches ev.chord

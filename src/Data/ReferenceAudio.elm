@@ -2,7 +2,8 @@ module Data.ReferenceAudio exposing (ReferenceAudio, empty)
 
 
 {-| 耳コピ・分析用の参考オーディオ。
-音声データ自体は保存しない（localStorage の容量制限のため）。
+音声データ自体は保存しない（localStorage の容量制限のため）が、長さ（durationMs）は保存する。
+リロード直後（波形未読込でも）グリッドの長さを保ちたいため（「24小節の壁」の再発防止）。
 offsetMs は「オーディオのどこを小節1・拍1に合わせるか」。
 正なら頭を削る、負ならオーディオ全体を後ろにずらす。
 -}
@@ -11,6 +12,7 @@ type alias ReferenceAudio =
     , offsetMs : Int
     , volume : Int
     , muted : Bool
+    , durationMs : Maybe Int
     }
 
 
@@ -20,4 +22,5 @@ empty =
     , offsetMs = 0
     , volume = 80
     , muted = False
+    , durationMs = Nothing
     }

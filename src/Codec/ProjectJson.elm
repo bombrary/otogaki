@@ -1,6 +1,8 @@
 module Codec.ProjectJson exposing (decoder, encode)
 
 import Data.ChordTrack exposing (ChordTrack)
+import Data.Key exposing (Key)
+import Data.Meter exposing (Meter)
 import Data.Note exposing (Note)
 import Data.Project exposing (Project)
 import Data.ReferenceAudio exposing (ReferenceAudio)
@@ -21,13 +23,14 @@ encode project =
     Encode.object
         [ ( "version", Encode.int currentVersion )
         , ( "name", Encode.string project.name )
-        , ( "bpm", Encode.int project.bpm )
+        , ( "bpm", Encode.float project.bpm )
         , ( "tracks", Encode.list encodeTrack project.tracks )
         , ( "chordTrack", encodeChordTrack project.chordTrack )
         , ( "sections", Encode.list encodeSection project.sections )
         , ( "scraps", Encode.list encodeScrap project.scraps )
         , ( "referenceAudio", encodeReferenceAudio project.referenceAudio )
         , ( "nextId", Encode.int project.nextId )
+        , ( "memo", Encode.string project.memo )
         ]
 
 
@@ -45,6 +48,30 @@ encodeReferenceAudio ra =
         , ( "offsetMs", Encode.int ra.offsetMs )
         , ( "volume", Encode.int ra.volume )
         , ( "muted", Encode.bool ra.muted )
+        , ( "durationMs"
+          , case ra.durationMs of
+                Just ms ->
+                    Encode.int ms
+
+                Nothing ->
+                    Encode.null
+          )
+        ]
+
+
+encodeKey : Key -> Encode.Value
+encodeKey key =
+    Encode.object
+        [ ( "tonic", Encode.int key.tonic )
+        , ( "mode", Encode.string (Data.Key.modeToString key.mode) )
+        ]
+
+
+encodeMeter : Meter -> Encode.Value
+encodeMeter meter =
+    Encode.object
+        [ ( "numerator", Encode.int meter.numerator )
+        , ( "denominator", Encode.int meter.denominator )
         ]
 
 
@@ -55,6 +82,8 @@ encodeSection section =
         , ( "name", Encode.string section.name )
         , ( "lengthBars", Encode.int section.lengthBars )
         , ( "memo", Encode.string section.memo )
+        , ( "key", encodeKey section.key )
+        , ( "meter", encodeMeter section.meter )
         ]
 
 
@@ -123,11 +152,54 @@ decoder =
             )
 
 
+{-| `Project` は9フィールドあり Json.Decode の map 関数は map8 が上限なので、2つに分けて合成する。
+今後さらにフィールドを足す場合は PartB 側に足せばよい。
+-}
+type alias PartA =
+    { name : String
+    , bpm : Float
+    , tracks : List Track
+    , chordTrack : ChordTrack
+    , sections : List Section
+    }
+
+
+type alias PartB =
+    { scraps : List Scrap
+    , referenceAudio : ReferenceAudio
+    , nextId : Int
+    , memo : String
+    }
+
+
 projectDecoder : Decode.Decoder Project
 projectDecoder =
-    Decode.map8 Project
+    Decode.map2 buildProject partADecoder partBDecoder
+
+
+buildProject : PartA -> PartB -> Project
+buildProject a b =
+    { name = a.name
+    , bpm = a.bpm
+    , tracks = a.tracks
+    , chordTrack = a.chordTrack
+    , sections = a.sections
+    , scraps = b.scraps
+    , referenceAudio = b.referenceAudio
+    , nextId = b.nextId
+    , memo = b.memo
+    }
+
+
+partADecoder : Decode.Decoder PartA
+partADecoder =
+    Decode.map5 PartA
         (Decode.field "name" Decode.string)
-        (Decode.field "bpm" Decode.int)
+        (Decode.oneOf
+            [ Decode.field "bpm" Decode.float
+            , Decode.field "bpm" Decode.int |> Decode.map toFloat
+            ]
+        )
         (Decode.field "tracks" (Decode.list trackDecoder))
         (Decode.oneOf
             [ Decode.field "chordTrack" chordTrackDecoder
@@ -139,6 +211,11 @@ projectDecoder =
             , Decode.succeed []
             ]
         )
+
+
+partBDecoder : Decode.Decoder PartB
+partBDecoder =
+    Decode.map4 PartB
         (Decode.oneOf
             [ Decode.field "scraps" (Decode.list scrapDecoder)
             , Decode.succeed []
@@ -150,24 +227,68 @@ projectDecoder =
             ]
         )
         (Decode.field "nextId" Decode.int)
+        (Decode.oneOf
+            [ Decode.field "memo" Decode.string
+            , Decode.succeed ""
+            ]
+        )
 
 
 referenceAudioDecoder : Decode.Decoder ReferenceAudio
 referenceAudioDecoder =
-    Decode.map4 ReferenceAudio
+    Decode.map5 ReferenceAudio
         (Decode.field "fileName" (Decode.nullable Decode.string))
         (Decode.field "offsetMs" Decode.int)
         (Decode.field "volume" Decode.int)
         (Decode.field "muted" Decode.bool)
+        (Decode.oneOf
+            [ Decode.field "durationMs" (Decode.nullable Decode.int)
+            , Decode.succeed Nothing
+            ]
+        )
+
+
+keyDecoder : Decode.Decoder Key
+keyDecoder =
+    Decode.map2 Key
+        (Decode.field "tonic" Decode.int)
+        (Decode.field "mode" Decode.string
+            |> Decode.andThen
+                (\raw ->
+                    case Data.Key.modeFromString raw of
+                        Just mode ->
+                            Decode.succeed mode
+
+                        Nothing ->
+                            Decode.fail ("未知の mode: " ++ raw)
+                )
+        )
+
+
+meterDecoder : Decode.Decoder Meter
+meterDecoder =
+    Decode.map2 Meter
+        (Decode.field "numerator" Decode.int)
+        (Decode.field "denominator" Decode.int)
 
 
 sectionDecoder : Decode.Decoder Section
 sectionDecoder =
-    Decode.map4 Section
+    Decode.map6 Section
         (Decode.field "id" Decode.int)
         (Decode.field "name" Decode.string)
         (Decode.field "lengthBars" Decode.int)
         (Decode.field "memo" Decode.string)
+        (Decode.oneOf
+            [ Decode.field "key" keyDecoder
+            , Decode.succeed Data.Key.default
+            ]
+        )
+        (Decode.oneOf
+            [ Decode.field "meter" meterDecoder
+            , Decode.succeed Data.Meter.default
+            ]
+        )
 
 
 scrapDecoder : Decode.Decoder Scrap

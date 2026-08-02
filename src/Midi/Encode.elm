@@ -62,11 +62,11 @@ trackChunk body =
         ]
 
 
-tempoTrackChunk : Int -> E.Encoder
+tempoTrackChunk : Float -> E.Encoder
 tempoTrackChunk bpm =
     let
         usPerQuarter =
-            60000000 // Basics.max 1 bpm
+            round (60000000 / Basics.max 1 bpm)
     in
     trackChunk
         [ VarLen.encode 0
