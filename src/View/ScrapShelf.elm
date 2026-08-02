@@ -1,0 +1,117 @@
+module View.ScrapShelf exposing (Config, view)
+
+import Data.Note exposing (Note)
+import Data.Scrap exposing (Scrap)
+import Data.Time
+import Html exposing (Html, button, div, input, span, text)
+import Html.Attributes as HA
+import Html.Events as HE
+import Svg
+import Svg.Attributes as SA
+
+
+type alias Config msg =
+    { addFromSelection : msg
+    , place : Int -> msg
+    , remove : Int -> msg
+    , rename : Int -> String -> msg
+    }
+
+
+view : Config msg -> Int -> List Scrap -> Html msg
+view config selectionCount scraps =
+    div
+        [ HA.style "margin-top" "1rem"
+        , HA.style "padding" "0.5rem"
+        , HA.style "border" "1px dashed #bbb"
+        , HA.style "border-radius" "4px"
+        ]
+        [ div [ HA.style "display" "flex", HA.style "gap" "0.5rem", HA.style "align-items" "center", HA.style "flex-wrap" "wrap" ]
+            [ span [ HA.style "font-size" "0.9rem", HA.style "font-weight" "bold" ] [ text "📋 断片棚" ]
+            , span [ HA.style "font-size" "0.75rem", HA.style "color" "#888" ]
+                [ text "思いついたフレーズを曲に置く前にここへ貯めておける。「配置」で選択中のトラックの再生位置に置く" ]
+            , button
+                [ HE.onClick config.addFromSelection
+                , HA.disabled (selectionCount == 0)
+                , HA.title "ピアノロールで選択したノートを断片として保存"
+                ]
+                [ text "＋ 選択を断片棚へ" ]
+            ]
+        , if List.isEmpty scraps then
+            text ""
+
+          else
+            div [ HA.style "display" "flex", HA.style "gap" "0.5rem", HA.style "flex-wrap" "wrap", HA.style "margin-top" "0.4rem" ]
+                (List.map (scrapCard config) scraps)
+        ]
+
+
+scrapCard : Config msg -> Scrap -> Html msg
+scrapCard config scrap =
+    div
+        [ HA.style "border" "1px solid #ccc"
+        , HA.style "border-radius" "4px"
+        , HA.style "padding" "0.3rem"
+        , HA.style "background" "#fafafa"
+        ]
+        [ input
+            [ HA.value scrap.name
+            , HE.onInput (config.rename scrap.id)
+            , HA.style "width" "8rem"
+            , HA.style "font-size" "0.8rem"
+            , HA.style "border" "none"
+            , HA.style "background" "transparent"
+            ]
+            []
+        , preview scrap.notes
+        , div [ HA.style "display" "flex", HA.style "gap" "0.3rem", HA.style "margin-top" "0.2rem" ]
+            [ button [ HE.onClick (config.place scrap.id), HA.title "選択中のトラックの再生位置に配置" ] [ text "配置" ]
+            , button [ HE.onClick (config.remove scrap.id), HA.title "断片を削除" ] [ text "✕" ]
+            ]
+        ]
+
+
+preview : List Note -> Html msg
+preview notes =
+    let
+        width =
+            140
+
+        height =
+            36
+
+        endTicks =
+            notes
+                |> List.map (\n -> n.start + n.duration)
+                |> List.maximum
+                |> Maybe.withDefault Data.Time.ticksPerBar
+                |> Basics.max Data.Time.ticksPerBar
+
+        minP =
+            notes |> List.map .pitch |> List.minimum |> Maybe.withDefault 48
+
+        maxP =
+            notes |> List.map .pitch |> List.maximum |> Maybe.withDefault 72
+
+        range =
+            Basics.max 1 (maxP - minP)
+
+        noteRect n =
+            Svg.rect
+                [ SA.x (String.fromFloat (toFloat n.start / toFloat endTicks * toFloat width))
+                , SA.y (String.fromFloat (toFloat (maxP - n.pitch) / toFloat range * toFloat (height - 4)))
+                , SA.width (String.fromFloat (Basics.max 2 (toFloat n.duration / toFloat endTicks * toFloat width)))
+                , SA.height "3"
+                , SA.fill "#4a90d9"
+                ]
+                []
+    in
+    Svg.svg
+        [ SA.width (String.fromInt width)
+        , SA.height (String.fromInt height)
+        , HA.style "display" "block"
+        , HA.style "background" "#fff"
+        , HA.style "border" "1px solid #eee"
+        , HA.style "margin-top" "0.2rem"
+        ]
+        (List.map noteRect notes)

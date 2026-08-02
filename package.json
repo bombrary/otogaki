@@ -1,0 +1,19 @@
+{
+  "name": "otogaki",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "test": "elm-test"
+  },
+  "devDependencies": {
+    "vite": "^6.3.5",
+    "vite-plugin-elm": "^3.0.1"
+  },
+  "dependencies": {
+    "smplr": "^0.16.1",
+    "tone": "^15.1.22"
+  }
+}
