@@ -241,6 +241,7 @@ type Msg
     | ChangedSectionMode Int String
     | ChangedSectionMeter Int String
     | TransposedSong Int
+    | TransposedSection Int Int
     | ChangedInsertCount String
     | InsertedBarsBeforeSection Int
     | RemovedBarsFromSection Int
@@ -633,6 +634,9 @@ describeMsg msg =
 
         TransposedSong _ ->
             "移調"
+
+        TransposedSection _ _ ->
+            "セクション移調"
 
         _ ->
             "編集"
@@ -2700,6 +2704,50 @@ updateCore msg model =
             in
             ( { model | project = withKeys }, Cmd.none )
 
+        TransposedSection sectionId delta ->
+            case
+                ( Data.Project.sectionBounds sectionId model.project
+                , sectionStartBar sectionId model.project
+                , List.filter (\s -> s.id == sectionId) model.project.sections |> List.head
+                )
+            of
+                ( Just bounds, Just fromBar, Just section ) ->
+                    let
+                        withPitches =
+                            Data.Project.mapNoteTrackNotes
+                                (List.map
+                                    (\n ->
+                                        if n.start >= bounds.startTicks && n.start < bounds.endTicks then
+                                            { n | pitch = clamp PianoRoll.minPitch PianoRoll.maxPitch (n.pitch + delta) }
+
+                                        else
+                                            n
+                                    )
+                                )
+                                model.project
+
+                        withChords =
+                            { withPitches | chordTrack = Data.ChordTrack.transposeBars fromBar section.lengthBars delta withPitches.chordTrack }
+
+                        withKeys =
+                            { withChords
+                                | sections =
+                                    List.map
+                                        (\s ->
+                                            if s.id == sectionId then
+                                                { s | key = Data.Key.transpose delta s.key }
+
+                                            else
+                                                s
+                                        )
+                                        withChords.sections
+                            }
+                    in
+                    ( { model | project = withKeys }, Cmd.none )
+
+                _ ->
+                    ( model, Cmd.none )
+
         ChangedInsertCount raw ->
             ( { model | insertCountInput = raw }, Cmd.none )
 
@@ -3004,7 +3052,7 @@ view model =
             ]
             []
         , div [ style "font-size" "0.75rem", style "color" "#888", style "margin-top" "0.2rem" ]
-            [ text "Space: 再生/停止（ボタンのEnterは別） ・ Ctrl/Cmd+Z: 元に戻す（Shiftでやり直し） ・ ルーラーか Ctrl/Cmd+クリック・コードをクリック: 再生位置移動 ・ Home/End: 曲頭/曲末へシーク ・ ⏮⏪⏩ かセクション編集欄の「先頭へ」: セクション/曲頭へ移動 ・ Shift+ドラッグ: 矩形選択 ・ ルーラーをshift+ドラッグ: ループ範囲を作成、ハンドルをドラッグで伸縮、[/]: ループの開始/終了を再生位置に設定 ・ ↑↓: 半音移動（Shiftでオクターブ） ・ ←→: 隣のノートを選択（Ctrl/Cmdで横移動、+Shiftで1小節） ・ n: 再生位置にノートを追加（鍵盤表示中は無効） ・ Ctrl/Cmd+C・X・V: コピー・カット・貼付 ・ Delete: 削除 ・ ダブルクリック/右クリック: ノート削除 ・ Escape: 選択解除（削除確認待ちも解除）" ]
+            [ text "Space: 再生/停止（ボタンのEnterは別） ・ Ctrl/Cmd+Z: 元に戻す（Shiftでやり直し） ・ ルーラーか Ctrl/Cmd+クリック・コードをクリック: 再生位置移動 ・ Home/End: 曲頭/曲末へシーク ・ ⏮⏪⏩ かセクション編集欄の「先頭へ」: セクション/曲頭へ移動 ・ Shift+ドラッグ: 矩形選択 ・ Ctrl/Cmd+Shift+A: 選択中セクション内のノートを全選択 ・ ルーラーをshift+ドラッグ: ループ範囲を作成、ハンドルをドラッグで伸縮、[/]: ループの開始/終了を再生位置に設定 ・ ↑↓: 半音移動（Shiftでオクターブ） ・ ←→: 隣のノートを選択（Ctrl/Cmdで横移動、+Shiftで1小節） ・ n: 再生位置にノートを追加（鍵盤表示中は無効） ・ Ctrl/Cmd+C・X・V: コピー・カット・貼付 ・ Delete: 削除 ・ ダブルクリック/右クリック: ノート削除 ・ Escape: 選択解除（削除確認待ちも解除）" ]
         , SectionBar.view
             { select = SelectedSection
             , add = ClickedAddSection
@@ -3020,6 +3068,7 @@ view model =
             , insertBefore = InsertedBarsBeforeSection
             , removeFromStart = RemovedBarsFromSection
             , seekToStart = ClickedSeekSectionStart
+            , transpose = TransposedSection
             }
             model.selectedSectionId
             model.insertCountInput

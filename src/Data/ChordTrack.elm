@@ -10,6 +10,7 @@ module Data.ChordTrack exposing
     , stripComments
     , toPlainText
     , transpose
+    , transposeBars
     )
 
 import Data.Chord exposing (Chord)
@@ -248,6 +249,28 @@ resolveCell cell state =
 transpose : Int -> ChordTrack -> ChordTrack
 transpose semitones track =
     { track | text = transposeText semitones track.text }
+
+
+{-| 指定小節範囲（0-based、fromBar から count 小節）だけをまとめて移調する。範囲外の小節はそのまま。
+セクションごとの移調で使う。`Data.Project.insertChordBars`/`removeChordBars` と同じ「`|` で split して
+一部だけ変えて join」パターン。
+-}
+transposeBars : Int -> Int -> Int -> ChordTrack -> ChordTrack
+transposeBars fromBar count semitones track =
+    let
+        bars =
+            String.split "|" track.text
+
+        before =
+            List.take fromBar bars
+
+        target =
+            List.take count (List.drop fromBar bars)
+
+        after =
+            List.drop (fromBar + count) bars
+    in
+    { track | text = String.join "|" (before ++ List.map (transposeText semitones) target ++ after) }
 
 
 type alias TextSegment =

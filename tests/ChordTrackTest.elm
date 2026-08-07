@@ -94,4 +94,12 @@ suite =
             \_ ->
                 (ChordTrack.transpose 2 (track "C  // C7 が好き")).text
                     |> Expect.equal "D  // C7 が好き"
+        , test "transposeBars は指定範囲の小節だけを移調し、範囲外（前/後）は変わらない" <|
+            \_ ->
+                (ChordTrack.transposeBars 1 2 2 (track "C | D | E | F")).text
+                    |> Expect.equal "C | E | F# | F"
+        , test "transposeBars は対象範囲内のコメントを保ったまま移調する" <|
+            \_ ->
+                (ChordTrack.transposeBars 0 1 2 (track "C // note\n| D")).text
+                    |> Expect.equal "D // note\n| D"
         ]

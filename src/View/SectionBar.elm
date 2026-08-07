@@ -26,6 +26,7 @@ type alias Config msg =
     , insertBefore : Int -> msg
     , removeFromStart : Int -> msg
     , seekToStart : Int -> msg
+    , transpose : Int -> Int -> msg
     }
 
 
@@ -171,6 +172,11 @@ editPanel config insertCountInput section pendingDeleteId =
                             Html.option [ HA.value (Data.Meter.toString m), HA.selected (m == section.meter) ] [ text (Data.Meter.toString m) ]
                         )
                 )
+            , span [ HA.style "font-size" "0.85rem", HA.style "margin-left" "0.5rem" ] [ text "移調:" ]
+            , button (Style.baseButton ++ [ HE.onClick (config.transpose section.id -12), HA.title "このセクションを1オクターブ下げる" ]) [ text "-12" ]
+            , button (Style.baseButton ++ [ HE.onClick (config.transpose section.id -1), HA.title "このセクションを半音下げる" ]) [ text "-1" ]
+            , button (Style.baseButton ++ [ HE.onClick (config.transpose section.id 1), HA.title "このセクションを半音上げる" ]) [ text "+1" ]
+            , button (Style.baseButton ++ [ HE.onClick (config.transpose section.id 12), HA.title "このセクションを1オクターブ上げる" ]) [ text "+12" ]
             ]
         , div [ HA.style "display" "flex", HA.style "gap" "0.5rem", HA.style "align-items" "center", HA.style "margin-top" "0.3rem" ]
             [ span [ HA.style "font-size" "0.85rem" ] [ text "小節挿入/削除:" ]
