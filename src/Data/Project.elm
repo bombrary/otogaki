@@ -53,6 +53,7 @@ type alias Project =
     , memo : String
     , voicings : List Voicing
     , voicingEnabled : Bool
+    , guitarFormEnabled : Bool
     }
 
 
@@ -162,6 +163,7 @@ demo =
     , memo = ""
     , voicings = []
     , voicingEnabled = True
+    , guitarFormEnabled = True
     }
 
 

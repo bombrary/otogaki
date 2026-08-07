@@ -14,10 +14,10 @@ module Codec.Performance exposing
     , usedInstrumentNames
     )
 
-import Data.Chord
 import Data.ChordTrack exposing (ChordTrack)
 import Data.Project exposing (Project)
 import Data.ReferenceAudio exposing (ReferenceAudio)
+import Data.StrumExpand
 import Data.Time
 import Data.Timeline
 import Data.Track exposing (Track, TrackKind(..))
@@ -175,11 +175,11 @@ toEvents project =
             else
                 []
     in
-    List.concatMap trackEvents project.tracks ++ chordEvents voicings (Data.Project.timeline project) project.chordTrack
+    List.concatMap trackEvents project.tracks ++ chordEvents project.guitarFormEnabled voicings (Data.Project.timeline project) project.chordTrack
 
 
-chordEvents : List Data.Voicing.Voicing -> Data.Timeline.Timeline -> ChordTrack -> List Event
-chordEvents voicings timeline chordTrack =
+chordEvents : Bool -> List Data.Voicing.Voicing -> Data.Timeline.Timeline -> ChordTrack -> List Event
+chordEvents guitarFormEnabled voicings timeline chordTrack =
     let
         instrument =
             Data.Track.instrumentToString chordTrack.instrument
@@ -187,7 +187,7 @@ chordEvents voicings timeline chordTrack =
     Data.ChordTrack.resolved timeline chordTrack
         |> List.concatMap
             (\ev ->
-                Data.Chord.toPitchesWith voicings ev.chord
+                Data.StrumExpand.soundingPitches guitarFormEnabled voicings ev.chord
                     |> List.map
                         (\pitch ->
                             { ticks = ev.startTicks

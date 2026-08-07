@@ -35,6 +35,7 @@ baseProject sections notes chordText =
     , memo = ""
     , voicings = []
     , voicingEnabled = True
+    , guitarFormEnabled = True
     }
 
 

@@ -30,6 +30,7 @@ type alias Config msg =
     , toggledGhost : msg
     , changedInstrument : String -> msg
     , toggledVoicingEnabled : msg
+    , toggledGuitarFormEnabled : msg
     , clickedCopyText : msg
     , clickedAddVoicing : String -> msg
     , clickedVoicingRow : Int -> msg
@@ -50,6 +51,7 @@ type alias Config msg =
 type alias VoicingState =
     { voicings : List Voicing
     , enabled : Bool
+    , guitarFormEnabled : Bool
     , editingIndex : Maybe Int
     , pendingDelete : Maybe Int
     , copyFeedback : Bool
@@ -114,6 +116,20 @@ view config timeline playheadTicks isGhost loadStates voicingState track =
                 )
                 [ text "🎵 ボイシング" ]
             , button
+                (Style.toggleButton voicingState.guitarFormEnabled
+                    ++ [ HE.onClick config.toggledGuitarFormEnabled
+                       , HA.title "登録ボイシングのないコードをどちらで鳴らす/表示するか（ON=ギターの実運指を優先、OFF=ピアノ的な理論値をそのまま）"
+                       ]
+                )
+                [ text
+                    (if voicingState.guitarFormEnabled then
+                        "🎸 ギター指板"
+
+                     else
+                        "🎹 ピアノ"
+                    )
+                ]
+            , button
                 (Style.baseButton
                     ++ [ HE.onClick config.clickedCopyText
                        , HA.title "@NAME を除いたプレーンなコード譜をクリップボードへコピー"
@@ -128,7 +144,7 @@ view config timeline playheadTicks isGhost loadStates voicingState track =
                     )
                 ]
             ]
-        , nowPlayingView timeline playheadTicks voicingState.enabled voicingState.voicings track
+        , nowPlayingView timeline playheadTicks voicingState.enabled voicingState.guitarFormEnabled voicingState.voicings track
         , textarea
             [ HA.value track.text
             , HE.onInput config.changedText
@@ -164,10 +180,13 @@ currentChord timeline playheadTicks track =
 
 
 {-| 今鳴っているコードの運指を常時表示する。Data.StrumExpand.formFor で Form を決めるので、
-実際のストローク音生成と必ず一致する。ボイシングトグル OFF のときは voicings を空にする。
+実際のストローク音生成・普段の再生と必ず一致する。ボイシングトグル OFF のときは voicings を空にする。
+`guitarFormEnabled` が False（ピアノモード）のときは指板自体を出さずコード名だけ表示する。True（ギターモード）のときは
+`formFor` が Nothing でも常に指板ボックスを一緒に描画して（空のまま）、進行中のコードごとに箱が出たり消えたりして
+UI がガタつくのを防ぐ。
 -}
-nowPlayingView : Timeline -> Int -> Bool -> List Voicing -> ChordTrack -> Html msg
-nowPlayingView timeline playheadTicks voicingEnabled voicings track =
+nowPlayingView : Timeline -> Int -> Bool -> Bool -> List Voicing -> ChordTrack -> Html msg
+nowPlayingView timeline playheadTicks voicingEnabled guitarFormEnabled voicings track =
     case currentChord timeline playheadTicks track of
         Nothing ->
             text ""
@@ -180,32 +199,36 @@ nowPlayingView timeline playheadTicks voicingEnabled voicings track =
 
                     else
                         []
+
+                label =
+                    span [ HA.style "font-weight" "bold", HA.style "white-space" "nowrap" ]
+                        [ text ("🎸 " ++ Format.format { preferFlat = False } chord) ]
             in
-            case Data.StrumExpand.formFor activeVoicings chord of
-                Nothing ->
-                    text ""
+            if not guitarFormEnabled then
+                div [ HA.style "margin-top" "0.4rem" ] [ label ]
 
-                Just form ->
-                    let
-                        indexed =
-                            GuitarForm.toIndexedPitches form
+            else
+                let
+                    indexed =
+                        Data.StrumExpand.formFor guitarFormEnabled activeVoicings chord
+                            |> Maybe.map GuitarForm.toIndexedPitches
+                            |> Maybe.withDefault []
 
-                        selected =
-                            List.map Tuple.second indexed |> Set.fromList
+                    selected =
+                        List.map Tuple.second indexed |> Set.fromList
 
-                        picks =
-                            List.map (\( s, p ) -> ( p, s )) indexed |> Set.fromList
-                    in
-                    div
-                        [ HA.style "display" "flex"
-                        , HA.style "align-items" "flex-start"
-                        , HA.style "gap" "0.5rem"
-                        , HA.style "margin-top" "0.4rem"
-                        ]
-                        [ span [ HA.style "font-weight" "bold", HA.style "white-space" "nowrap" ]
-                            [ text ("🎸 " ++ Format.format { preferFlat = False } chord) ]
-                        , Fretboard.viewReadOnly { rootPitch = 0, selected = selected, picks = picks }
-                        ]
+                    picks =
+                        List.map (\( s, p ) -> ( p, s )) indexed |> Set.fromList
+                in
+                div
+                    [ HA.style "display" "flex"
+                    , HA.style "align-items" "flex-start"
+                    , HA.style "gap" "0.5rem"
+                    , HA.style "margin-top" "0.4rem"
+                    ]
+                    [ label
+                    , Fretboard.viewReadOnly { rootPitch = 0, selected = selected, picks = picks }
+                    ]
 
 
 {-| コード進行で使われているが未登録のボイシング名を重複なく列挙する。

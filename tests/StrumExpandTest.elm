@@ -28,6 +28,7 @@ testProject chordText =
     , memo = ""
     , voicings = []
     , voicingEnabled = True
+    , guitarFormEnabled = True
     }
 
 
@@ -60,7 +61,7 @@ suite =
             \_ ->
                 let
                     result =
-                        StrumExpand.apply { trackId = 1, startTicks = 0, endTicks = 2 * Data.Time.ticksPerBar } [] downUpPattern (testProject "C | G")
+                        StrumExpand.apply { trackId = 1, startTicks = 0, endTicks = 2 * Data.Time.ticksPerBar } True [] downUpPattern (testProject "C | G")
 
                     notes =
                         notesOfTrack 1 result
@@ -73,7 +74,7 @@ suite =
             \_ ->
                 let
                     result =
-                        StrumExpand.apply { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar } [] downUpPattern (testProject "C")
+                        StrumExpand.apply { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar } True [] downUpPattern (testProject "C")
 
                     notes =
                         notesOfTrack 1 result |> List.sortBy .start
@@ -98,7 +99,7 @@ suite =
             \_ ->
                 let
                     result =
-                        StrumExpand.apply { trackId = 1, startTicks = 0, endTicks = 2 * Data.Time.ticksPerBar } [] downUpPattern (testProject "C | G")
+                        StrumExpand.apply { trackId = 1, startTicks = 0, endTicks = 2 * Data.Time.ticksPerBar } True [] downUpPattern (testProject "C | G")
 
                     notes =
                         notesOfTrack 1 result
@@ -116,7 +117,7 @@ suite =
                         { name = "myopen", offsets = [ 0, 5, 10, 15 ], stringPicks = Set.empty }
 
                     result =
-                        StrumExpand.apply { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar } [ myopen ] downUpPattern (testProject "E@myopen")
+                        StrumExpand.apply { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar } True [ myopen ] downUpPattern (testProject "E@myopen")
 
                     pitches =
                         notesOfTrack 1 result |> List.map .pitch |> Set.fromList
@@ -135,7 +136,7 @@ suite =
                         { name = "myopen", offsets = [ 0, 5, 10, 15 ], stringPicks = Set.empty }
 
                     pitches =
-                        StrumExpand.formFor [ myopen ] chordE
+                        StrumExpand.formFor True [ myopen ] chordE
                             |> Maybe.map GuitarForm.toPitches
                             |> Maybe.withDefault []
                             |> Set.fromList
@@ -150,5 +151,19 @@ suite =
                     chordE =
                         { root = 4, quality = Maj, extensions = [], alterations = [], bass = Nothing, voicing = Nothing }
                 in
-                Expect.equal (GuitarForm.forChord chordE) (StrumExpand.formFor [] chordE)
+                Expect.equal (GuitarForm.forChord chordE) (StrumExpand.formFor True [] chordE)
+        , test "formFor は forChord にない quality でも guitarFormEnabled が True なら bestForm で実運指を探す" <|
+            \_ ->
+                let
+                    chordHalfDim =
+                        { root = 6, quality = HalfDim7, extensions = [], alterations = [], bass = Nothing, voicing = Nothing }
+                in
+                Expect.notEqual Nothing (StrumExpand.formFor True [] chordHalfDim)
+        , test "formFor は guitarFormEnabled が False なら forChord が引けるコードでも常に Nothing を返す" <|
+            \_ ->
+                let
+                    chordC =
+                        { root = 0, quality = Maj, extensions = [], alterations = [], bass = Nothing, voicing = Nothing }
+                in
+                Expect.equal Nothing (StrumExpand.formFor False [] chordC)
         ]

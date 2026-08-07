@@ -35,6 +35,7 @@ encode project =
         , ( "memo", Encode.string project.memo )
         , ( "voicings", Encode.list encodeVoicing project.voicings )
         , ( "voicingEnabled", Encode.bool project.voicingEnabled )
+        , ( "guitarFormEnabled", Encode.bool project.guitarFormEnabled )
         ]
 
 
@@ -189,6 +190,7 @@ type alias PartB =
     , memo : String
     , voicings : List Voicing
     , voicingEnabled : Bool
+    , guitarFormEnabled : Bool
     }
 
 
@@ -210,6 +212,7 @@ buildProject a b =
     , memo = b.memo
     , voicings = b.voicings
     , voicingEnabled = b.voicingEnabled
+    , guitarFormEnabled = b.guitarFormEnabled
     }
 
 
@@ -237,7 +240,7 @@ partADecoder =
 
 partBDecoder : Decode.Decoder PartB
 partBDecoder =
-    Decode.map6 PartB
+    Decode.map7 PartB
         (Decode.oneOf
             [ Decode.field "scraps" (Decode.list scrapDecoder)
             , Decode.succeed []
@@ -261,6 +264,11 @@ partBDecoder =
         )
         (Decode.oneOf
             [ Decode.field "voicingEnabled" Decode.bool
+            , Decode.succeed True
+            ]
+        )
+        (Decode.oneOf
+            [ Decode.field "guitarFormEnabled" Decode.bool
             , Decode.succeed True
             ]
         )

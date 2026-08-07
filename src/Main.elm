@@ -196,6 +196,7 @@ type Msg
     | ChangedChordInstrument String
     | ToggledChordMute
     | ToggledVoicingEnabled
+    | ToggledGuitarFormEnabled
     | ClickedAddVoicing String
     | ClickedVoicingRow Int
     | ChangedVoicingName Int String
@@ -1974,6 +1975,13 @@ updateCore msg model =
             in
             ( { model | project = { p | voicingEnabled = not p.voicingEnabled } }, Cmd.none )
 
+        ToggledGuitarFormEnabled ->
+            let
+                p =
+                    model.project
+            in
+            ( { model | project = { p | guitarFormEnabled = not p.guitarFormEnabled } }, Cmd.none )
+
         ClickedAddVoicing name ->
             ( { model
                 | project = Data.Project.addVoicing name model.project
@@ -2528,6 +2536,7 @@ updateCore msg model =
                                 , startTicks = range.startTicks
                                 , endTicks = range.endTicks
                                 }
+                                model.project.guitarFormEnabled
                                 (effectiveVoicings model)
                                 pattern
                                 model.project
@@ -3050,6 +3059,7 @@ view model =
             , toggledGhost = ToggledGhostTrack (negate 1)
             , changedInstrument = ChangedChordInstrument
             , toggledVoicingEnabled = ToggledVoicingEnabled
+            , toggledGuitarFormEnabled = ToggledGuitarFormEnabled
             , clickedCopyText = ClickedCopyChordText
             , clickedAddVoicing = ClickedAddVoicing
             , clickedVoicingRow = ClickedVoicingRow
@@ -3071,6 +3081,7 @@ view model =
             model.instrumentLoad
             { voicings = model.project.voicings
             , enabled = model.project.voicingEnabled
+            , guitarFormEnabled = model.project.guitarFormEnabled
             , editingIndex = model.editingVoicingIndex
             , pendingDelete = model.pendingVoicingDelete
             , copyFeedback = model.chordCopyFeedback
