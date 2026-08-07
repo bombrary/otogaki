@@ -167,7 +167,7 @@ toPitchesWith voicings chord =
     let
         matchedVoicing =
             chord.voicing
-                |> Maybe.andThen (\name -> List.filter (\v -> v.name == name) voicings |> List.head)
+                |> Maybe.andThen (\name -> Data.Voicing.findByName name voicings)
     in
     case matchedVoicing of
         Just voicing ->

@@ -11,7 +11,7 @@ import Test exposing (Test, describe, test)
 
 wideVoicing : Voicing
 wideVoicing =
-    { name = "wide", offsets = [ 0, 7, 16, 23 ] }
+    { name = "wide", offsets = [ 0, 7, 16, 23 ], stringPicks = Set.empty }
 
 
 suite : Test
@@ -151,4 +151,14 @@ suite =
                 Expect.equal
                     36
                     (Data.Voicing.displayRoot 36 [])
+        , test "findByName は名前が一致するボイシングを返す" <|
+            \_ ->
+                Expect.equal
+                    (Just wideVoicing)
+                    (Data.Voicing.findByName "wide" [ wideVoicing ])
+        , test "findByName は一致するものがなければ Nothing を返す" <|
+            \_ ->
+                Expect.equal
+                    Nothing
+                    (Data.Voicing.findByName "nope" [ wideVoicing ])
         ]

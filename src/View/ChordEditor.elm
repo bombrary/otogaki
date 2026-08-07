@@ -3,7 +3,6 @@ module View.ChordEditor exposing (Config, view)
 import Data.Chord exposing (Chord)
 import Data.Chord.Format as Format
 import Data.ChordTrack exposing (ChordCell, ChordTrack, TokenKind(..))
-import Data.GuitarForm as GuitarForm
 import Data.Key exposing (Key)
 import Data.Timeline exposing (Timeline)
 import Data.Track
@@ -55,7 +54,6 @@ type alias VoicingState =
     , previewRootPc : Int
     , presetQualityName : String
     , presetShapeName : String
-    , fretPicks : GuitarForm.StringPicks
     }
 
 
@@ -312,7 +310,7 @@ voicingRow config voicingState index voicing =
                         { pressedFret = config.pressedFretboardCell index
                         , doubleClickedFret = config.doubleClickedFretboardCell index
                         }
-                        { rootPitch = rootPitch, selected = selected, picks = voicingState.fretPicks }
+                        { rootPitch = rootPitch, selected = selected, picks = voicing.stringPicks }
                     ]
                 ]
 

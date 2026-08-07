@@ -12,6 +12,7 @@ import Data.Track exposing (Track, TrackKind(..))
 import Data.Voicing exposing (Voicing)
 import Json.Decode as Decode
 import Json.Encode as Encode
+import Set
 
 
 currentVersion : Int
@@ -104,7 +105,13 @@ encodeVoicing v =
     Encode.object
         [ ( "name", Encode.string v.name )
         , ( "offsets", Encode.list Encode.int v.offsets )
+        , ( "stringPicks", Encode.list encodePick (Set.toList v.stringPicks) )
         ]
+
+
+encodePick : ( Int, Int ) -> Encode.Value
+encodePick ( offset, stringIndex ) =
+    Encode.list Encode.int [ offset, stringIndex ]
 
 
 encodeChordTrack : ChordTrack -> Encode.Value
@@ -261,9 +268,21 @@ partBDecoder =
 
 voicingDecoder : Decode.Decoder Voicing
 voicingDecoder =
-    Decode.map2 Voicing
+    Decode.map3 Voicing
         (Decode.field "name" Decode.string)
         (Decode.field "offsets" (Decode.list Decode.int))
+        (Decode.oneOf
+            [ Decode.field "stringPicks" (Decode.list pickDecoder) |> Decode.map Set.fromList
+            , Decode.succeed Set.empty
+            ]
+        )
+
+
+pickDecoder : Decode.Decoder ( Int, Int )
+pickDecoder =
+    Decode.map2 Tuple.pair
+        (Decode.index 0 Decode.int)
+        (Decode.index 1 Decode.int)
 
 
 referenceAudioDecoder : Decode.Decoder ReferenceAudio

@@ -1,4 +1,4 @@
-module Data.GuitarForm exposing (Form, StringPicks, bestForm, forChord, openStrings, removePicks, shiftPicks, toPitches)
+module Data.GuitarForm exposing (Form, StringPicks, bestForm, forChord, formFromPicks, openStrings, removePicks, shiftPicks, toPitches)
 
 import Data.Chord exposing (Chord, Quality(..))
 import Set exposing (Set)
@@ -276,3 +276,34 @@ shiftPicks delta maxOffset selected picks =
 removePicks : Set Int -> StringPicks -> StringPicks
 removePicks selected picks =
     Set.filter (\( o, _ ) -> not (Set.member o selected)) picks
+
+
+{-| 保存済みの運指メモから Form を組み立てる。offsets 全てに運指が割り当てられている
+場合のみ Just を返す（一部しか運指がなければ、どの弦にするかを勢いで決めず `bestForm` にフォールバックさせる）。
+同じ弦に複数の運指が重なっていたら最初の 1 つを採用する。
+-}
+formFromPicks : Int -> List Int -> StringPicks -> Maybe Form
+formFromPicks rootPitch offsets picks =
+    let
+        pickList =
+            Set.toList picks
+
+        coversAll =
+            not (List.isEmpty offsets)
+                && List.all (\o -> List.any (\( po, _ ) -> po == o) pickList) offsets
+
+        stringOpenPitch s =
+            List.drop s openStrings |> List.head |> Maybe.withDefault 0
+
+        fretForString s =
+            pickList
+                |> List.filter (\( _, ps ) -> ps == s)
+                |> List.map (\( o, _ ) -> rootPitch + o - stringOpenPitch s)
+                |> List.filter (\f -> f >= 0)
+                |> List.head
+    in
+    if coversAll then
+        Just { frets = List.map fretForString (List.range 0 (List.length openStrings - 1)) }
+
+    else
+        Nothing

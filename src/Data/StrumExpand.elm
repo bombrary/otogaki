@@ -17,17 +17,39 @@ stringDelayTicks =
 
 
 {-| コードの発音候補を「弦順（低音から高音）のピッチ列」として取り出す。
+`chord.voicing` が登録済みボイシングを指していれば常にそれを使う（保存された運指があればそのとおりの弦で、
+なければ bestForm が推定した弦で）。ここで GuitarForm.forChord を先に試すと、root/quality が固定表に
+一致するだけで登録ボイシングが黙殺されてしまうので順序に注意。ボイシング未指定のコードだけ、従来通り
 GuitarForm が引ければ実際の弦・フレットから、引けなければ toPitchesWith の理論値をそのまま昇順に並べたものを
 「擬似弦」として使う。
 -}
 soundingPitches : List Voicing -> Data.Chord.Chord -> List Int
 soundingPitches voicings chord =
-    case GuitarForm.forChord chord of
-        Just form ->
-            GuitarForm.toPitches form
+    case chord.voicing |> Maybe.andThen (\name -> Data.Voicing.findByName name voicings) of
+        Just voicing ->
+            let
+                rootPitch =
+                    Data.Voicing.anchorPitch + modBy 12 chord.root
+            in
+            case GuitarForm.formFromPicks rootPitch voicing.offsets voicing.stringPicks of
+                Just form ->
+                    GuitarForm.toPitches form
+
+                Nothing ->
+                    case GuitarForm.bestForm (Data.Voicing.pitchesFor chord.root voicing) of
+                        Just form ->
+                            GuitarForm.toPitches form
+
+                        Nothing ->
+                            Data.Chord.toPitchesWith voicings chord |> List.sort
 
         Nothing ->
-            Data.Chord.toPitchesWith voicings chord |> List.sort
+            case GuitarForm.forChord chord of
+                Just form ->
+                    GuitarForm.toPitches form
+
+                Nothing ->
+                    Data.Chord.toPitchesWith voicings chord |> List.sort
 
 
 {-| 選択範囲内の既存ノートを置換し、コード進行に沿ったストロークを展開する。

@@ -91,4 +91,20 @@ suite =
                 Expect.equal
                     (Set.fromList [ ( 0, 0 ), ( 7, 1 ) ])
                     (GuitarForm.removePicks Set.empty (Set.fromList [ ( 0, 0 ), ( 7, 1 ) ]))
+        , test "formFromPicks は offsets 全てに運指があれば Just を返す" <|
+            \_ ->
+                -- root=40(E2と同じピッチ)、offset 0 を 0弦開放、offset 7 を 1弦 0フレット（open=45, fret=2）
+                Expect.equal
+                    (Just { frets = [ Just 0, Just 2, Nothing, Nothing, Nothing, Nothing ] })
+                    (GuitarForm.formFromPicks 40 [ 0, 7 ] (Set.fromList [ ( 0, 0 ), ( 7, 1 ) ]))
+        , test "formFromPicks は一部の offset に運指がなければ Nothing を返す" <|
+            \_ ->
+                Expect.equal
+                    Nothing
+                    (GuitarForm.formFromPicks 40 [ 0, 7 ] (Set.fromList [ ( 0, 0 ) ]))
+        , test "formFromPicks は offsets が空なら Nothing を返す" <|
+            \_ ->
+                Expect.equal
+                    Nothing
+                    (GuitarForm.formFromPicks 40 [] (Set.fromList [ ( 0, 0 ) ]))
         ]

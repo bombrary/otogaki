@@ -1,4 +1,4 @@
-module Data.Voicing exposing (Voicing, anchorPitch, displayRoot, empty, pitchesFor, removeOffsets, shiftOffsets)
+module Data.Voicing exposing (Voicing, anchorPitch, displayRoot, empty, findByName, pitchesFor, removeOffsets, shiftOffsets)
 
 import Set exposing (Set)
 
@@ -15,12 +15,21 @@ anchorPitch =
 type alias Voicing =
     { name : String
     , offsets : List Int -- anchorPitch + root からの半音オフセット。常に 0 以上
+    , stringPicks : Set ( Int, Int ) -- (offset, 弦インデックス)。押さえた位置の運指メモ。Data.GuitarForm.StringPicks と同型
     }
 
 
 empty : String -> Voicing
 empty name =
-    { name = name, offsets = [] }
+    { name = name, offsets = [], stringPicks = Set.empty }
+
+
+{-| 登録済みボイシングを名前で引く。`Data.Chord.toPitchesWith` と `Data.StrumExpand.soundingPitches` の
+両方がこのマッチングロジックを共有する。
+-}
+findByName : String -> List Voicing -> Maybe Voicing
+findByName name voicings =
+    List.filter (\v -> v.name == name) voicings |> List.head
 
 
 {-| root のピッチクラス（0-11）を与えて実際に鳴らす MIDI ピッチ列を得る。

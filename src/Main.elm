@@ -152,7 +152,6 @@ type alias Model =
     , voicingPresetShape : String
     , voicingSelectedOffsets : Set Int
     , voicingDragState : VoicingDragState
-    , voicingFretPicks : Data.GuitarForm.StringPicks
     }
 
 
@@ -307,7 +306,6 @@ init flags =
       , voicingPresetShape = "クローズド"
       , voicingSelectedOffsets = Set.empty
       , voicingDragState = NoVoicingDrag
-      , voicingFretPicks = Set.empty
       }
     , Cmd.none
     )
@@ -1450,9 +1448,8 @@ updateCore msg model =
                             Data.GuitarForm.shiftPicks dpitch maxOffset d.origSelected d.origPicks
                     in
                     ( { model
-                        | project = Data.Project.updateVoicing d.index (\v -> { v | offsets = newOffsets }) model.project
+                        | project = Data.Project.updateVoicing d.index (\v -> { v | offsets = newOffsets, stringPicks = newPicks }) model.project
                         , voicingSelectedOffsets = newSelected
-                        , voicingFretPicks = newPicks
                       }
                     , Cmd.none
                     )
@@ -1630,21 +1627,24 @@ updateCore msg model =
 
                         else
                             let
+                                currentVoicing =
+                                    List.drop index model.project.voicings |> List.head
+
                                 newOffsets =
                                     Data.Voicing.shiftOffsets delta maxOffset model.voicingSelectedOffsets
-                                        (List.drop index model.project.voicings |> List.head |> Maybe.map .offsets |> Maybe.withDefault [])
+                                        (currentVoicing |> Maybe.map .offsets |> Maybe.withDefault [])
 
                                 newSelected =
                                     Set.map (\o -> clamp 0 maxOffset (o + delta)) model.voicingSelectedOffsets
                                         |> Set.filter (\o -> List.member o newOffsets)
 
                                 newPicks =
-                                    Data.GuitarForm.shiftPicks delta maxOffset model.voicingSelectedOffsets model.voicingFretPicks
+                                    Data.GuitarForm.shiftPicks delta maxOffset model.voicingSelectedOffsets
+                                        (currentVoicing |> Maybe.map .stringPicks |> Maybe.withDefault Set.empty)
                             in
                             ( { model
-                                | project = Data.Project.updateVoicing index (\v -> { v | offsets = newOffsets }) model.project
+                                | project = Data.Project.updateVoicing index (\v -> { v | offsets = newOffsets, stringPicks = newPicks }) model.project
                                 , voicingSelectedOffsets = newSelected
-                                , voicingFretPicks = newPicks
                               }
                             , Cmd.none
                             )
@@ -1655,10 +1655,21 @@ updateCore msg model =
             else if model.editingVoicingIndex /= Nothing && (k.key == "Delete" || k.key == "Backspace") then
                 case model.editingVoicingIndex of
                     Just index ->
+                        let
+                            currentPicks =
+                                List.drop index model.project.voicings |> List.head |> Maybe.map .stringPicks |> Maybe.withDefault Set.empty
+                        in
                         ( { model
-                            | project = Data.Project.updateVoicing index (\v -> { v | offsets = Data.Voicing.removeOffsets model.voicingSelectedOffsets v.offsets }) model.project
+                            | project =
+                                Data.Project.updateVoicing index
+                                    (\v ->
+                                        { v
+                                            | offsets = Data.Voicing.removeOffsets model.voicingSelectedOffsets v.offsets
+                                            , stringPicks = Data.GuitarForm.removePicks model.voicingSelectedOffsets currentPicks
+                                        }
+                                    )
+                                    model.project
                             , voicingSelectedOffsets = Set.empty
-                            , voicingFretPicks = Data.GuitarForm.removePicks model.voicingSelectedOffsets model.voicingFretPicks
                           }
                         , Cmd.none
                         )
@@ -1968,7 +1979,6 @@ updateCore msg model =
                 | project = Data.Project.addVoicing name model.project
                 , voicingSelectedOffsets = Set.empty
                 , voicingDragState = NoVoicingDrag
-                , voicingFretPicks = Set.empty
               }
             , Cmd.none
             )
@@ -2013,7 +2023,6 @@ updateCore msg model =
                 , pendingVoicingDelete = Nothing
                 , voicingSelectedOffsets = Set.empty
                 , voicingDragState = NoVoicingDrag
-                , voicingFretPicks = Set.empty
               }
             , scrollCmd
             )
@@ -2058,6 +2067,9 @@ updateCore msg model =
 
                         else
                             Set.singleton offset
+
+                    currentPicks =
+                        List.drop index model.project.voicings |> List.head |> Maybe.map .stringPicks |> Maybe.withDefault Set.empty
                 in
                 ( { model
                     | voicingSelectedOffsets = sel
@@ -2067,7 +2079,7 @@ updateCore msg model =
                             , startClientY = pos.clientY
                             , origOffsets = currentOffsets
                             , origSelected = sel
-                            , origPicks = model.voicingFretPicks
+                            , origPicks = currentPicks
                             }
                   }
                 , Ports.toAudio (Performance.encodePreviewNote (Data.Track.instrumentToString model.project.chordTrack.instrument) pitch)
@@ -2078,6 +2090,9 @@ updateCore msg model =
                 let
                     newOffsets =
                         offset :: currentOffsets
+
+                    currentPicks =
+                        List.drop index model.project.voicings |> List.head |> Maybe.map .stringPicks |> Maybe.withDefault Set.empty
                 in
                 ( { model
                     | project = Data.Project.updateVoicing index (\v -> { v | offsets = newOffsets }) model.project
@@ -2088,7 +2103,7 @@ updateCore msg model =
                             , startClientY = pos.clientY
                             , origOffsets = newOffsets
                             , origSelected = Set.singleton offset
-                            , origPicks = model.voicingFretPicks
+                            , origPicks = currentPicks
                             }
                   }
                 , Ports.toAudio (Performance.encodePreviewNote (Data.Track.instrumentToString model.project.chordTrack.instrument) pitch)
@@ -2103,9 +2118,16 @@ updateCore msg model =
                     pitch - rootPitch
             in
             ( { model
-                | project = Data.Project.updateVoicing index (\v -> { v | offsets = List.filter ((/=) offset) v.offsets }) model.project
+                | project =
+                    Data.Project.updateVoicing index
+                        (\v ->
+                            { v
+                                | offsets = List.filter ((/=) offset) v.offsets
+                                , stringPicks = Data.GuitarForm.removePicks (Set.singleton offset) v.stringPicks
+                            }
+                        )
+                        model.project
                 , voicingSelectedOffsets = Set.remove offset model.voicingSelectedOffsets
-                , voicingFretPicks = Data.GuitarForm.removePicks (Set.singleton offset) model.voicingFretPicks
               }
             , Cmd.none
             )
@@ -2127,6 +2149,9 @@ updateCore msg model =
                 currentOffsets =
                     List.drop index model.project.voicings |> List.head |> Maybe.map .offsets |> Maybe.withDefault []
 
+                currentPicks =
+                    List.drop index model.project.voicings |> List.head |> Maybe.map .stringPicks |> Maybe.withDefault Set.empty
+
                 pick =
                     ( offset, stringIndex )
             in
@@ -2137,18 +2162,20 @@ updateCore msg model =
             else if not (List.member offset currentOffsets) then
                 -- 空きセルをクリック: 音を追加し、そのセルを青丸にしてプレビュー発音
                 ( { model
-                    | project = Data.Project.updateVoicing index (\v -> { v | offsets = offset :: v.offsets }) model.project
+                    | project =
+                        Data.Project.updateVoicing index
+                            (\v -> { v | offsets = offset :: v.offsets, stringPicks = Set.insert pick v.stringPicks })
+                            model.project
                     , voicingSelectedOffsets = Set.singleton offset
-                    , voicingFretPicks = Set.insert pick model.voicingFretPicks
                   }
                 , Ports.toAudio (Performance.encodePreviewNote (Data.Track.instrumentToString model.project.chordTrack.instrument) pitch)
                 )
 
-            else if Set.member pick model.voicingFretPicks then
+            else if Set.member pick currentPicks then
                 -- 青丸をクリック: そのセルだけ外して灰丸に戻す（音は消えない）
                 ( { model
-                    | voicingSelectedOffsets = Set.singleton offset
-                    , voicingFretPicks = Set.remove pick model.voicingFretPicks
+                    | project = Data.Project.updateVoicing index (\v -> { v | stringPicks = Set.remove pick v.stringPicks }) model.project
+                    , voicingSelectedOffsets = Set.singleton offset
                   }
                 , Cmd.none
                 )
@@ -2156,8 +2183,8 @@ updateCore msg model =
             else
                 -- 灰丸をクリック: そのセルも青丸にする（音は増減しない、発音なし）
                 ( { model
-                    | voicingSelectedOffsets = Set.singleton offset
-                    , voicingFretPicks = Set.insert pick model.voicingFretPicks
+                    | project = Data.Project.updateVoicing index (\v -> { v | stringPicks = Set.insert pick v.stringPicks }) model.project
+                    , voicingSelectedOffsets = Set.singleton offset
                   }
                 , Cmd.none
                 )
@@ -2177,9 +2204,16 @@ updateCore msg model =
                     pitch - rootPitch
             in
             ( { model
-                | project = Data.Project.updateVoicing index (\v -> { v | offsets = List.filter ((/=) offset) v.offsets }) model.project
+                | project =
+                    Data.Project.updateVoicing index
+                        (\v ->
+                            { v
+                                | offsets = List.filter ((/=) offset) v.offsets
+                                , stringPicks = Data.GuitarForm.removePicks (Set.singleton offset) v.stringPicks
+                            }
+                        )
+                        model.project
                 , voicingSelectedOffsets = Set.remove offset model.voicingSelectedOffsets
-                , voicingFretPicks = Data.GuitarForm.removePicks (Set.singleton offset) model.voicingFretPicks
               }
             , Cmd.none
             )
@@ -2212,8 +2246,10 @@ updateCore msg model =
             case ( Data.VoicingPreset.qualityByLabel model.voicingPresetQuality, Data.VoicingPreset.shapeByName model.voicingPresetShape ) of
                 ( Just quality, Just shape ) ->
                     ( { model
-                        | project = Data.Project.updateVoicing index (\v -> { v | offsets = Data.VoicingPreset.offsetsFor quality shape }) model.project
-                        , voicingFretPicks = Set.empty
+                        | project =
+                            Data.Project.updateVoicing index
+                                (\v -> { v | offsets = Data.VoicingPreset.offsetsFor quality shape, stringPicks = Set.empty })
+                                model.project
                       }
                     , Cmd.none
                     )
@@ -2229,7 +2265,6 @@ updateCore msg model =
                     , editingVoicingIndex = Nothing
                     , voicingSelectedOffsets = Set.empty
                     , voicingDragState = NoVoicingDrag
-                    , voicingFretPicks = Set.empty
                   }
                 , Cmd.none
                 )
@@ -3042,7 +3077,6 @@ view model =
             , previewRootPc = model.voicingPreviewRoot
             , presetQualityName = model.voicingPresetQuality
             , presetShapeName = model.voicingPresetShape
-            , fretPicks = model.voicingFretPicks
             }
             model.project.chordTrack
         , ScrapShelf.view

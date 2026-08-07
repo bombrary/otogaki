@@ -4,6 +4,7 @@ import Data.Chord as Chord exposing (Quality(..))
 import Data.Voicing as Voicing
 import Data.VoicingPreset as VoicingPreset exposing (Shape(..))
 import Expect
+import Set
 import Test exposing (Test, describe, test)
 
 
@@ -19,7 +20,7 @@ suite =
             \_ ->
                 let
                     voicing =
-                        { name = "tmp", offsets = VoicingPreset.offsetsFor Maj7 Closed }
+                        { name = "tmp", offsets = VoicingPreset.offsetsFor Maj7 Closed, stringPicks = Set.empty }
 
                     fromPreset =
                         Voicing.pitchesFor chord.root voicing |> List.sort

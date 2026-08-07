@@ -105,4 +105,22 @@ suite =
                         List.map .id notes
                 in
                 Expect.equal (List.length ids) (Set.size (Set.fromList ids))
+        , test "@NAME で登録ボイシングを指定したら、root/quality が forChord の固定表にあっても登録ボイシングの方を使う" <|
+            \_ ->
+                let
+                    -- E は forChord の固定表にあり、何もしなければ [40,47,52,56,59,64] が鳴る。
+                    -- ここでは全く別の音集合 [40,45,50,55] を持つボイシングを登録して上書きする
+                    myopen =
+                        { name = "myopen", offsets = [ 0, 5, 10, 15 ], stringPicks = Set.empty }
+
+                    result =
+                        StrumExpand.apply { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar } [ myopen ] downUpPattern (testProject "E@myopen")
+
+                    pitches =
+                        notesOfTrack 1 result |> List.map .pitch |> Set.fromList
+                in
+                Expect.equal ( True, False )
+                    ( Set.member 40 pitches && Set.member 45 pitches && Set.member 50 pitches && Set.member 55 pitches
+                    , Set.member 47 pitches
+                    )
         ]
