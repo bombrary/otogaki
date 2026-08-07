@@ -1,4 +1,4 @@
-module Data.GuitarForm exposing (Form, StringPicks, bestForm, forChord, formFromPicks, openStrings, removePicks, shiftPicks, toPitches)
+module Data.GuitarForm exposing (Form, StringPicks, bestForm, forChord, formFromPicks, openStrings, removePicks, shiftPicks, toIndexedPitches, toPitches)
 
 import Data.Chord exposing (Chord, Quality(..))
 import Set exposing (Set)
@@ -307,3 +307,15 @@ formFromPicks rootPitch offsets picks =
 
     else
         Nothing
+
+
+{-| Form を「押さえている弦インデックスとそのピッチ」のペア列に分解する。ミュート弦は含まない。
+弦インデックスは低音弦（E）を 0 として数える。
+-}
+toIndexedPitches : Form -> List ( Int, Int )
+toIndexedPitches f =
+    List.map3 (\i open fret -> Maybe.map (\fr -> ( i, open + fr )) fret)
+        (List.range 0 (List.length openStrings - 1))
+        openStrings
+        f.frets
+        |> List.filterMap identity

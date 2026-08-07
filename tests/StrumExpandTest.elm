@@ -1,5 +1,7 @@
 module StrumExpandTest exposing (suite)
 
+import Data.Chord exposing (Quality(..))
+import Data.GuitarForm as GuitarForm
 import Data.Key as Key
 import Data.Meter as Meter
 import Data.Project as Project exposing (Project)
@@ -123,4 +125,30 @@ suite =
                     ( Set.member 40 pitches && Set.member 45 pitches && Set.member 50 pitches && Set.member 55 pitches
                     , Set.member 47 pitches
                     )
+        , test "formFor は登録ボイシングがあれば forChord より優先する" <|
+            \_ ->
+                let
+                    chordE =
+                        { root = 4, quality = Maj, extensions = [], alterations = [], bass = Nothing, voicing = Just "myopen" }
+
+                    myopen =
+                        { name = "myopen", offsets = [ 0, 5, 10, 15 ], stringPicks = Set.empty }
+
+                    pitches =
+                        StrumExpand.formFor [ myopen ] chordE
+                            |> Maybe.map GuitarForm.toPitches
+                            |> Maybe.withDefault []
+                            |> Set.fromList
+                in
+                Expect.equal ( True, False )
+                    ( Set.member 40 pitches && Set.member 45 pitches && Set.member 50 pitches && Set.member 55 pitches
+                    , Set.member 47 pitches
+                    )
+        , test "formFor はボイシング未登録なら forChord にフォールバックする" <|
+            \_ ->
+                let
+                    chordE =
+                        { root = 4, quality = Maj, extensions = [], alterations = [], bass = Nothing, voicing = Nothing }
+                in
+                Expect.equal (GuitarForm.forChord chordE) (StrumExpand.formFor [] chordE)
         ]

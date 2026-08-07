@@ -3,7 +3,9 @@ module View.ChordEditor exposing (Config, view)
 import Data.Chord exposing (Chord)
 import Data.Chord.Format as Format
 import Data.ChordTrack exposing (ChordCell, ChordTrack, TokenKind(..))
+import Data.GuitarForm as GuitarForm
 import Data.Key exposing (Key)
+import Data.StrumExpand
 import Data.Timeline exposing (Timeline)
 import Data.Track
 import Data.Voicing exposing (Voicing, anchorPitch)
@@ -126,6 +128,7 @@ view config timeline playheadTicks isGhost loadStates voicingState track =
                     )
                 ]
             ]
+        , nowPlayingView timeline playheadTicks voicingState.enabled voicingState.voicings track
         , textarea
             [ HA.value track.text
             , HE.onInput config.changedText
@@ -148,6 +151,61 @@ view config timeline playheadTicks isGhost loadStates voicingState track =
             (List.map (cellView config timeline playheadTicks) (Data.ChordTrack.cells timeline track))
         , voicingsSection config voicingState (Data.ChordTrack.cells timeline track)
         ]
+
+
+{-| 再生位置にあるコード。`cellView` の isCurrentBar と同じ判定。
+-}
+currentChord : Timeline -> Int -> ChordTrack -> Maybe Chord
+currentChord timeline playheadTicks track =
+    Data.ChordTrack.resolved timeline track
+        |> List.filter (\rc -> playheadTicks >= rc.startTicks && playheadTicks < rc.startTicks + rc.durationTicks)
+        |> List.head
+        |> Maybe.map .chord
+
+
+{-| 今鳴っているコードの運指を常時表示する。Data.StrumExpand.formFor で Form を決めるので、
+実際のストローク音生成と必ず一致する。ボイシングトグル OFF のときは voicings を空にする。
+-}
+nowPlayingView : Timeline -> Int -> Bool -> List Voicing -> ChordTrack -> Html msg
+nowPlayingView timeline playheadTicks voicingEnabled voicings track =
+    case currentChord timeline playheadTicks track of
+        Nothing ->
+            text ""
+
+        Just chord ->
+            let
+                activeVoicings =
+                    if voicingEnabled then
+                        voicings
+
+                    else
+                        []
+            in
+            case Data.StrumExpand.formFor activeVoicings chord of
+                Nothing ->
+                    text ""
+
+                Just form ->
+                    let
+                        indexed =
+                            GuitarForm.toIndexedPitches form
+
+                        selected =
+                            List.map Tuple.second indexed |> Set.fromList
+
+                        picks =
+                            List.map (\( s, p ) -> ( p, s )) indexed |> Set.fromList
+                    in
+                    div
+                        [ HA.style "display" "flex"
+                        , HA.style "align-items" "flex-start"
+                        , HA.style "gap" "0.5rem"
+                        , HA.style "margin-top" "0.4rem"
+                        ]
+                        [ span [ HA.style "font-weight" "bold", HA.style "white-space" "nowrap" ]
+                            [ text ("🎸 " ++ Format.format { preferFlat = False } chord) ]
+                        , Fretboard.viewReadOnly { rootPitch = 0, selected = selected, picks = picks }
+                        ]
 
 
 {-| コード進行で使われているが未登録のボイシング名を重複なく列挙する。

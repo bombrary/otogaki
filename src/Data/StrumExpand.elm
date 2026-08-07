@@ -1,4 +1,4 @@
-module Data.StrumExpand exposing (apply)
+module Data.StrumExpand exposing (apply, formFor)
 
 import Data.Chord
 import Data.ChordTrack
@@ -16,15 +16,14 @@ stringDelayTicks =
     8
 
 
-{-| コードの発音候補を「弦順（低音から高音）のピッチ列」として取り出す。
+{-| このコードをギターで鳴らすならどの Form を使うか。
 `chord.voicing` が登録済みボイシングを指していれば常にそれを使う（保存された運指があればそのとおりの弦で、
 なければ bestForm が推定した弦で）。ここで GuitarForm.forChord を先に試すと、root/quality が固定表に
 一致するだけで登録ボイシングが黙殺されてしまうので順序に注意。ボイシング未指定のコードだけ、従来通り
-GuitarForm が引ければ実際の弦・フレットから、引けなければ toPitchesWith の理論値をそのまま昇順に並べたものを
-「擬似弦」として使う。
+GuitarForm.forChord にフォールバックする。ストローク音生成と指板ハイライト表示の両方がこの優先順を共有する。
 -}
-soundingPitches : List Voicing -> Data.Chord.Chord -> List Int
-soundingPitches voicings chord =
+formFor : List Voicing -> Data.Chord.Chord -> Maybe GuitarForm.Form
+formFor voicings chord =
     case chord.voicing |> Maybe.andThen (\name -> Data.Voicing.findByName name voicings) of
         Just voicing ->
             let
@@ -33,23 +32,27 @@ soundingPitches voicings chord =
             in
             case GuitarForm.formFromPicks rootPitch voicing.offsets voicing.stringPicks of
                 Just form ->
-                    GuitarForm.toPitches form
+                    Just form
 
                 Nothing ->
-                    case GuitarForm.bestForm (Data.Voicing.pitchesFor chord.root voicing) of
-                        Just form ->
-                            GuitarForm.toPitches form
-
-                        Nothing ->
-                            Data.Chord.toPitchesWith voicings chord |> List.sort
+                    GuitarForm.bestForm (Data.Voicing.pitchesFor chord.root voicing)
 
         Nothing ->
-            case GuitarForm.forChord chord of
-                Just form ->
-                    GuitarForm.toPitches form
+            GuitarForm.forChord chord
 
-                Nothing ->
-                    Data.Chord.toPitchesWith voicings chord |> List.sort
+
+{-| コードの発音候補を「弦順（低音から高音）のピッチ列」として取り出す。
+Form が引ければ実際の弦・フレットから、引けなければ toPitchesWith の理論値をそのまま昇順に並べたものを
+「擬似弦」として使う。
+-}
+soundingPitches : List Voicing -> Data.Chord.Chord -> List Int
+soundingPitches voicings chord =
+    case formFor voicings chord of
+        Just form ->
+            GuitarForm.toPitches form
+
+        Nothing ->
+            Data.Chord.toPitchesWith voicings chord |> List.sort
 
 
 {-| 選択範囲内の既存ノートを置換し、コード進行に沿ったストロークを展開する。

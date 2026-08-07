@@ -1,4 +1,4 @@
-module View.Fretboard exposing (Config, view)
+module View.Fretboard exposing (Config, view, viewReadOnly)
 
 import Data.GuitarForm as GuitarForm
 import Html exposing (Html, div, text)
@@ -69,7 +69,20 @@ pitchName pitch =
 弦は高音側（最後の要素）が上に来るように反転して描画する（TAB 譜・鍵盤の上下と向きを揃えるため）。
 -}
 view : Config msg -> { rootPitch : Int, selected : Set Int, picks : GuitarForm.StringPicks } -> Html msg
-view config { rootPitch, selected, picks } =
+view config sel =
+    viewInternal (Just config) sel
+
+
+{-| クリックハンドラも pointer カーソルもない、現在鳴っているコードの運指を見せるだけの表示。
+特定の Voicing に紐づいていないのでクリックしても何を更新すればいいかがない。
+-}
+viewReadOnly : { rootPitch : Int, selected : Set Int, picks : GuitarForm.StringPicks } -> Html msg
+viewReadOnly sel =
+    viewInternal Nothing sel
+
+
+viewInternal : Maybe (Config msg) -> { rootPitch : Int, selected : Set Int, picks : GuitarForm.StringPicks } -> Html msg
+viewInternal config { rootPitch, selected, picks } =
     let
         indexedStrings =
             List.indexedMap Tuple.pair GuitarForm.openStrings
@@ -88,7 +101,7 @@ view config { rootPitch, selected, picks } =
         )
 
 
-stringRow : Config msg -> Int -> Set Int -> GuitarForm.StringPicks -> ( Int, Int ) -> Html msg
+stringRow : Maybe (Config msg) -> Int -> Set Int -> GuitarForm.StringPicks -> ( Int, Int ) -> Html msg
 stringRow config rootPitch selected picks ( stringIndex, openPitch ) =
     div [ HA.style "display" "flex" ]
         (openLabelCell openPitch
@@ -113,7 +126,7 @@ openLabelCell openPitch =
         [ text (pitchName openPitch) ]
 
 
-fretCell : Config msg -> Int -> Set Int -> GuitarForm.StringPicks -> Int -> Int -> Int -> Html msg
+fretCell : Maybe (Config msg) -> Int -> Set Int -> GuitarForm.StringPicks -> Int -> Int -> Int -> Html msg
 fretCell config rootPitch selected picks stringIndex openPitch column =
     let
         pitch =
@@ -130,9 +143,20 @@ fretCell config rootPitch selected picks stringIndex openPitch column =
 
         isBelowRoot =
             pitch < rootPitch && not isSelected
+
+        interactiveAttrs =
+            case config of
+                Just c ->
+                    [ HA.style "cursor" "pointer"
+                    , HE.onClick (c.pressedFret stringIndex column)
+                    , HE.onDoubleClick (c.doubleClickedFret stringIndex column)
+                    ]
+
+                Nothing ->
+                    []
     in
     div
-        [ HA.style "width"
+        ([ HA.style "width"
             (String.fromInt
                 (if isNut then
                     nutWidth
@@ -142,31 +166,30 @@ fretCell config rootPitch selected picks stringIndex openPitch column =
                 )
                 ++ "px"
             )
-        , HA.style "height" (String.fromInt rowHeight ++ "px")
-        , HA.style "box-sizing" "border-box"
-        , HA.style "border-right"
+         , HA.style "height" (String.fromInt rowHeight ++ "px")
+         , HA.style "box-sizing" "border-box"
+         , HA.style "border-right"
             (if isNut then
                 "3px solid #333"
 
              else
                 "1px solid #999"
             )
-        , HA.style "border-bottom" "1px solid #ddd"
-        , HA.style "opacity"
+         , HA.style "border-bottom" "1px solid #ddd"
+         , HA.style "opacity"
             (if isBelowRoot then
                 "0.35"
 
              else
                 "1"
             )
-        , HA.style "display" "flex"
-        , HA.style "align-items" "center"
-        , HA.style "justify-content" "center"
-        , HA.style "cursor" "pointer"
-        , HA.style "user-select" "none"
-        , HE.onClick (config.pressedFret stringIndex column)
-        , HE.onDoubleClick (config.doubleClickedFret stringIndex column)
-        ]
+         , HA.style "display" "flex"
+         , HA.style "align-items" "center"
+         , HA.style "justify-content" "center"
+         , HA.style "user-select" "none"
+         ]
+            ++ interactiveAttrs
+        )
         [ if isSelected then
             div
                 [ HA.style "width" "12px"

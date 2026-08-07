@@ -107,4 +107,14 @@ suite =
                 Expect.equal
                     Nothing
                     (GuitarForm.formFromPicks 40 [] (Set.fromList [ ( 0, 0 ) ]))
+        , test "toIndexedPitches はミュート弦を除いて (弦インデックス, ピッチ) のペア列を返す" <|
+            \_ ->
+                Expect.equal
+                    [ ( 0, 40 ), ( 1, 47 ) ]
+                    (GuitarForm.toIndexedPitches { frets = [ Just 0, Just 2, Nothing, Nothing, Nothing, Nothing ] })
+        , test "toIndexedPitches は全弦ミュートなら空リストを返す" <|
+            \_ ->
+                Expect.equal
+                    []
+                    (GuitarForm.toIndexedPitches { frets = [ Nothing, Nothing, Nothing, Nothing, Nothing, Nothing ] })
         ]
