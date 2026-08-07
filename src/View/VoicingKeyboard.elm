@@ -82,7 +82,7 @@ pressDecoder =
 
 
 view : Config msg -> { rootPitch : Int, displayRootPitch : Int, selected : Set Int } -> Html msg
-view config { displayRootPitch, selected } =
+view config { rootPitch, displayRootPitch, selected } =
     let
         pitches =
             List.range minPitch maxPitch |> List.reverse
@@ -96,21 +96,24 @@ view config { displayRootPitch, selected } =
         ]
         [ div [ HA.style "display" "flex" ]
             [ div [ HA.style "flex" ("0 0 " ++ String.fromInt keyColumnWidth ++ "px") ]
-                (List.map (keyRow displayRootPitch) pitches)
+                (List.map (keyRow displayRootPitch rootPitch) pitches)
             , div [ HA.style "flex" ("0 0 " ++ String.fromInt laneWidth ++ "px"), HA.style "position" "relative" ]
-                (List.map (laneRow config displayRootPitch selected) pitches)
+                (List.map (laneRow config displayRootPitch rootPitch selected) pitches)
             ]
         ]
 
 
-keyRow : Int -> Int -> Html msg
-keyRow displayRootPitch pitch =
+keyRow : Int -> Int -> Int -> Html msg
+keyRow displayRootPitch rootPitch pitch =
     let
         isBlack =
             not (isWhite pitch)
 
         isRoot =
             pitch == displayRootPitch
+
+        isBelowRoot =
+            pitch < rootPitch
 
         label =
             if modBy 12 pitch == 0 then
@@ -136,6 +139,13 @@ keyRow displayRootPitch pitch =
              else
                 "#555"
             )
+        , HA.style "opacity"
+            (if isBelowRoot then
+                "0.35"
+
+             else
+                "1"
+            )
         , HA.style "border-bottom" "1px solid #ddd"
         , HA.style "border-top"
             (if isRoot then
@@ -153,14 +163,17 @@ keyRow displayRootPitch pitch =
         [ text label ]
 
 
-laneRow : Config msg -> Int -> Set Int -> Int -> Html msg
-laneRow config displayRootPitch selected pitch =
+laneRow : Config msg -> Int -> Int -> Set Int -> Int -> Html msg
+laneRow config displayRootPitch rootPitch selected pitch =
     let
         isSelected =
             Set.member pitch selected
 
         isRoot =
             pitch == displayRootPitch
+
+        isBelowRoot =
+            pitch < rootPitch && not isSelected
     in
     div
         [ HA.style "height" (String.fromInt rowHeight ++ "px")
@@ -174,6 +187,13 @@ laneRow config displayRootPitch selected pitch =
 
              else
                 "#f5f5f5"
+            )
+        , HA.style "opacity"
+            (if isBelowRoot then
+                "0.35"
+
+             else
+                "1"
             )
         , HA.style "border-bottom" "1px solid #eee"
         , HA.style "border-top"

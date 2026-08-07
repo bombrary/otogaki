@@ -2032,7 +2032,11 @@ updateCore msg model =
                 currentOffsets =
                     List.drop index model.project.voicings |> List.head |> Maybe.map .offsets |> Maybe.withDefault []
             in
-            if pos.shift && List.member offset currentOffsets then
+            if offset < 0 && not (List.member offset currentOffsets) then
+                -- root より低い空き行。offsets は常に 0 以上の不変式なので新規追加できない
+                ( model, Cmd.none )
+
+            else if pos.shift && List.member offset currentOffsets then
                 -- 埋まっている行を shift クリック: 複数選択のトグルのみ。ドラッグは開始しない
                 ( { model
                     | voicingSelectedOffsets =
@@ -2126,7 +2130,11 @@ updateCore msg model =
                 pick =
                     ( offset, stringIndex )
             in
-            if not (List.member offset currentOffsets) then
+            if offset < 0 && not (List.member offset currentOffsets) then
+                -- root より低い空きセル。offsets は常に 0 以上の不変式なので新規追加できない
+                ( model, Cmd.none )
+
+            else if not (List.member offset currentOffsets) then
                 -- 空きセルをクリック: 音を追加し、そのセルを青丸にしてプレビュー発音
                 ( { model
                     | project = Data.Project.updateVoicing index (\v -> { v | offsets = offset :: v.offsets }) model.project

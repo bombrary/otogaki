@@ -127,6 +127,9 @@ fretCell config rootPitch selected picks stringIndex openPitch column =
 
         isNut =
             column == 0
+
+        isBelowRoot =
+            pitch < rootPitch && not isSelected
     in
     div
         [ HA.style "width"
@@ -149,6 +152,13 @@ fretCell config rootPitch selected picks stringIndex openPitch column =
                 "1px solid #999"
             )
         , HA.style "border-bottom" "1px solid #ddd"
+        , HA.style "opacity"
+            (if isBelowRoot then
+                "0.35"
+
+             else
+                "1"
+            )
         , HA.style "display" "flex"
         , HA.style "align-items" "center"
         , HA.style "justify-content" "center"
