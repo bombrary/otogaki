@@ -9,6 +9,7 @@ import Data.ReferenceAudio exposing (ReferenceAudio)
 import Data.Scrap exposing (Scrap)
 import Data.Section exposing (Section)
 import Data.Track exposing (Track, TrackKind(..))
+import Data.Voicing exposing (Voicing)
 import Json.Decode as Decode
 import Json.Encode as Encode
 
@@ -31,6 +32,8 @@ encode project =
         , ( "referenceAudio", encodeReferenceAudio project.referenceAudio )
         , ( "nextId", Encode.int project.nextId )
         , ( "memo", Encode.string project.memo )
+        , ( "voicings", Encode.list encodeVoicing project.voicings )
+        , ( "voicingEnabled", Encode.bool project.voicingEnabled )
         ]
 
 
@@ -93,6 +96,14 @@ encodeScrap scrap =
         [ ( "id", Encode.int scrap.id )
         , ( "name", Encode.string scrap.name )
         , ( "notes", Encode.list encodeNote scrap.notes )
+        ]
+
+
+encodeVoicing : Voicing -> Encode.Value
+encodeVoicing v =
+    Encode.object
+        [ ( "name", Encode.string v.name )
+        , ( "offsets", Encode.list Encode.int v.offsets )
         ]
 
 
@@ -169,6 +180,8 @@ type alias PartB =
     , referenceAudio : ReferenceAudio
     , nextId : Int
     , memo : String
+    , voicings : List Voicing
+    , voicingEnabled : Bool
     }
 
 
@@ -188,6 +201,8 @@ buildProject a b =
     , referenceAudio = b.referenceAudio
     , nextId = b.nextId
     , memo = b.memo
+    , voicings = b.voicings
+    , voicingEnabled = b.voicingEnabled
     }
 
 
@@ -215,7 +230,7 @@ partADecoder =
 
 partBDecoder : Decode.Decoder PartB
 partBDecoder =
-    Decode.map4 PartB
+    Decode.map6 PartB
         (Decode.oneOf
             [ Decode.field "scraps" (Decode.list scrapDecoder)
             , Decode.succeed []
@@ -232,6 +247,23 @@ partBDecoder =
             , Decode.succeed ""
             ]
         )
+        (Decode.oneOf
+            [ Decode.field "voicings" (Decode.list voicingDecoder)
+            , Decode.succeed []
+            ]
+        )
+        (Decode.oneOf
+            [ Decode.field "voicingEnabled" Decode.bool
+            , Decode.succeed True
+            ]
+        )
+
+
+voicingDecoder : Decode.Decoder Voicing
+voicingDecoder =
+    Decode.map2 Voicing
+        (Decode.field "name" Decode.string)
+        (Decode.field "offsets" (Decode.list Decode.int))
 
 
 referenceAudioDecoder : Decode.Decoder ReferenceAudio

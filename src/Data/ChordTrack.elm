@@ -7,6 +7,8 @@ module Data.ChordTrack exposing
     , cells
     , empty
     , resolved
+    , stripComments
+    , toPlainText
     , transpose
     )
 
@@ -66,22 +68,67 @@ parseToken tok =
             ChordParser.parse tok |> Result.map TChord
 
 
+type TextChunk
+    = CodeChunk String
+    | CommentChunk String
+
+
+{-| `//` から行末までをコメントとして切り出す。全チャンクを連結すると元のテキストに一致するので、
+改行位置やコメントの中身を完全に保持できる（移調のテキスト置換で使う）。
+-}
+splitComments : String -> List TextChunk
+splitComments text =
+    String.split "\n" text
+        |> List.map splitLineComment
+        |> List.intersperse [ CodeChunk "\n" ]
+        |> List.concat
+
+
+splitLineComment : String -> List TextChunk
+splitLineComment line =
+    case String.indexes "//" line of
+        idx :: _ ->
+            [ CodeChunk (String.left idx line), CommentChunk (String.dropLeft idx line) ]
+
+        [] ->
+            [ CodeChunk line ]
+
+
+{-| `//` 以降（行末まで）を取り除く。小節・コードのパースはこの結果に対して行う。
+-}
+stripComments : String -> String
+stripComments text =
+    splitComments text
+        |> List.map
+            (\chunk ->
+                case chunk of
+                    CodeChunk s ->
+                        s
+
+                    CommentChunk _ ->
+                        ""
+            )
+        |> String.concat
+
+
 {-| テキスト中の小節区切りの数。ticks は不要な場面（曲全体の小節表の長さを決める際など）で使う。
 -}
 barCount : ChordTrack -> Int
 barCount track =
     track.text
+        |> stripComments
         |> String.replace "\n" " "
         |> String.split "|"
         |> List.length
 
 
 {-| 小節区切りは | だけ。改行は空白と同じ扱いで、見た目の整形のために自由に使える。
-各小節の拍子は Timeline から引く（セクションごとに拍子が違う場合に対応）。
+`//` から行末まではコメントとして無視される。各小節の拍子は Timeline から引く（セクションごとに拍子が違う場合に対応）。
 -}
 cells : Timeline -> ChordTrack -> List ChordCell
 cells timeline track =
     track.text
+        |> stripComments
         |> String.replace "\n" " "
         |> String.split "|"
         |> List.indexedMap
@@ -196,7 +243,7 @@ resolveCell cell state =
 
 {-| コード進行テキストを丸ごと移調する。`%`・`_`・`=`・改行・空白・`|` はテキストの部分置換で
 そのまま保持し、パースできるコードトークンだけを root/bass を +semitones した上で書き直す。
-パースできないトークンは無変換のまま残す。
+パースできないトークンは無変換のまま残す。`//` コメントの中身は移調対象から除外する。
 -}
 transpose : Int -> ChordTrack -> ChordTrack
 transpose semitones track =
@@ -243,14 +290,24 @@ tokenize text =
 
 transposeText : Int -> String -> String
 transposeText semitones text =
-    tokenize text
+    splitComments text
         |> List.map
-            (\seg ->
-                if seg.isWord then
-                    transposeWord semitones seg.content
+            (\chunk ->
+                case chunk of
+                    CodeChunk s ->
+                        tokenize s
+                            |> List.map
+                                (\seg ->
+                                    if seg.isWord then
+                                        transposeWord semitones seg.content
 
-                else
-                    seg.content
+                                    else
+                                        seg.content
+                                )
+                            |> String.concat
+
+                    CommentChunk s ->
+                        s
             )
         |> String.concat
 
@@ -282,3 +339,52 @@ transposeChord semitones chord =
         | root = modBy 12 (chord.root + semitones)
         , bass = Maybe.map (\b -> modBy 12 (b + semitones)) chord.bass
     }
+
+
+{-| ボイシング指定（`@NAME`）を落としたプレーンなテキストを返す。第三者に渡すコード譜のコピー用。
+`transposeText` と同じ構造で、トークン単位にパース→`formatPlain`で書き戻すだけが違う。
+パースできないトークン・`%`/`_`/`=`・コメント・改行はそのまま残る。
+-}
+toPlainText : ChordTrack -> String
+toPlainText track =
+    splitComments track.text
+        |> List.map
+            (\chunk ->
+                case chunk of
+                    CodeChunk s ->
+                        tokenize s
+                            |> List.map
+                                (\seg ->
+                                    if seg.isWord then
+                                        plainWord seg.content
+
+                                    else
+                                        seg.content
+                                )
+                            |> String.concat
+
+                    CommentChunk s ->
+                        s
+            )
+        |> String.concat
+
+
+plainWord : String -> String
+plainWord word =
+    case word of
+        "%" ->
+            word
+
+        "_" ->
+            word
+
+        "=" ->
+            word
+
+        _ ->
+            case ChordParser.parse word of
+                Ok chord ->
+                    ChordFormat.formatPlain { preferFlat = False } chord
+
+                Err _ ->
+                    word

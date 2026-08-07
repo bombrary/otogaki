@@ -4,6 +4,7 @@ module Data.Project exposing
     , addScrap
     , addSection
     , addTrack
+    , addVoicing
     , demo
     , insertBars
     , mapAllNotes
@@ -15,6 +16,7 @@ module Data.Project exposing
     , removeScrap
     , removeSection
     , removeTrack
+    , removeVoicing
     , sectionBounds
     , timeline
     , updateChordTrack
@@ -22,6 +24,7 @@ module Data.Project exposing
     , updateScrap
     , updateSection
     , updateTrack
+    , updateVoicing
     )
 
 import Data.ChordTrack exposing (ChordTrack)
@@ -34,6 +37,7 @@ import Data.Section exposing (Section)
 import Data.Time exposing (ppq)
 import Data.Timeline exposing (Timeline)
 import Data.Track exposing (Instrument(..), Track, TrackKind(..))
+import Data.Voicing exposing (Voicing)
 import Dict
 
 
@@ -47,6 +51,8 @@ type alias Project =
     , referenceAudio : ReferenceAudio
     , nextId : Int
     , memo : String
+    , voicings : List Voicing
+    , voicingEnabled : Bool
     }
 
 
@@ -154,12 +160,40 @@ demo =
     , referenceAudio = Data.ReferenceAudio.empty
     , nextId = 100
     , memo = ""
+    , voicings = []
+    , voicingEnabled = True
     }
 
 
 updateChordTrack : (ChordTrack -> ChordTrack) -> Project -> Project
 updateChordTrack f project =
     { project | chordTrack = f project.chordTrack }
+
+
+addVoicing : String -> Project -> Project
+addVoicing name project =
+    { project | voicings = project.voicings ++ [ Data.Voicing.empty name ] }
+
+
+removeVoicing : Int -> Project -> Project
+removeVoicing index project =
+    { project | voicings = List.take index project.voicings ++ List.drop (index + 1) project.voicings }
+
+
+updateVoicing : Int -> (Voicing -> Voicing) -> Project -> Project
+updateVoicing index f project =
+    { project
+        | voicings =
+            List.indexedMap
+                (\i v ->
+                    if i == index then
+                        f v
+
+                    else
+                        v
+                )
+                project.voicings
+    }
 
 
 addScrap : List Note -> Project -> Project

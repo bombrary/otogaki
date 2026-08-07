@@ -9,7 +9,7 @@ import Test exposing (Test, describe, test)
 
 chord : Int -> Quality -> List Extension -> List Alteration -> Maybe Int -> Chord
 chord root quality extensions alterations bass =
-    { root = root, quality = quality, extensions = extensions, alterations = alterations, bass = bass }
+    { root = root, quality = quality, extensions = extensions, alterations = alterations, bass = bass, voicing = Nothing }
 
 
 {-| `ChordParserTest` で parse の成功ケースとして与えていると同じ Chord 集合。入力文字列の表記ゆれではなく、
@@ -39,6 +39,7 @@ cases =
     , chord 0 Power [] [] Nothing
     , chord 0 Sus4 [] [] Nothing
     , chord 2 Sus2 [] [] Nothing
+    , chord 4 Dom7Sus4 [] [] Nothing
     , chord 11 Dim [] [] Nothing
     , chord 11 Dim7 [] [] Nothing
     , chord 11 HalfDim7 [] [] Nothing

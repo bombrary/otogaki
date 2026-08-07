@@ -8,8 +8,10 @@ import Html exposing (Html, button, div, input, option, select, span, text)
 import Html.Attributes as HA
 import Html.Events as HE
 import Json.Decode as Decode
+import Set exposing (Set)
 import Svg
 import Svg.Attributes as SA
+import View.Style as Style
 
 
 type alias Config msg =
@@ -20,14 +22,17 @@ type alias Config msg =
     , changeInstrument : Int -> String -> msg
     , changeVolume : Int -> String -> msg
     , renameTrack : Int -> String -> msg
+    , toggledGhost : Int -> msg
     }
 
 
-view : Config msg -> Int -> Int -> Dict String String -> List Track -> Html msg
-view config totalBars selectedTrackId loadStates tracks =
-    div [ HA.style "margin-top" "1rem" ]
-        (List.map (trackRow config totalBars selectedTrackId loadStates) tracks
-            ++ [ button [ HE.onClick config.addTrack, HA.style "margin-top" "0.5rem" ] [ text "+ トラック追加" ] ]
+view : Config msg -> Int -> Int -> Dict String String -> Set Int -> Maybe Int -> List Track -> Html msg
+view config totalBars selectedTrackId loadStates ghostTrackIds pendingDeleteId tracks =
+    Html.details
+        [ HA.attribute "open" "", HA.style "margin-top" "1rem" ]
+        (Html.summary (HA.style "cursor" "pointer" :: Style.headingText) [ text "トラック" ]
+            :: List.map (trackRow config totalBars selectedTrackId loadStates ghostTrackIds pendingDeleteId) tracks
+            ++ [ button (Style.baseButton ++ [ HE.onClick config.addTrack, HA.style "margin-top" "0.5rem" ]) [ text "+ トラック" ] ]
         )
 
 
@@ -36,14 +41,17 @@ stopClick msg =
     HE.stopPropagationOn "click" (Decode.succeed ( msg, True ))
 
 
-trackRow : Config msg -> Int -> Int -> Dict String String -> Track -> Html msg
-trackRow config totalBars selectedTrackId loadStates track =
+trackRow : Config msg -> Int -> Int -> Dict String String -> Set Int -> Maybe Int -> Track -> Html msg
+trackRow config totalBars selectedTrackId loadStates ghostTrackIds pendingDeleteId track =
     let
         selected =
             track.id == selectedTrackId
 
         loadState =
             Dict.get (Data.Track.instrumentToString track.instrument) loadStates
+
+        isGhost =
+            Set.member track.id ghostTrackIds
     in
     div
         [ HA.style "display" "flex"
@@ -83,9 +91,33 @@ trackRow config totalBars selectedTrackId loadStates track =
         , instrumentSelect config track
         , loadBadge loadState
         , muteButton config track
+        , ghostButton config isGhost track
         , volumeSlider config track
         , clipPreview totalBars track
-        , button [ stopClick (config.removeTrack track.id), HA.title "トラック削除" ] [ text "✕" ]
+        , Style.divider
+        , if pendingDeleteId == Just track.id then
+            button
+                (Style.armedDangerButton
+                    ++ [ stopClick (config.removeTrack track.id)
+                       , HA.title "トラック削除"
+                       , HA.attribute "aria-label" "トラックを本当に削除"
+                       , HA.style "min-width" "6rem"
+                       , HA.style "text-align" "center"
+                       ]
+                )
+                [ text "本当に削除？" ]
+
+          else
+            button
+                (Style.dangerButton
+                    ++ [ stopClick (config.removeTrack track.id)
+                       , HA.title "トラック削除"
+                       , HA.attribute "aria-label" "トラックを削除"
+                       , HA.style "min-width" "6rem"
+                       , HA.style "text-align" "center"
+                       ]
+                )
+                [ text "✕" ]
         ]
 
 
@@ -111,10 +143,10 @@ loadBadge : Maybe String -> Html msg
 loadBadge state =
     case state of
         Just "loading" ->
-            span [ HA.style "color" "#e67e22", HA.style "font-size" "0.8rem" ] [ text "読込中…" ]
+            span (Style.badge "loading") [ text "⏳ 読込中…" ]
 
         Just "failed" ->
-            span [ HA.style "color" "#e74c3c", HA.style "font-size" "0.8rem" ] [ text "読込失敗" ]
+            span (Style.badge "failed") [ text "⚠ 読込失敗" ]
 
         _ ->
             text ""
@@ -123,24 +155,25 @@ loadBadge state =
 muteButton : Config msg -> Track -> Html msg
 muteButton config track =
     button
-        [ stopClick (config.toggleMute track.id)
-        , HA.style "background"
-            (if track.muted then
-                "#e74c3c"
-
-             else
-                "#eee"
-            )
-        , HA.style "color"
-            (if track.muted then
-                "#fff"
-
-             else
-                "#333"
-            )
-        , HA.title "ミュート"
-        ]
+        (Style.toggleButton track.muted
+            ++ [ stopClick (config.toggleMute track.id)
+               , HA.title "ミュート"
+               , HA.attribute "aria-label" "ミュート"
+               ]
+        )
         [ text "M" ]
+
+
+ghostButton : Config msg -> Bool -> Track -> Html msg
+ghostButton config isGhost track =
+    button
+        (Style.toggleButton isGhost
+            ++ [ stopClick (config.toggledGhost track.id)
+               , HA.title "ピアノロールにこのトラックを透けて重ね表示"
+               , HA.attribute "aria-label" "ゴースト表示を切替"
+               ]
+        )
+        [ text "👻" ]
 
 
 volumeSlider : Config msg -> Track -> Html msg

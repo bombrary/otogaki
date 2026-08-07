@@ -33,6 +33,8 @@ baseProject sections notes chordText =
     , referenceAudio = ReferenceAudio.empty
     , nextId = 1000
     , memo = ""
+    , voicings = []
+    , voicingEnabled = True
     }
 
 

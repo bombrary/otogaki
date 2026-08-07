@@ -1,4 +1,4 @@
-module Data.Chord.Format exposing (format)
+module Data.Chord.Format exposing (format, formatPlain, pitchName, qualitySuffix)
 
 import Data.Chord exposing (Alteration(..), Chord, Extension(..), Quality(..))
 
@@ -6,10 +6,24 @@ import Data.Chord exposing (Alteration(..), Chord, Extension(..), Quality(..))
 {-| Chord を文字列に戻す。`Data.Chord.Parser` の qualityTable/suffixTable は多対1の表記ゆれを受け付けるため、
 こちらは Quality/Extension/Alteration ごとに「パースしても余分な拡張を含まない」正規形を一つ選ぶ。
 拡張・アルタレーションは常に括弧付きで出力し、Quality の接頭辞と混ざらないようにする。
-roundtrip 保証は `tests/ChordFormatTest.elm` を参照。
+roundtrip 保証は `tests/ChordFormatTest.elm` を参照。`chord.voicing` があれば末尾に `@name` を付ける。
 -}
 format : { preferFlat : Bool } -> Chord -> String
 format opts chord =
+    formatPlain opts chord
+        ++ (case chord.voicing of
+                Just name ->
+                    "@" ++ name
+
+                Nothing ->
+                    ""
+           )
+
+
+{-| `format` から `@name`（ボイシング指定）を落とした版。第三者に渡すプレーンなコード譜に使う。
+-}
+formatPlain : { preferFlat : Bool } -> Chord -> String
+formatPlain opts chord =
     pitchName opts.preferFlat chord.root
         ++ qualitySuffix chord.quality
         ++ String.concat (List.map extensionSuffix chord.extensions)
@@ -64,6 +78,9 @@ qualitySuffix quality =
 
         Sus4 ->
             "sus4"
+
+        Dom7Sus4 ->
+            "7sus4"
 
         Sixth ->
             "6"

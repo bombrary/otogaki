@@ -72,4 +72,26 @@ suite =
 
                     _ ->
                         Expect.fail "イベント数が想定外"
+        , test "// 以降は行末までコメントとして無視される" <|
+            \_ ->
+                resolved (track "C | G  // ここからBメロ\n%")
+                    |> List.length
+                    |> Expect.equal 3
+        , test "コメントの中の | は小節区切りとして数えられない" <|
+            \_ ->
+                ChordTrack.barCount (track "C | G  // 1|2|3 とか書くかも\n| Am")
+                    |> Expect.equal 3
+        , test "コメントだけの行は空小節扱い" <|
+            \_ ->
+                resolved (track "C | // この小節はまだ未定\n| G")
+                    |> List.map .startTicks
+                    |> Expect.equal [ 0, Data.Meter.ticksPerBar Data.Meter.default * 2 ]
+        , test "stripComments は // 以降だけを取り除く" <|
+            \_ ->
+                ChordTrack.stripComments "C | G  // メモ\nAm"
+                    |> Expect.equal "C | G  \nAm"
+        , test "transpose はコメントの中身を変えない" <|
+            \_ ->
+                (ChordTrack.transpose 2 (track "C  // C7 が好き")).text
+                    |> Expect.equal "D  // C7 が好き"
         ]

@@ -8,6 +8,7 @@ import Html.Attributes as HA
 import Html.Events as HE
 import Svg
 import Svg.Attributes as SA
+import View.Style as Style
 
 
 type alias Config msg =
@@ -18,36 +19,35 @@ type alias Config msg =
     }
 
 
-view : Config msg -> Int -> List Scrap -> Html msg
-view config selectionCount scraps =
-    div
-        [ HA.style "margin-top" "1rem"
+view : Config msg -> Int -> List Scrap -> Maybe Int -> Html msg
+view config selectionCount scraps pendingDeleteId =
+    Html.details
+        [ HA.attribute "open" ""
+        , HA.style "margin-top" "1rem"
         , HA.style "padding" "0.5rem"
         , HA.style "border" "1px dashed #bbb"
         , HA.style "border-radius" "4px"
         ]
-        [ div [ HA.style "display" "flex", HA.style "gap" "0.5rem", HA.style "align-items" "center", HA.style "flex-wrap" "wrap" ]
-            [ span [ HA.style "font-size" "0.9rem", HA.style "font-weight" "bold" ] [ text "📋 断片棚" ]
-            , span [ HA.style "font-size" "0.75rem", HA.style "color" "#888" ]
-                [ text "思いついたフレーズを曲に置く前にここへ貯めておける。「配置」で選択中のトラックの再生位置に置く" ]
-            , button
-                [ HE.onClick config.addFromSelection
-                , HA.disabled (selectionCount == 0)
-                , HA.title "ピアノロールで選択したノートを断片として保存"
-                ]
-                [ text "＋ 選択を断片棚へ" ]
-            ]
-        , if List.isEmpty scraps then
-            text ""
-
-          else
-            div [ HA.style "display" "flex", HA.style "gap" "0.5rem", HA.style "flex-wrap" "wrap", HA.style "margin-top" "0.4rem" ]
-                (List.map (scrapCard config) scraps)
+        [ Html.summary (HA.style "cursor" "pointer" :: Style.headingText) [ text "📋 断片棚" ]
+        , span [ HA.style "font-size" "0.75rem", HA.style "color" "#888", HA.style "display" "block", HA.style "margin-top" "0.3rem" ]
+            [ text "思いついたフレーズを曲に置く前にここへ貯めておける。「配置」で選択中のトラックの再生位置に置く" ]
+        , div [ HA.style "display" "flex", HA.style "gap" "0.5rem", HA.style "flex-wrap" "wrap", HA.style "margin-top" "0.4rem" ]
+            (List.map (scrapCard config pendingDeleteId) scraps
+                ++ [ button
+                        (Style.baseButton
+                            ++ [ HE.onClick config.addFromSelection
+                               , HA.disabled (selectionCount == 0)
+                               , HA.title "ピアノロールで選択したノートを断片として保存"
+                               ]
+                        )
+                        [ text "+ 断片" ]
+                   ]
+            )
         ]
 
 
-scrapCard : Config msg -> Scrap -> Html msg
-scrapCard config scrap =
+scrapCard : Config msg -> Maybe Int -> Scrap -> Html msg
+scrapCard config pendingDeleteId scrap =
     div
         [ HA.style "border" "1px solid #ccc"
         , HA.style "border-radius" "4px"
@@ -64,9 +64,14 @@ scrapCard config scrap =
             ]
             []
         , preview scrap.notes
-        , div [ HA.style "display" "flex", HA.style "gap" "0.3rem", HA.style "margin-top" "0.2rem" ]
-            [ button [ HE.onClick (config.place scrap.id), HA.title "選択中のトラックの再生位置に配置" ] [ text "配置" ]
-            , button [ HE.onClick (config.remove scrap.id), HA.title "断片を削除" ] [ text "✕" ]
+        , div [ HA.style "display" "flex", HA.style "gap" "0.5rem", HA.style "margin-top" "0.2rem", HA.style "align-items" "center" ]
+            [ button (Style.baseButton ++ [ HE.onClick (config.place scrap.id), HA.title "選択中のトラックの再生位置に配置" ]) [ text "配置" ]
+            , Style.divider
+            , if pendingDeleteId == Just scrap.id then
+                button (Style.armedDangerButton ++ [ HE.onClick (config.remove scrap.id), HA.title "断片を削除", HA.attribute "aria-label" "断片を本当に削除" ]) [ text "本当に？" ]
+
+              else
+                button (Style.dangerButton ++ [ HE.onClick (config.remove scrap.id), HA.title "断片を削除", HA.attribute "aria-label" "断片を削除" ]) [ text "✕" ]
             ]
         ]
 

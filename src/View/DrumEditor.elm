@@ -3,12 +3,15 @@ module View.DrumEditor exposing (Config, view)
 import Data.DrumPattern
 import Data.Note exposing (Note)
 import Data.Time
+import Data.Timeline exposing (Timeline)
 import Html exposing (Html, button, div, option, select, span, text)
 import Html.Attributes as HA
 import Html.Events
 import Json.Decode as Decode
 import Svg
 import Svg.Attributes as SA
+import View.Palette as Palette
+import View.Style as Style
 
 
 type alias Config msg =
@@ -63,14 +66,14 @@ rowIndexOf pitch =
         |> Maybe.map Tuple.first
 
 
-view : Config msg -> Int -> Int -> List Note -> Int -> Html msg
-view config totalBars fillBars notes playheadTicks =
+view : Config msg -> Timeline -> Int -> Int -> List Note -> Int -> Html msg
+view config timeline totalBars fillBars notes playheadTicks =
     div [ HA.style "margin-top" "1rem" ]
         [ div [ HA.style "display" "flex", HA.style "gap" "0.4rem", HA.style "align-items" "center", HA.style "flex-wrap" "wrap" ]
             (span [ HA.style "font-size" "0.85rem" ] [ text "プリセット（選択セクションがあればその範囲、なければ先頭から右の長さ）: " ]
                 :: List.map
                     (\pattern ->
-                        button [ Html.Events.onClick (config.appliedPreset pattern.name) ] [ text pattern.name ]
+                        button (Style.baseButton ++ [ Html.Events.onClick (config.appliedPreset pattern.name) ]) [ text pattern.name ]
                     )
                     Data.DrumPattern.patterns
                 ++ [ span [ HA.style "font-size" "0.85rem" ] [ text " 長さ:" ]
@@ -89,7 +92,7 @@ view config totalBars fillBars notes playheadTicks =
             )
         , div [ HA.style "display" "flex", HA.style "margin-top" "0.4rem" ]
             [ labelColumn
-            , gridView config totalBars notes playheadTicks
+            , gridView config timeline totalBars notes playheadTicks
             ]
         ]
 
@@ -112,8 +115,8 @@ labelColumn =
         )
 
 
-gridView : Config msg -> Int -> List Note -> Int -> Html msg
-gridView config totalBars notes playheadTicks =
+gridView : Config msg -> Timeline -> Int -> List Note -> Int -> Html msg
+gridView config timeline totalBars notes playheadTicks =
     div
         [ HA.style "overflow-x" "auto"
         , HA.style "border" "1px solid #ccc"
@@ -147,7 +150,7 @@ gridView config totalBars notes playheadTicks =
                     (Decode.field "offsetY" Decode.float)
                 )
             ]
-            (backgroundRows totalBars ++ verticalLines totalBars ++ List.filterMap activeCell notes ++ playheadView playheadTicks)
+            (backgroundRows totalBars ++ sectionTintBars timeline totalBars ++ verticalLines totalBars ++ List.filterMap activeCell notes ++ playheadView playheadTicks)
         ]
 
 
@@ -173,6 +176,31 @@ backgroundRows totalBars =
                 []
         )
         rows
+
+
+{-| 小節ごとに所属セクションを引いて、コード進行エディタ・ピアノロール・セクションバーと同じ配色で背景を塗る。
+末尾余白（sectionIndexが Nothing）は何も描画しない。
+-}
+sectionTintBars : Timeline -> Int -> List (Svg.Svg msg)
+sectionTintBars timeline totalBars =
+    List.range 0 (totalBars - 1)
+        |> List.filterMap (\i -> Data.Timeline.barAt i timeline)
+        |> List.filterMap
+            (\bar ->
+                bar.sectionIndex
+                    |> Maybe.map
+                        (\idx ->
+                            Svg.rect
+                                [ SA.x (String.fromInt (bar.index * 16 * cellWidth))
+                                , SA.y "0"
+                                , SA.width (String.fromInt (16 * cellWidth))
+                                , SA.height (String.fromInt gridHeight)
+                                , SA.fill (Palette.sectionTint idx)
+                                , SA.pointerEvents "none"
+                                ]
+                                []
+                        )
+            )
 
 
 verticalLines : Int -> List (Svg.Svg msg)

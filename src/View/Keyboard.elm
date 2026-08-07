@@ -3,6 +3,8 @@ module View.Keyboard exposing (Config, view)
 import Html exposing (Html, button, div, span, text)
 import Html.Attributes as HA
 import Html.Events as HE
+import Set exposing (Set)
+import View.Style as Style
 
 
 type alias Config msg =
@@ -31,10 +33,10 @@ whiteKeyWidth =
     34
 
 
-view : Config msg -> Bool -> Html msg
-view config open =
+view : Config msg -> Set Int -> Bool -> Html msg
+view config highlighted open =
     div [ HA.style "margin-top" "1rem" ]
-        (button [ HE.onClick config.toggled ]
+        (button (Style.toggleButton open ++ [ HE.onClick config.toggled ])
             [ text
                 (if open then
                     "🎹 鍵盤を閉じる"
@@ -44,7 +46,7 @@ view config open =
                 )
             ]
             :: (if open then
-                    [ pianoView config
+                    [ pianoView config highlighted
                     , div [ HA.style "font-size" "0.75rem", HA.style "color" "#888", HA.style "margin-top" "0.3rem" ]
                         [ text "キーボードでも弾ける: Z〜M = C3〜B3 / Q,2,W,3,E,R,5,T,6,Y,7,U = C4〜B4 / I = C5（選択中のトラックの音色）" ]
                     ]
@@ -62,8 +64,8 @@ whitesBelow pitch =
         |> List.length
 
 
-pianoView : Config msg -> Html msg
-pianoView config =
+pianoView : Config msg -> Set Int -> Html msg
+pianoView config highlighted =
     let
         pitches =
             List.range lowPitch highPitch
@@ -78,7 +80,13 @@ pianoView config =
                 , HA.style "top" "0"
                 , HA.style "width" (String.fromInt (whiteKeyWidth - 1) ++ "px")
                 , HA.style "height" "110px"
-                , HA.style "background" "#fff"
+                , HA.style "background"
+                    (if Set.member pitch highlighted then
+                        Style.colorHighlight
+
+                     else
+                        "#fff"
+                    )
                 , HA.style "border" "1px solid #999"
                 , HA.style "box-sizing" "border-box"
                 , HA.style "cursor" "pointer"
@@ -106,7 +114,13 @@ pianoView config =
                 , HA.style "top" "0"
                 , HA.style "width" "22px"
                 , HA.style "height" "68px"
-                , HA.style "background" "#222"
+                , HA.style "background"
+                    (if Set.member pitch highlighted then
+                        "#c8a415"
+
+                     else
+                        "#222"
+                    )
                 , HA.style "border" "1px solid #000"
                 , HA.style "border-radius" "0 0 3px 3px"
                 , HA.style "box-sizing" "border-box"

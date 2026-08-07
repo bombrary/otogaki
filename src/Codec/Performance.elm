@@ -21,6 +21,7 @@ import Data.ReferenceAudio exposing (ReferenceAudio)
 import Data.Time
 import Data.Timeline
 import Data.Track exposing (Track, TrackKind(..))
+import Data.Voicing
 import Json.Encode as Encode
 
 
@@ -136,8 +137,8 @@ encodePreviewNote instrument pitch =
 
 usedInstrumentNames : Project -> List String
 usedInstrumentNames project =
-    project.tracks
-        |> List.map (\t -> Data.Track.instrumentToString t.instrument)
+    (project.tracks |> List.map (\t -> Data.Track.instrumentToString t.instrument))
+        ++ [ Data.Track.instrumentToString project.chordTrack.instrument ]
         |> List.foldl
             (\name acc ->
                 if List.member name acc then
@@ -166,11 +167,19 @@ type alias Event =
 
 toEvents : Project -> List Event
 toEvents project =
-    List.concatMap trackEvents project.tracks ++ chordEvents (Data.Project.timeline project) project.chordTrack
+    let
+        voicings =
+            if project.voicingEnabled then
+                project.voicings
+
+            else
+                []
+    in
+    List.concatMap trackEvents project.tracks ++ chordEvents voicings (Data.Project.timeline project) project.chordTrack
 
 
-chordEvents : Data.Timeline.Timeline -> ChordTrack -> List Event
-chordEvents timeline chordTrack =
+chordEvents : List Data.Voicing.Voicing -> Data.Timeline.Timeline -> ChordTrack -> List Event
+chordEvents voicings timeline chordTrack =
     let
         instrument =
             Data.Track.instrumentToString chordTrack.instrument
@@ -178,7 +187,7 @@ chordEvents timeline chordTrack =
     Data.ChordTrack.resolved timeline chordTrack
         |> List.concatMap
             (\ev ->
-                Data.Chord.toPitches ev.chord
+                Data.Chord.toPitchesWith voicings ev.chord
                     |> List.map
                         (\pitch ->
                             { ticks = ev.startTicks

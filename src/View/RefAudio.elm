@@ -4,6 +4,7 @@ import Data.ReferenceAudio exposing (ReferenceAudio)
 import Html exposing (Html, button, div, input, label, span, text)
 import Html.Attributes as HA
 import Html.Events as HE
+import View.Style as Style
 
 
 type alias Config msg =
@@ -16,17 +17,16 @@ type alias Config msg =
 
 view : Config msg -> String -> Bool -> ReferenceAudio -> Html msg
 view config offsetInput loaded ra =
-    div
-        [ HA.style "margin-top" "1rem"
+    Html.details
+        [ HA.attribute "open" ""
+        , HA.style "margin-top" "1rem"
         , HA.style "padding" "0.5rem"
         , HA.style "border" "1px solid #ddd"
         , HA.style "border-radius" "4px"
         ]
-        [ div [ HA.style "display" "flex", HA.style "gap" "0.5rem", HA.style "align-items" "center", HA.style "flex-wrap" "wrap" ]
-            [ span [ HA.style "font-size" "0.9rem", HA.style "font-weight" "bold" ] [ text "🎧 参考オーディオ" ]
-            , span [ HA.style "font-size" "0.75rem", HA.style "color" "#888" ]
-                [ text "耳コピ・分析用。音声データは保存されないので、リロード後はファイルを選び直してね" ]
-            ]
+        [ Html.summary (HA.style "cursor" "pointer" :: Style.headingText) [ text "🎧 参考オーディオ" ]
+        , span [ HA.style "font-size" "0.75rem", HA.style "color" "#888", HA.style "display" "block", HA.style "margin-top" "0.3rem" ]
+            [ text "耳コピ・分析用。音声データは保存されないので、リロード後はファイルを選び直してね" ]
         , div [ HA.style "display" "flex", HA.style "gap" "0.7rem", HA.style "align-items" "center", HA.style "flex-wrap" "wrap", HA.style "margin-top" "0.4rem" ]
             [ input
                 [ HA.type_ "file"
@@ -62,23 +62,11 @@ view config offsetInput loaded ra =
                     []
                 ]
             , button
-                [ HE.onClick config.toggledMute
-                , HA.style "background"
-                    (if ra.muted then
-                        "#e74c3c"
-
-                     else
-                        "#eee"
-                    )
-                , HA.style "color"
-                    (if ra.muted then
-                        "#fff"
-
-                     else
-                        "#333"
-                    )
-                , HA.title "参考オーディオをミュート"
-                ]
+                (Style.toggleButton ra.muted
+                    ++ [ HE.onClick config.toggledMute
+                       , HA.title "参考オーディオをミュート"
+                       ]
+                )
                 [ text "M" ]
             ]
         ]

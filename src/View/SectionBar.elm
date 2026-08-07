@@ -6,7 +6,9 @@ import Data.Section exposing (Section)
 import Html exposing (Html, button, div, input, span, text, textarea)
 import Html.Attributes as HA
 import Html.Events as HE
+import Json.Decode as Decode
 import View.Palette as Palette
+import View.Style as Style
 
 
 type alias Config msg =
@@ -23,11 +25,12 @@ type alias Config msg =
     , changedInsertCount : String -> msg
     , insertBefore : Int -> msg
     , removeFromStart : Int -> msg
+    , seekToStart : Int -> msg
     }
 
 
-view : Config msg -> Maybe Int -> String -> List Section -> Html msg
-view config selectedId insertCountInput sections =
+view : Config msg -> Maybe Int -> String -> List Section -> Maybe Int -> Html msg
+view config selectedId insertCountInput sections pendingDeleteId =
     div [ HA.style "margin-top" "1rem" ]
         [ div
             [ HA.style "display" "flex"
@@ -36,11 +39,11 @@ view config selectedId insertCountInput sections =
             , HA.style "flex-wrap" "wrap"
             ]
             (List.indexedMap (blockView config selectedId) sections
-                ++ [ button [ HE.onClick config.add ] [ text "+ セクション" ] ]
+                ++ [ button (Style.baseButton ++ [ HE.onClick config.add ]) [ text "+ セクション" ] ]
             )
         , case selectedId |> Maybe.andThen (\sid -> sections |> List.filter (\s -> s.id == sid) |> List.head) of
             Just section ->
-                editPanel config insertCountInput section
+                editPanel config insertCountInput section pendingDeleteId
 
             Nothing ->
                 text ""
@@ -96,8 +99,8 @@ blockView config selectedId idx section =
         ]
 
 
-editPanel : Config msg -> String -> Section -> Html msg
-editPanel config insertCountInput section =
+editPanel : Config msg -> String -> Section -> Maybe Int -> Html msg
+editPanel config insertCountInput section pendingDeleteId =
     div
         [ HA.style "margin-top" "0.4rem"
         , HA.style "padding" "0.5rem"
@@ -116,13 +119,36 @@ editPanel config insertCountInput section =
             , input
                 [ HA.type_ "number"
                 , HA.value (String.fromInt section.lengthBars)
-                , HE.onInput (config.changeBars section.id)
+                , HE.on "change" (Decode.map (config.changeBars section.id) HE.targetValue)
+                , HA.title "値を確定（フォーカスを外す）すると小節数が変わり、後ろのコード・ノートが自動で追従します"
                 , HA.style "width" "3.5rem"
                 ]
                 []
-            , button [ HE.onClick (config.move section.id (negate 1)), HA.title "左へ移動" ] [ text "←" ]
-            , button [ HE.onClick (config.move section.id 1), HA.title "右へ移動" ] [ text "→" ]
-            , button [ HE.onClick (config.remove section.id) ] [ text "✕ 削除" ]
+            , button (Style.baseButton ++ [ HE.onClick (config.move section.id (negate 1)), HA.title "左へ移動", HA.attribute "aria-label" "左へ移動" ]) [ text "←" ]
+            , button (Style.baseButton ++ [ HE.onClick (config.move section.id 1), HA.title "右へ移動", HA.attribute "aria-label" "右へ移動" ]) [ text "→" ]
+            , button (Style.baseButton ++ [ HE.onClick (config.seekToStart section.id), HA.title "再生位置をこのセクションの先頭へ移動" ]) [ text "⏱ 先頭へ" ]
+            , Style.divider
+            , if pendingDeleteId == Just section.id then
+                button
+                    (Style.armedDangerButton
+                        ++ [ HE.onClick (config.remove section.id)
+                           , HA.attribute "aria-label" "セクションを本当に削除"
+                           , HA.style "min-width" "6rem"
+                           , HA.style "text-align" "center"
+                           ]
+                    )
+                    [ text "本当に削除？" ]
+
+              else
+                button
+                    (Style.dangerButton
+                        ++ [ HE.onClick (config.remove section.id)
+                           , HA.attribute "aria-label" "セクションを削除"
+                           , HA.style "min-width" "6rem"
+                           , HA.style "text-align" "center"
+                           ]
+                    )
+                    [ text "✕ 削除" ]
             ]
         , div [ HA.style "display" "flex", HA.style "gap" "0.5rem", HA.style "align-items" "center", HA.style "margin-top" "0.3rem" ]
             [ span [ HA.style "font-size" "0.85rem" ] [ text "キー:" ]
@@ -156,15 +182,20 @@ editPanel config insertCountInput section =
                 ]
                 []
             , button
-                [ HE.onClick (config.insertBefore section.id)
-                , HA.title "このセクションの前に無音を指定小節数挿入する（コード進行の改行は崩れることがあります）"
-                ]
-                [ text "▸ 挿入" ]
+                (Style.baseButton
+                    ++ [ HE.onClick (config.insertBefore section.id)
+                       , HA.title "このセクションの前に無音を指定小節数挿入する（コード進行の改行は崩れることがあります）"
+                       ]
+                )
+                [ text "+ 挿入" ]
             , button
-                [ HE.onClick (config.removeFromStart section.id)
-                , HA.title "このセクションの先頭から指定小節数を削除する（コード進行の改行は崩れることがあります）"
-                ]
-                [ text "✂ 削除" ]
+                (Style.dangerButton
+                    ++ [ HE.onClick (config.removeFromStart section.id)
+                       , HA.title "このセクションの先頭から指定小節数を削除する（コード進行の改行は崩れることがあります）"
+                       , HA.attribute "aria-label" "先頭から小節を削除"
+                       ]
+                )
+                [ text "✂ 小節削除" ]
             ]
         , textarea
             [ HA.value section.memo

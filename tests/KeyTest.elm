@@ -19,7 +19,7 @@ minorA =
 
 mkChord : Int -> Quality -> Data.Chord.Chord
 mkChord root quality =
-    { root = root, quality = quality, extensions = [], alterations = [], bass = Nothing }
+    { root = root, quality = quality, extensions = [], alterations = [], bass = Nothing, voicing = Nothing }
 
 
 suite : Test

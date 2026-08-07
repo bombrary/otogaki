@@ -16,6 +16,12 @@ app.ports.toAudio.subscribe(async (msg) => {
 
 app.ports.saveToLocalStorage.subscribe(saveProject);
 
+app.ports.copyToClipboard.subscribe((text) => {
+  navigator.clipboard.writeText(text).catch((err) =>
+    console.error("[clipboard] コピーに失敗:", err)
+  );
+});
+
 // 参考オーディオのファイル選択（Elm が描画する input を JS で拾う）
 document.addEventListener("change", (e) => {
   const t = e.target;
@@ -34,7 +40,7 @@ document.addEventListener("change", (e) => {
 // Space / ↑↓ でページがスクロールするのを止める（ショートカット用）
 window.addEventListener("keydown", (e) => {
   const tag = e.target && e.target.tagName;
-  const hotkeys = [" ", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
+  const hotkeys = [" ", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"];
   if (hotkeys.includes(e.key) && !["INPUT", "TEXTAREA", "SELECT"].includes(tag)) {
     e.preventDefault();
   }

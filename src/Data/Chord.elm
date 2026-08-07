@@ -1,4 +1,6 @@
-module Data.Chord exposing (Alteration(..), Chord, Extension(..), Quality(..), toPitches)
+module Data.Chord exposing (Alteration(..), Chord, Extension(..), Quality(..), qualityIntervals, toPitches, toPitchesWith)
+
+import Data.Voicing exposing (Voicing)
 
 
 type alias Chord =
@@ -7,6 +9,7 @@ type alias Chord =
     , extensions : List Extension
     , alterations : List Alteration
     , bass : Maybe Int
+    , voicing : Maybe String
     }
 
 
@@ -23,6 +26,7 @@ type Quality
     | Aug
     | Sus2
     | Sus4
+    | Dom7Sus4
     | Sixth
     | MinSixth
     | Power
@@ -44,6 +48,8 @@ type Alteration
     | Sharp5
 
 
+{-| quality の構成音を root からの半音インターバルで返す。`Data.VoicingPreset` がプリセット生成にも流用するので公開。
+-}
 qualityIntervals : Quality -> List Int
 qualityIntervals quality =
     case quality of
@@ -82,6 +88,9 @@ qualityIntervals quality =
 
         Sus4 ->
             [ 0, 5, 7 ]
+
+        Dom7Sus4 ->
+            [ 0, 5, 7, 10 ]
 
         Sixth ->
             [ 0, 4, 7, 9 ]
@@ -143,23 +152,52 @@ applyAlteration alt intervals =
             replaceFifth 8
 
 
-{-| ルートをC3帯（MIDI 48-59）に置いたクローズドボイシング + 1オクターブ下のベース音。
-ボイシング改善はこの関数の差し替えだけで済む。
+{-| ボイシング辞書を使わず固定ルールだけで鳴らす。`toPitchesWith []` のエイリアス。
 -}
 toPitches : Chord -> List Int
-toPitches chord =
+toPitches =
+    toPitchesWith []
+
+
+{-| ルートをC3帯（MIDI 48-59）に置いたクローズドボイシング + 1オクターブ下のベース音。
+`chord.voicing` が辞書に登録されていればそちらを優先し、未登録・未指定ならこの固定ルールにフォールバックする。
+-}
+toPitchesWith : List Voicing -> Chord -> List Int
+toPitchesWith voicings chord =
     let
-        rootMidi =
-            48 + modBy 12 chord.root
-
-        intervals =
-            List.foldl applyAlteration (qualityIntervals chord.quality) chord.alterations
-
-        chordTones =
-            (intervals ++ List.map extensionSemitone chord.extensions)
-                |> List.map (\interval -> rootMidi + interval)
-
-        bassMidi =
-            36 + modBy 12 (Maybe.withDefault chord.root chord.bass)
+        matchedVoicing =
+            chord.voicing
+                |> Maybe.andThen (\name -> List.filter (\v -> v.name == name) voicings |> List.head)
     in
-    bassMidi :: chordTones
+    case matchedVoicing of
+        Just voicing ->
+            let
+                chordTones =
+                    Data.Voicing.pitchesFor chord.root voicing
+            in
+            -- ボイシングは anchorPitch（= 通常のベース音の位置）を基準に自分でベース音まで
+            -- 含めて書ける前提なので、bass 指定が無ければ自動でベース音を足さない。
+            -- スラッシュコード（bass 指定あり）のときだけ、その音を明示的なベースとして先頭に足す。
+            case chord.bass of
+                Just bass ->
+                    (Data.Voicing.anchorPitch + modBy 12 bass) :: chordTones
+
+                Nothing ->
+                    chordTones
+
+        Nothing ->
+            let
+                rootMidi =
+                    48 + modBy 12 chord.root
+
+                intervals =
+                    List.foldl applyAlteration (qualityIntervals chord.quality) chord.alterations
+
+                chordTones =
+                    (intervals ++ List.map extensionSemitone chord.extensions)
+                        |> List.map (\interval -> rootMidi + interval)
+
+                bassMidi =
+                    36 + modBy 12 (Maybe.withDefault chord.root chord.bass)
+            in
+            bassMidi :: chordTones

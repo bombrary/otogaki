@@ -216,6 +216,9 @@ qualityShape quality =
         Sus4 ->
             { casing = Upper, mark = "", suffix = "sus4" }
 
+        Dom7Sus4 ->
+            { casing = Upper, mark = "", suffix = "7sus4" }
+
         Sixth ->
             { casing = Upper, mark = "", suffix = "6" }
 

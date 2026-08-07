@@ -13,24 +13,83 @@ parse raw =
         Err "空のコード"
 
     else
-        case String.split "/" s of
-            [ mainPart ] ->
-                parseMain mainPart Nothing
+        case ( String.indexes "@" s, String.indexes "/" s ) of
+            ( [], [] ) ->
+                parseMain s Nothing Nothing
 
-            [ mainPart, bassStr ] ->
+            ( [ atIdx ], [] ) ->
+                let
+                    name =
+                        String.dropLeft (atIdx + 1) s
+                in
+                if name == "" then
+                    Err "ボイシング名が空"
+
+                else
+                    parseMain (String.left atIdx s) Nothing (Just name)
+
+            ( [], [ slashIdx ] ) ->
+                let
+                    bassStr =
+                        String.dropLeft (slashIdx + 1) s
+                in
                 case parsePitch bassStr of
                     Just bass ->
-                        parseMain mainPart (Just bass)
+                        parseMain (String.left slashIdx s) (Just bass) Nothing
 
                     Nothing ->
                         Err ("ベース音が読めない: " ++ bassStr)
 
-            _ ->
+            ( [ atIdx ], [ slashIdx ] ) ->
+                if atIdx < slashIdx then
+                    -- MAIN@NAME/BASS
+                    let
+                        name =
+                            String.slice (atIdx + 1) slashIdx s
+
+                        bassStr =
+                            String.dropLeft (slashIdx + 1) s
+                    in
+                    if name == "" then
+                        Err "ボイシング名が空"
+
+                    else
+                        case parsePitch bassStr of
+                            Just bass ->
+                                parseMain (String.left atIdx s) (Just bass) (Just name)
+
+                            Nothing ->
+                                Err ("ベース音が読めない: " ++ bassStr)
+
+                else
+                    -- MAIN/BASS@NAME
+                    let
+                        bassStr =
+                            String.slice (slashIdx + 1) atIdx s
+
+                        name =
+                            String.dropLeft (atIdx + 1) s
+                    in
+                    if name == "" then
+                        Err "ボイシング名が空"
+
+                    else
+                        case parsePitch bassStr of
+                            Just bass ->
+                                parseMain (String.left slashIdx s) (Just bass) (Just name)
+
+                            Nothing ->
+                                Err ("ベース音が読めない: " ++ bassStr)
+
+            ( _ :: _ :: _, _ ) ->
+                Err "@ が多すぎる"
+
+            ( _, _ ) ->
                 Err "スラッシュが多すぎる"
 
 
-parseMain : String -> Maybe Int -> Result String Chord
-parseMain s bass =
+parseMain : String -> Maybe Int -> Maybe String -> Result String Chord
+parseMain s bass voicing =
     case rootAndRest s of
         Just ( root, rest ) ->
             parseQuality rest
@@ -44,6 +103,7 @@ parseMain s bass =
                                     , extensions = allExts
                                     , alterations = allAlts
                                     , bass = bass
+                                    , voicing = voicing
                                     }
                                 )
                     )
@@ -161,6 +221,7 @@ qualityTable =
     , ( "11", entry Dom7 [ Eleven ] [] )
     , ( "9", entry Dom7 [ Nine ] [] )
     , ( "7", entry Dom7 [] [] )
+    , ( "7sus4", entry Dom7Sus4 [] [] )
     , ( "sus4", entry Sus4 [] [] )
     , ( "sus2", entry Sus2 [] [] )
     , ( "69", entry Sixth [ Nine ] [] )

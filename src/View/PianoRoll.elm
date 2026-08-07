@@ -3,17 +3,17 @@ module View.PianoRoll exposing
     , SectionSpan
     , maxPitch
     , minPitch
+    , pianoRollScrollId
     , pixelsToTicks
     , rowHeight
+    , ticksToPixels
     , view
     , yToPitch
     )
 
 import Array exposing (Array)
-import Data.Key exposing (Key)
 import Data.Note exposing (Note)
 import Data.Time
-import Data.Timeline exposing (Timeline)
 import Html exposing (Html)
 import Html.Attributes as HA
 import Html.Events
@@ -23,6 +23,7 @@ import Svg
 import Svg.Attributes as SA
 import Svg.Lazy
 import View.Palette as Palette
+import View.Style as Style
 
 
 type alias Config msg =
@@ -30,7 +31,8 @@ type alias Config msg =
     , pressedNote : Int -> Bool -> { clientX : Float, clientY : Float, shift : Bool } -> msg
     , doubleClickedNote : Int -> msg
     , rightClickedNote : Int -> msg
-    , clickedRuler : Float -> msg
+    , pressedRuler : { offsetX : Float, clientX : Float, shift : Bool } -> msg
+    , pressedLoopHandle : Bool -> Float -> msg
     , pressedKey : Int -> msg
     }
 
@@ -50,7 +52,11 @@ type alias ViewOpts =
     , totalBars : Int
     , rubberBand : Maybe { x : Float, y : Float, w : Float, h : Float }
     , waveform : Maybe Waveform
-    , timeline : Timeline
+    , ghostNoteGroups : List (List Note)
+    , highlightedPitch : Set Int
+    , scalePitchClasses : Set Int
+    , loop : Maybe { startTicks : Int, endTicks : Int }
+    , loopEditable : Bool
     }
 
 
@@ -92,6 +98,13 @@ rulerHeight =
     36
 
 
+{-| プレイヘッド追従スクロールで Browser.Dom から参照するスクロールコンテナの id。
+-}
+pianoRollScrollId : String
+pianoRollScrollId =
+    "piano-roll-scroll"
+
+
 barWidth : Int
 barWidth =
     16 * pxPerSixteenth
@@ -129,10 +142,13 @@ view config opts =
         , HA.style "margin-top" "1rem"
         , HA.style "border" "1px solid #ccc"
         ]
-        [ keyColumn config (opts.waveform /= Nothing)
+        [ keyColumn config (opts.waveform /= Nothing) opts.highlightedPitch opts.scalePitchClasses
         , Html.div
-            [ HA.style "overflow-x" "auto"
+            [ HA.id pianoRollScrollId
+            , HA.style "overflow-x" "auto"
             , HA.style "flex" "1"
+            , HA.tabindex 0
+            , HA.attribute "aria-label" "ピアノロール（矢印キーでノートを選択・移動）"
             ]
             [ rulerView config opts
             , waveformView opts
@@ -218,8 +234,8 @@ waveStrip peaks peakDt secsPerTick offsetMs totalBars =
         )
 
 
-keyColumn : Config msg -> Bool -> Html msg
-keyColumn config hasWave =
+keyColumn : Config msg -> Bool -> Set Int -> Set Int -> Html msg
+keyColumn config hasWave highlightedPitch scalePitchClasses =
     let
         spacerHeight =
             rulerHeight
@@ -237,16 +253,22 @@ keyColumn config hasWave =
         (Html.div [ HA.style "height" (String.fromInt spacerHeight ++ "px"), HA.style "box-sizing" "border-box", HA.style "border-bottom" "1px solid #ddd" ] []
             :: (List.range minPitch maxPitch
                     |> List.reverse
-                    |> List.map (keyRow config)
+                    |> List.map (keyRow config highlightedPitch scalePitchClasses)
                )
         )
 
 
-keyRow : Config msg -> Int -> Html msg
-keyRow config pitch =
+keyRow : Config msg -> Set Int -> Set Int -> Int -> Html msg
+keyRow config highlightedPitch scalePitchClasses pitch =
     let
         isBlack =
             List.member (modBy 12 pitch) [ 1, 3, 6, 8, 10 ]
+
+        isHighlighted =
+            Set.member pitch highlightedPitch
+
+        inScale =
+            Set.member (modBy 12 pitch) scalePitchClasses
 
         label =
             if modBy 12 pitch == 0 then
@@ -258,15 +280,22 @@ keyRow config pitch =
     Html.div
         [ HA.style "height" (String.fromInt rowHeight ++ "px")
         , HA.style "box-sizing" "border-box"
+        , HA.style "position" "relative"
         , HA.style "background"
-            (if isBlack then
+            (if isHighlighted then
+                Style.colorHighlight
+
+             else if isBlack then
                 "#444"
 
              else
                 "#fff"
             )
         , HA.style "color"
-            (if isBlack then
+            (if isHighlighted then
+                "#333"
+
+             else if isBlack then
                 "#eee"
 
              else
@@ -281,7 +310,26 @@ keyRow config pitch =
         , HA.style "user-select" "none"
         , Html.Events.onMouseDown (config.pressedKey pitch)
         ]
-        [ Html.text label ]
+        (Html.text label
+            :: (if inScale then
+                    [ Html.div
+                        [ HA.style "position" "absolute"
+                        , HA.style "left" "3px"
+                        , HA.style "top" "50%"
+                        , HA.style "transform" "translateY(-50%)"
+                        , HA.style "width" "6px"
+                        , HA.style "height" "6px"
+                        , HA.style "border-radius" "50%"
+                        , HA.style "background" "#4a90d9"
+                        , HA.style "pointer-events" "none"
+                        ]
+                        []
+                    ]
+
+                else
+                    []
+               )
+        )
 
 
 rulerView : Config msg -> ViewOpts -> Html msg
@@ -292,8 +340,8 @@ rulerView config opts =
         , SA.viewBox ("0 0 " ++ String.fromInt (gridWidth opts.totalBars) ++ " " ++ String.fromInt rulerHeight)
         , HA.style "display" "block"
         , HA.style "cursor" "pointer"
-        , HA.title "クリックで再生位置を移動"
-        , Html.Events.on "mousedown" (Decode.map config.clickedRuler (Decode.field "offsetX" Decode.float))
+        , HA.title "クリックで再生位置を移動。shift + ドラッグでループ区間を作成"
+        , Html.Events.on "mousedown" (Decode.map config.pressedRuler rulerPressDecoder)
         ]
         (Svg.rect
             [ SA.x "0"
@@ -305,8 +353,72 @@ rulerView config opts =
             []
             :: List.concat (List.indexedMap sectionBand opts.sections)
             ++ barNumbers opts.totalBars
+            ++ loopBandView config opts.loopEditable opts.loop
             ++ [ playheadLine rulerHeight opts.playheadTicks ]
         )
+
+
+rulerPressDecoder : Decode.Decoder { offsetX : Float, clientX : Float, shift : Bool }
+rulerPressDecoder =
+    Decode.map3 (\ox cx sh -> { offsetX = ox, clientX = cx, shift = sh })
+        (Decode.field "offsetX" Decode.float)
+        (Decode.field "clientX" Decode.float)
+        (Decode.field "shiftKey" Decode.bool)
+
+
+{-| ルーラー上にループ区間を琥珀色の帯で示す。editable が真なら左右端につまむハンドルを追加で描く（「範囲」モードのループのみ）。
+-}
+loopBandView : Config msg -> Bool -> Maybe { startTicks : Int, endTicks : Int } -> List (Svg.Svg msg)
+loopBandView config editable loop =
+    case loop of
+        Nothing ->
+            []
+
+        Just l ->
+            let
+                x0 =
+                    ticksToPixels l.startTicks
+
+                x1 =
+                    ticksToPixels l.endTicks
+
+                band =
+                    Svg.rect
+                        [ SA.x (String.fromFloat x0)
+                        , SA.y "16"
+                        , SA.width (String.fromFloat (Basics.max 0 (x1 - x0)))
+                        , SA.height "6"
+                        , SA.fill Style.colorLoop
+                        , SA.pointerEvents "none"
+                        ]
+                        []
+            in
+            band
+                :: (if editable then
+                        [ loopHandle config False x0
+                        , loopHandle config True x1
+                        ]
+
+                    else
+                        []
+                   )
+
+
+{-| ループ帯の端をつまんで伸縮するためのハンドル。バンド本体（6pxx6px）より少し大きめにしてつかみやすくする。
+-}
+loopHandle : Config msg -> Bool -> Float -> Svg.Svg msg
+loopHandle config isEnd x =
+    Svg.rect
+        [ SA.x (String.fromFloat (x - 6))
+        , SA.y "10"
+        , SA.width "12"
+        , SA.height "18"
+        , SA.fill Style.colorLoopHandle
+        , SA.cursor "ew-resize"
+        , Html.Events.stopPropagationOn "mousedown"
+            (Decode.map (\cx -> ( config.pressedLoopHandle isEnd cx, True )) (Decode.field "clientX" Decode.float))
+        ]
+        []
 
 
 sectionBand : Int -> SectionSpan -> List (Svg.Svg msg)
@@ -367,73 +479,43 @@ gridView config opts =
         , Html.Events.on "mousedown" (Decode.map config.pressedEmpty emptyPressDecoder)
         ]
         (rowBackgrounds opts.totalBars
-            ++ scaleGuideView opts.timeline
             ++ List.concat (List.indexedMap sectionTint opts.sections)
             ++ verticalLines opts.totalBars
+            ++ List.concat (List.indexedMap (\idx notes -> List.map (ghostNoteView idx) notes) opts.ghostNoteGroups)
             ++ List.concatMap (noteView config opts.selectedIds) opts.notes
             ++ rubberBandView opts.rubberBand
+            ++ loopLinesView gridHeight opts.loop
             ++ [ playheadLine gridHeight opts.playheadTicks ]
         )
 
 
-{-| キーのスケール外の行を暗く塗る。雑に置いても外れないようの目安。
-同じキーが連続する小節をまとめて（セクションごとに）1行あたり1矩形にする。
+{-| グリッド上にループ区間の開始・終了を縦の破線で示す。面を塗るとスケールガイドや sectionTint と層が重なって見づらくなるので線のみにする。
 -}
-scaleGuideView : Timeline -> List (Svg.Svg msg)
-scaleGuideView timeline =
-    keySegments timeline
-        |> List.concatMap
-            (\seg ->
-                let
-                    scaleSet =
-                        Data.Key.scalePitchClasses seg.key
+loopLinesView : Int -> Maybe { startTicks : Int, endTicks : Int } -> List (Svg.Svg msg)
+loopLinesView height loop =
+    case loop of
+        Nothing ->
+            []
 
-                    x =
-                        seg.startBar * barWidth
-
-                    w =
-                        seg.lengthBars * barWidth
-                in
-                List.range minPitch maxPitch
-                    |> List.filter (\p -> not (Set.member (modBy 12 p) scaleSet))
-                    |> List.map
-                        (\p ->
-                            Svg.rect
-                                [ SA.x (String.fromInt x)
-                                , SA.y (String.fromInt ((maxPitch - p) * rowHeight))
-                                , SA.width (String.fromInt w)
-                                , SA.height (String.fromInt rowHeight)
-                                , SA.fill "#000"
-                                , SA.fillOpacity "0.06"
-                                , SA.pointerEvents "none"
-                                ]
-                                []
-                        )
-            )
+        Just l ->
+            [ loopLine height (ticksToPixels l.startTicks)
+            , loopLine height (ticksToPixels l.endTicks)
+            ]
 
 
-{-| Timeline の bars を、同じキーが連続する区間ごとにまとめる。
--}
-keySegments : Timeline -> List { startBar : Int, lengthBars : Int, key : Key }
-keySegments timeline =
-    let
-        bars =
-            List.range 0 (Data.Timeline.totalBars timeline - 1)
-                |> List.filterMap (\i -> Data.Timeline.barAt i timeline)
-
-        step bar segs =
-            case segs of
-                seg :: rest ->
-                    if seg.key == bar.key then
-                        { seg | lengthBars = seg.lengthBars + 1 } :: rest
-
-                    else
-                        { startBar = bar.index, lengthBars = 1, key = bar.key } :: segs
-
-                [] ->
-                    [ { startBar = bar.index, lengthBars = 1, key = bar.key } ]
-    in
-    List.foldl step [] bars |> List.reverse
+loopLine : Int -> Float -> Svg.Svg msg
+loopLine height x =
+    Svg.line
+        [ SA.x1 (String.fromFloat x)
+        , SA.y1 "0"
+        , SA.x2 (String.fromFloat x)
+        , SA.y2 (String.fromInt height)
+        , SA.stroke "#f1c40f"
+        , SA.strokeWidth "2"
+        , SA.strokeDasharray "4 2"
+        , SA.pointerEvents "none"
+        ]
+        []
 
 
 sectionTint : Int -> SectionSpan -> List (Svg.Svg msg)
@@ -554,6 +636,34 @@ verticalLines totalBars =
             )
 
 
+{-| 他トラック・コードトラックを透けて重ね表示する用のノート。クリック・ドラッグ不可で、
+自分のノート（`noteView`）より下のレイヤーに描画される。idx はグループ（トラック）ごとの色分けに使う。
+-}
+ghostNoteView : Int -> Note -> Svg.Svg msg
+ghostNoteView idx note =
+    let
+        x =
+            ticksToPixels note.start
+
+        y =
+            (maxPitch - note.pitch) * rowHeight
+
+        w =
+            ticksToPixels note.duration
+    in
+    Svg.rect
+        [ SA.x (String.fromFloat x)
+        , SA.y (String.fromInt (y + 1))
+        , SA.width (String.fromFloat (Basics.max 2 (w - 1)))
+        , SA.height (String.fromInt (rowHeight - 2))
+        , SA.rx "2"
+        , SA.fill (Palette.sectionColor idx)
+        , SA.fillOpacity "0.35"
+        , SA.pointerEvents "none"
+        ]
+        []
+
+
 noteView : Config msg -> Set Int -> Note -> List (Svg.Svg msg)
 noteView config selectedIds note =
     let
@@ -580,14 +690,14 @@ noteView config selectedIds note =
         , SA.rx "2"
         , SA.fill
             (if selected then
-                "#e67e22"
+                Style.colorSelection
 
              else
                 "#4a90d9"
             )
         , SA.stroke
             (if selected then
-                "#a04d00"
+                "#9c1f52"
 
              else
                 "none"
@@ -608,7 +718,7 @@ noteView config selectedIds note =
         , SA.height (String.fromInt (rowHeight - 2))
         , SA.fill
             (if selected then
-                "#b35c10"
+                "#9c1f52"
 
              else
                 "#2a70b9"

@@ -12,6 +12,7 @@ type alias Expected =
     , extensions : List Extension
     , alterations : List Alteration
     , bass : Maybe Int
+    , voicing : Maybe String
     }
 
 
@@ -35,12 +36,12 @@ err input =
 
 chord : Int -> Quality -> List Extension -> Maybe Int -> Expected
 chord root quality extensions bass =
-    { root = root, quality = quality, extensions = extensions, alterations = [], bass = bass }
+    { root = root, quality = quality, extensions = extensions, alterations = [], bass = bass, voicing = Nothing }
 
 
 altChord : Int -> Quality -> List Extension -> List Alteration -> Maybe Int -> Expected
 altChord root quality extensions alterations bass =
-    { root = root, quality = quality, extensions = extensions, alterations = alterations, bass = bass }
+    { root = root, quality = quality, extensions = extensions, alterations = alterations, bass = bass, voicing = Nothing }
 
 
 suite : Test
@@ -69,6 +70,8 @@ suite =
         , ok "C5" (chord 0 Power [] Nothing)
         , ok "Csus4" (chord 0 Sus4 [] Nothing)
         , ok "Dsus2" (chord 2 Sus2 [] Nothing)
+        , ok "E7sus4" (chord 4 Dom7Sus4 [] Nothing)
+        , ok "C7sus4" (chord 0 Dom7Sus4 [] Nothing)
         , ok "Bdim" (chord 11 Dim [] Nothing)
         , ok "Bdim7" (chord 11 Dim7 [] Nothing)
         , ok "Bm7b5" (chord 11 HalfDim7 [] Nothing)
