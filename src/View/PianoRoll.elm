@@ -226,29 +226,44 @@ chordStripViewWithHeight config opts stripHeight =
 `pianoRollScrollId` を再利用することで、通常のピアノロールと同時にマウントされない前提で、
 追従スクロール・ホイールズーム・ループ編集がそのまま動く。
 -}
-chordTrackView : Config msg -> ViewOpts -> List Note -> Html msg
-chordTrackView config opts previewNotesList =
-    Html.div
-        [ HA.style "margin-top" "1rem"
-        , HA.style "border" "1px solid #ccc"
-        ]
-        [ Html.div
-            [ HA.id pianoRollScrollId
-            , HA.style "overflow-x" "auto"
-            , HA.tabindex 0
-            , HA.attribute "aria-label" "コード進行トラック"
-            ]
-            ([ rulerView config opts
-             , chordStripViewWithHeight config opts 36
-             ]
-                ++ (if List.isEmpty previewNotesList then
-                        []
+chordTrackView : Config msg -> ViewOpts -> Maybe (List Note) -> Html msg
+chordTrackView config opts previewNotes =
+    case previewNotes of
+        Nothing ->
+            Html.div
+                [ HA.style "margin-top" "1rem"
+                , HA.style "border" "1px solid #ccc"
+                ]
+                [ Html.div
+                    [ HA.id pianoRollScrollId
+                    , HA.style "overflow-x" "auto"
+                    , HA.tabindex 0
+                    , HA.attribute "aria-label" "コード進行トラック"
+                    ]
+                    [ rulerView config opts
+                    , chordStripViewWithHeight config opts 36
+                    ]
+                ]
 
-                    else
-                        [ chordTrackNoteGrid opts previewNotesList ]
-                   )
-            )
-        ]
+        Just notes ->
+            Html.div
+                [ HA.style "margin-top" "1rem"
+                , HA.style "border" "1px solid #ccc"
+                , HA.style "display" "flex"
+                ]
+                [ keyColumn config False True opts.highlightedPitch opts.scalePitchClasses
+                , Html.div
+                    [ HA.id pianoRollScrollId
+                    , HA.style "overflow-x" "auto"
+                    , HA.style "flex" "1"
+                    , HA.tabindex 0
+                    , HA.attribute "aria-label" "コード進行トラック"
+                    ]
+                    [ rulerView config opts
+                    , chordStripViewWithHeight config opts ChordStrip.height
+                    , chordTrackNoteGrid opts notes
+                    ]
+                ]
 
 
 {-| コード進行トラックのMIDIプレビュー用の読み取り専用ノートグリッド。通常の `gridView` と違い

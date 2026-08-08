@@ -3653,10 +3653,10 @@ view model =
                                 PianoRoll.chordTrackView pianoRollConfig
                                     pianoRollOpts
                                     (if model.chordMidiPreview then
-                                        Data.ChordTrack.previewNotes (effectiveVoicings model) timeline model.project.chordTrack
+                                        Just (Data.ChordTrack.previewNotes (effectiveVoicings model) timeline model.project.chordTrack)
 
                                      else
-                                        []
+                                        Nothing
                                     )
                             ]
                   in
