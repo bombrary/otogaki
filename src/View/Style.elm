@@ -142,7 +142,7 @@ focusCss =
     Html.node "style"
         []
         [ Html.text
-            ("button:focus-visible, [tabindex]:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid "
+            ("html, body { margin: 0; height: 100%; } button:focus-visible, [tabindex]:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid "
                 ++ colorPrimary
                 ++ "; outline-offset: 1px; }"
             )
