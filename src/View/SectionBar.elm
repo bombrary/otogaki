@@ -12,6 +12,7 @@ module View.SectionBar exposing
     , view
     )
 
+import Data.ChordTrack exposing (ChordSpan)
 import Data.Key
 import Data.Meter
 import Data.Section exposing (Section)
@@ -21,6 +22,7 @@ import Html.Events as HE
 import Json.Decode as Decode
 import Svg
 import Svg.Attributes as SA
+import View.ChordStrip as ChordStrip
 import View.Palette as Palette
 import View.Style as Style
 
@@ -46,6 +48,7 @@ type alias Config msg =
     , wheelZoomed : { deltaY : Float, offsetX : Float } -> msg
     , pressedRuler : { offsetX : Float, clientX : Float, shift : Bool } -> msg
     , pressedLoopHandle : Bool -> Float -> msg
+    , clickedChord : Int -> msg
     }
 
 
@@ -62,13 +65,11 @@ type alias RulerData =
     }
 
 
-{-| ブロック表示に上乗せするコード進行情報。`chordSummaries` は `sections` と同じ順序・同じ長さで、
-各セクションのコード進行を省略表示用に連結した文字列（`Data.ChordTrack.sectionSummaries` の戻り値）。
-`playingIndex` は今再生中のセクションのリスト内インデックス（`Main.sectionAtTicks` と同じ体系）。
+{-| ブロック表示に上乗せする再生情報。`playingIndex` は今再生中のセクションのリスト内インデックス
+（`Main.sectionAtTicks` と同じ体系）。コード進行の表示は別途 `chordSpans`（tick位置ベース）で行うのでここには含まない。
 -}
 type alias BlockExtras =
-    { chordSummaries : List String
-    , playingIndex : Maybe Int
+    { playingIndex : Maybe Int
     }
 
 
@@ -168,14 +169,24 @@ sectionDragTargetIndex pxPerBar sections currentIndex accumDx =
                     Nothing
 
 
-view : Config msg -> RulerData -> BlockExtras -> Maybe Int -> String -> List Section -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> Html msg
-view config rulerData extras selectedId insertCountInput sections pendingDeleteId resizePreview =
+view : Config msg -> RulerData -> List ChordSpan -> BlockExtras -> Maybe Int -> String -> List Section -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> Html msg
+view config rulerData chordSpans extras selectedId insertCountInput sections pendingDeleteId resizePreview =
+    let
+        totalBars =
+            List.sum (List.map .lengthBars sections)
+    in
     div [ HA.style "margin-top" "1rem" ]
         [ div
             [ HA.id sectionBarScrollId
             , HA.style "overflow-x" "auto"
             ]
             [ regionRulerView config rulerData.pxPerBar rulerData.loopEditable rulerData.loop rulerData.ticksToPx rulerData.playheadTicks sections
+            , ChordStrip.view config.clickedChord
+                { ticksToX = rulerData.ticksToPx
+                , width = totalBars * rulerData.pxPerBar
+                , playheadTicks = rulerData.playheadTicks
+                }
+                chordSpans
             , div
                 [ HA.style "display" "flex"
                 , HA.style "align-items" "stretch"
@@ -357,9 +368,6 @@ blockView config pxPerBar selectedId resizePreview extras idx section =
         playing =
             extras.playingIndex == Just idx
 
-        chordSummary =
-            List.drop idx extras.chordSummaries |> List.head |> Maybe.withDefault ""
-
         baseTitle =
             if section.memo == "" then
                 section.name
@@ -403,29 +411,11 @@ blockView config pxPerBar selectedId resizePreview extras idx section =
         , HA.style "overflow" "hidden"
         , HA.style "white-space" "nowrap"
         , HE.on "mousedown" (Decode.map (config.pressedBlock section.id) (Decode.field "clientX" Decode.float))
-        , HA.title
-            (if chordSummary == "" then
-                baseTitle
-
-             else
-                baseTitle ++ " ♪ " ++ chordSummary
-            )
+        , HA.title baseTitle
         ]
         [ text section.name
         , if section.memo /= "" then
             span [ HA.style "margin-left" "0.2rem" ] [ text "📝" ]
-
-          else
-            text ""
-        , if chordSummary /= "" then
-            div
-                [ HA.style "font-size" "0.65rem"
-                , HA.style "color" "#666"
-                , HA.style "white-space" "nowrap"
-                , HA.style "overflow" "hidden"
-                , HA.style "text-overflow" "ellipsis"
-                ]
-                [ text chordSummary ]
 
           else
             text ""

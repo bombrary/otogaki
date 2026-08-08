@@ -1,16 +1,13 @@
-module View.ChordEditor exposing (Config, progressionEditorView, trackPaneView, view, voicingEditorView)
+module View.ChordEditor exposing (Config, progressionEditorView, view, voicingEditorView)
 
 import Data.Chord exposing (Chord)
 import Data.Chord.Format as Format
 import Data.ChordTrack exposing (ChordCell, ChordTrack, TokenKind(..))
 import Data.GuitarForm as GuitarForm
-import Data.Key exposing (Key)
 import Data.StrumExpand
 import Data.Timeline exposing (Timeline)
-import Data.Track
 import Data.Voicing exposing (Voicing, anchorPitch)
 import Data.VoicingPreset as VoicingPreset
-import Dict exposing (Dict)
 import Html exposing (Html, button, div, option, select, span, text, textarea)
 import Html.Attributes as HA
 import Html.Events as HE
@@ -24,12 +21,7 @@ import View.VoicingKeyboard as VoicingKeyboard
 type alias Config msg =
     { changedText : String -> msg
     , toggledChordProgressionModal : msg
-    , toggledMute : msg
     , convertToTrack : msg
-    , changedVolume : String -> msg
-    , clickedChord : Int -> msg
-    , toggledGhost : msg
-    , changedInstrument : String -> msg
     , toggledVoicingEnabled : msg
     , toggledGuitarFormEnabled : msg
     , clickedCopyText : msg
@@ -62,8 +54,8 @@ type alias VoicingState =
     }
 
 
-view : Config msg -> Timeline -> Int -> Bool -> Dict String String -> VoicingState -> ChordTrack -> Html msg
-view config timeline playheadTicks isGhost loadStates voicingState track =
+view : Config msg -> Timeline -> Int -> VoicingState -> ChordTrack -> Html msg
+view config timeline playheadTicks voicingState track =
     Html.details
         [ HA.attribute "open" ""
         , HA.style "margin-top" "1rem"
@@ -73,35 +65,7 @@ view config timeline playheadTicks isGhost loadStates voicingState track =
         ]
         [ Html.summary (HA.style "cursor" "pointer" :: Style.headingText) [ text "コード進行" ]
         , div [ HA.style "display" "flex", HA.style "gap" "0.5rem", HA.style "align-items" "center", HA.style "flex-wrap" "wrap", HA.style "margin-top" "0.3rem" ]
-            [ span [ HA.style "font-size" "0.75rem", HA.style "color" "#888" ]
-                [ text "| で小節区切り（改行は無視されるので自由に使ってOK）、空白で小節内分割。% = 直前のコードを繰返し、_ = 休符、= = 直前のコードを伸ばす、// 以降は行末までコメント。コードをクリックすると再生位置がそこへ移動" ]
-            , instrumentSelect config track
-            , loadBadge (Dict.get (Data.Track.instrumentToString track.instrument) loadStates)
-            , button
-                (Style.toggleButton track.muted
-                    ++ [ HE.onClick config.toggledMute
-                       , HA.title "コードトラックをミュート"
-                       ]
-                )
-                [ text "M" ]
-            , button
-                (Style.toggleButton isGhost
-                    ++ [ HE.onClick config.toggledGhost
-                       , HA.title "ピアノロールにコードの構成音を透けて重ね表示"
-                       ]
-                )
-                [ text "👻" ]
-            , Html.input
-                [ HA.type_ "range"
-                , HA.min "0"
-                , HA.max "100"
-                , HA.value (String.fromInt track.volume)
-                , HE.onInput config.changedVolume
-                , HA.style "width" "5rem"
-                , HA.title ("音量: " ++ String.fromInt track.volume)
-                ]
-                []
-            , button
+            [ button
                 (Style.baseButton
                     ++ [ HE.onClick config.convertToTrack
                        , HA.title "コード進行をノートに展開して新しいMIDIトラックを作る"
@@ -153,44 +117,7 @@ view config timeline playheadTicks isGhost loadStates voicingState track =
                 [ text "✎ コード進行を編集" ]
             ]
         , voiceLeadingView timeline playheadTicks voicingState.enabled voicingState.guitarFormEnabled voicingState.voicings track
-        , cellsView config timeline playheadTicks track
         , voicingsSection config voicingState (Data.ChordTrack.cells timeline track)
-        ]
-
-
-{-| コードセル一覧。サイドバーの `view` とメインペインの `trackPaneView` の両方から呼ばれる。
--}
-cellsView : Config msg -> Timeline -> Int -> ChordTrack -> Html msg
-cellsView config timeline playheadTicks track =
-    div
-        [ HA.style "display" "flex"
-        , HA.style "gap" "2px"
-        , HA.style "margin-top" "0.4rem"
-        , HA.style "flex-wrap" "wrap"
-        ]
-        (List.map (cellView config timeline playheadTicks) (Data.ChordTrack.cells timeline track))
-
-
-{-| トラック一覧で「コード進行」行を選択した時にメインペインに表示するビュー。
-cellView は小節/トークンクリックでシーク・現在小節ハイライト・度数表示・パースエラー表示を既に持つので、
-メインペイン幅で表示するだけでよい。
--}
-trackPaneView : Config msg -> Timeline -> Int -> ChordTrack -> Html msg
-trackPaneView config timeline playheadTicks track =
-    div []
-        [ div Style.headingText [ text "コード進行" ]
-        , span [ HA.style "font-size" "0.75rem", HA.style "color" "#888" ]
-            [ text "| で小節区切り（改行は無視されるので自由に使ってOK）、空白で小節内分割。% = 直前のコードを繰返し、_ = 休符、= = 直前のコードを伸ばす、// 以降は行末までコメント。コードをクリックすると再生位置がそこへ移動" ]
-        , div [ HA.style "margin-top" "0.4rem" ]
-            [ button
-                (Style.baseButton
-                    ++ [ HE.onClick config.toggledChordProgressionModal
-                       , HA.title "広い画面でコード進行のテキストを編集"
-                       ]
-                )
-                [ text "✎ コード進行を編集" ]
-            ]
-        , cellsView config timeline playheadTicks track
         ]
 
 
@@ -201,6 +128,8 @@ progressionEditorView : Config msg -> ChordTrack -> Html msg
 progressionEditorView config track =
     div []
         [ div Style.headingText [ text "コード進行を編集" ]
+        , span [ HA.style "font-size" "0.75rem", HA.style "color" "#888", HA.style "display" "block", HA.style "margin-top" "0.3rem" ]
+            [ text "| で小節区切り（改行は無視されるので自由に使ってOK）、空白で小節内分割。% = 直前のコードを繰返し、_ = 休符、= = 直前のコードを伸ばす、// 以降は行末までコメント。コードをクリックすると再生位置がそこへ移動" ]
         , textarea
             [ HA.value track.text
             , HE.onInput config.changedText
@@ -551,160 +480,3 @@ shapeSelect config presetShapeName =
         )
 
 
-cellView : Config msg -> Timeline -> Int -> ChordCell -> Html msg
-cellView config timeline playheadTicks cell =
-    let
-        isCurrentBar =
-            playheadTicks >= cell.startTicks && playheadTicks < cell.startTicks + cell.lengthTicks
-
-        -- セル内のトークンは小節を等分割するので、位置から逆算できる
-        currentToken =
-            if isCurrentBar then
-                (playheadTicks - cell.startTicks) * List.length cell.chords // Basics.max 1 cell.lengthTicks
-
-            else
-                -1
-
-        tokenCount =
-            Basics.max 1 (List.length cell.chords)
-
-        tickAtToken index =
-            cell.startTicks + index * cell.lengthTicks // tokenCount
-
-        key =
-            Data.Timeline.keyAt cell.startTicks timeline
-
-        background =
-            if isCurrentBar then
-                "#fff6dd"
-
-            else
-                case Data.Timeline.sectionIndexAt cell.startTicks timeline of
-                    Just idx ->
-                        Palette.sectionTint idx
-
-                    Nothing ->
-                        Palette.neutral
-    in
-    div
-        [ HA.style "border"
-            (if isCurrentBar then
-                "1px solid #e6a817"
-
-             else
-                "1px solid #ccc"
-            )
-        , HA.style "border-radius" "3px"
-        , HA.style "padding" "0.2rem 0.4rem"
-        , HA.style "min-width" "3.5rem"
-        , HA.style "background" background
-        ]
-        (span
-            [ HA.style "font-size" "0.7rem"
-            , HA.style "color" "#aaa"
-            , HA.style "margin-right" "0.3rem"
-            , HA.style "cursor" "pointer"
-            , HA.title "この小節の頭から再生"
-            , HE.onClick (config.clickedChord cell.startTicks)
-            ]
-            [ text (String.fromInt (cell.barIndex + 1)) ]
-            :: List.indexedMap (\i c -> chordView config (tickAtToken i) key (i == currentToken) c) cell.chords
-        )
-
-
-chordView : Config msg -> Int -> Key -> Bool -> { token : String, result : Result String TokenKind } -> Html msg
-chordView config tick key isCurrent c =
-    let
-        highlight =
-            [ HA.style "padding" "0 0.15rem"
-            , HA.style "border-radius" "2px"
-            , HA.style "background"
-                (if isCurrent then
-                    Style.colorHighlight
-
-                 else
-                    "transparent"
-                )
-            ]
-
-        clickable =
-            [ HA.style "cursor" "pointer"
-            , HA.title "クリックでここから再生"
-            , HE.onClick (config.clickedChord tick)
-            ]
-
-        degree =
-            case c.result of
-                Ok (TChord chord) ->
-                    Just (Data.Key.degreeLabel key { spelledFlat = Data.Key.isFlatSpelled c.token } chord)
-
-                _ ->
-                    Nothing
-
-        withDegree color =
-            span
-                ([ HA.style "display" "inline-flex"
-                 , HA.style "flex-direction" "column"
-                 , HA.style "align-items" "center"
-                 , HA.style "margin-right" "0.3rem"
-                 ]
-                    ++ highlight
-                    ++ clickable
-                )
-                [ span [ HA.style "color" color, HA.style "font-weight" "bold" ] [ text c.token ]
-                , case degree of
-                    Just d ->
-                        span [ HA.style "font-size" "0.6rem", HA.style "color" "#aaa" ] [ text d ]
-
-                    Nothing ->
-                        text ""
-                ]
-    in
-    case c.result of
-        Ok (TChord _) ->
-            withDegree "#2c7a2c"
-
-        Ok _ ->
-            withDegree "#888"
-
-        Err reason ->
-            span
-                ([ HA.style "color" "#e74c3c"
-                 , HA.style "text-decoration" "underline wavy"
-                 , HA.style "margin-right" "0.3rem"
-                 , HA.title reason
-                 ]
-                    ++ highlight
-                    ++ clickable
-                )
-                [ text c.token ]
-
-
-instrumentSelect : Config msg -> ChordTrack -> Html msg
-instrumentSelect config track =
-    select
-        [ HE.onInput config.changedInstrument ]
-        (Data.Track.allInstruments
-            |> List.filter ((/=) Data.Track.DrumKit)
-            |> List.map
-                (\inst ->
-                    option
-                        [ HA.value (Data.Track.instrumentToString inst)
-                        , HA.selected (inst == track.instrument)
-                        ]
-                        [ text (Data.Track.instrumentLabel inst) ]
-                )
-        )
-
-
-loadBadge : Maybe String -> Html msg
-loadBadge state =
-    case state of
-        Just "loading" ->
-            span (Style.badge "loading") [ text "⏳ 読込中…" ]
-
-        Just "failed" ->
-            span (Style.badge "failed") [ text "⚠ 読込失敗" ]
-
-        _ ->
-            text ""

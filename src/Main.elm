@@ -3228,12 +3228,7 @@ view model =
         chordEditorConfig =
             { changedText = ChangedChordText
             , toggledChordProgressionModal = ToggledChordProgressionModal
-            , toggledMute = ToggledChordMute
             , convertToTrack = ClickedConvertChords
-            , changedVolume = ChangedChordVolume
-            , clickedChord = ClickedChordAt
-            , toggledGhost = ToggledGhostTrack (negate 1)
-            , changedInstrument = ChangedChordInstrument
             , toggledVoicingEnabled = ToggledVoicingEnabled
             , toggledGuitarFormEnabled = ToggledGuitarFormEnabled
             , clickedCopyText = ClickedCopyChordText
@@ -3263,6 +3258,9 @@ view model =
             , presetQualityName = model.voicingPresetQuality
             , presetShapeName = model.voicingPresetShape
             }
+
+        chordSpans =
+            Data.ChordTrack.namedSpans timeline model.project.chordTrack
     in
     div [ style "display" "flex", style "flex-direction" "column", style "height" "100vh", style "font-family" "sans-serif" ]
         [ Style.focusCss
@@ -3377,6 +3375,7 @@ view model =
                 , wheelZoomed = WheelZoomedSectionBar
                 , pressedRuler = PressedSectionRuler
                 , pressedLoopHandle = PressedSectionLoopHandle
+                , clickedChord = ClickedChordAt
                 }
                 { pxPerBar = model.sectionBarZoom
                 , loopEditable = model.loopMode == LoopRange
@@ -3390,8 +3389,8 @@ view model =
                 , playheadTicks = model.playheadTicks
                 , ticksToPx = \ticks -> Data.Timeline.ticksToFractionalBar ticks timeline * toFloat model.sectionBarZoom
                 }
-                { chordSummaries = Data.ChordTrack.sectionSummaries timeline (List.length model.project.sections) model.project.chordTrack
-                , playingIndex = sectionAtTicks model.playheadTicks model.project
+                chordSpans
+                { playingIndex = sectionAtTicks model.playheadTicks model.project
                 }
                 model.selectedSectionId
                 model.insertCountInput
@@ -3447,8 +3446,6 @@ view model =
                     chordEditorConfig
                     timeline
                     model.playheadTicks
-                    (Set.member (negate 1) model.ghostTrackIds)
-                    model.instrumentLoad
                     voicingState
                     model.project.chordTrack
                 , RefAudio.view
@@ -3512,63 +3509,100 @@ view model =
                                 )
                             ]
 
-                    pianoRollView =
-                        div []
-                            [ durationSelect
-                            , PianoRoll.view
-                                { pressedEmpty = PressedEmptyCell
-                            , pressedNote = PressedNote
-                            , doubleClickedNote = DoubleClickedNote
-                            , rightClickedNote = RightClickedNote
-                            , pressedRuler = PressedRuler
-                            , pressedLoopHandle = PressedLoopHandle
-                            , pressedKey = PressedPianoKey
-                            , wheelZoomedRuler = WheelZoomedRuler
-                            , clickedChord = ClickedChordAt
-                            }
-                            { notes = trackNotes model
-                            , selectedIds = model.selectedNoteIds
-                            , playheadTicks = model.playheadTicks
-                            , sections = sectionSpans model.project
-                            , totalBars = totalBarsFor model.project
-                            , rubberBand =
-                                model.rubberBand
-                                    |> Maybe.map
-                                        (\rb ->
-                                            { x = Basics.min rb.originX rb.curX
-                                            , y = Basics.min rb.originY rb.curY
-                                            , w = abs (rb.curX - rb.originX)
-                                            , h = abs (rb.curY - rb.originY)
-                                            }
-                                        )
-                            , highlightedPitch = Set.union model.highlightedPitches model.heldKeyPitches
-                            , scalePitchClasses = Data.Key.scalePitchClasses (Data.Timeline.keyAt (scaleReferenceTicks model) timeline)
-                            , loop =
-                                case model.loopDrag of
-                                    Just ld ->
-                                        Just { startTicks = Basics.min ld.fixedTicks ld.curTicks, endTicks = Basics.max ld.fixedTicks ld.curTicks }
+                    pianoRollConfig =
+                        { pressedEmpty = PressedEmptyCell
+                        , pressedNote = PressedNote
+                        , doubleClickedNote = DoubleClickedNote
+                        , rightClickedNote = RightClickedNote
+                        , pressedRuler = PressedRuler
+                        , pressedLoopHandle = PressedLoopHandle
+                        , pressedKey = PressedPianoKey
+                        , wheelZoomedRuler = WheelZoomedRuler
+                        , clickedChord = ClickedChordAt
+                        }
 
-                                    Nothing ->
-                                        currentLoop model
-                            , loopEditable = model.loopMode == LoopRange
-                            , waveform =
-                                if Array.isEmpty model.refPeaks then
-                                    Nothing
-
-                                else
-                                    Just
-                                        { peaks = model.refPeaks
-                                        , peakDt = model.refPeakDt
-                                        , secsPerTick = 60 / (model.project.bpm * toFloat Data.Time.ppq)
-                                        , offsetMs = model.project.referenceAudio.offsetMs
+                    pianoRollOpts =
+                        { notes = trackNotes model
+                        , selectedIds = model.selectedNoteIds
+                        , playheadTicks = model.playheadTicks
+                        , sections = sectionSpans model.project
+                        , totalBars = totalBarsFor model.project
+                        , rubberBand =
+                            model.rubberBand
+                                |> Maybe.map
+                                    (\rb ->
+                                        { x = Basics.min rb.originX rb.curX
+                                        , y = Basics.min rb.originY rb.curY
+                                        , w = abs (rb.curX - rb.originX)
+                                        , h = abs (rb.curY - rb.originY)
                                         }
-                            , ghostNoteGroups = ghostNoteGroups model timeline
-                            , pxPerSixteenth = model.pianoRollZoom
-                            , chordSpans = Data.ChordTrack.namedSpans timeline model.project.chordTrack
-                            }
+                                    )
+                        , highlightedPitch = Set.union model.highlightedPitches model.heldKeyPitches
+                        , scalePitchClasses = Data.Key.scalePitchClasses (Data.Timeline.keyAt (scaleReferenceTicks model) timeline)
+                        , loop =
+                            case model.loopDrag of
+                                Just ld ->
+                                    Just { startTicks = Basics.min ld.fixedTicks ld.curTicks, endTicks = Basics.max ld.fixedTicks ld.curTicks }
+
+                                Nothing ->
+                                    currentLoop model
+                        , loopEditable = model.loopMode == LoopRange
+                        , waveform =
+                            if Array.isEmpty model.refPeaks then
+                                Nothing
+
+                            else
+                                Just
+                                    { peaks = model.refPeaks
+                                    , peakDt = model.refPeakDt
+                                    , secsPerTick = 60 / (model.project.bpm * toFloat Data.Time.ppq)
+                                    , offsetMs = model.project.referenceAudio.offsetMs
+                                    }
+                        , ghostNoteGroups = ghostNoteGroups model timeline
+                        , pxPerSixteenth = model.pianoRollZoom
+                        , chordSpans = chordSpans
+                        }
+
+                    pianoRollView =
+                        div [] [ durationSelect, PianoRoll.view pianoRollConfig pianoRollOpts ]
+
+                    chordParseErrors =
+                        Data.ChordTrack.cells timeline model.project.chordTrack
+                            |> List.concatMap
+                                (\cell ->
+                                    cell.chords
+                                        |> List.filterMap
+                                            (\c ->
+                                                case c.result of
+                                                    Err reason ->
+                                                        Just ("小節" ++ String.fromInt (cell.barIndex + 1) ++ ": \"" ++ c.token ++ "\" を解釈できません（" ++ reason ++ "）")
+
+                                                    Ok _ ->
+                                                        Nothing
+                                            )
+                                )
+
+                    chordTrackMainView =
+                        div []
+                            [ div [ style "margin-top" "0.5rem" ]
+                                [ button
+                                    (Style.baseButton
+                                        ++ [ onClick ToggledChordProgressionModal
+                                           , Html.Attributes.title "広い画面でコード進行のテキストを編集"
+                                           ]
+                                    )
+                                    [ text "✎ コード進行を編集" ]
+                                ]
+                            , if List.isEmpty chordParseErrors then
+                                text ""
+
+                              else
+                                div [ style "margin-top" "0.4rem", style "font-size" "0.75rem", style "color" "#c0392b" ]
+                                    (List.map (\msg -> div [] [ text msg ]) chordParseErrors)
+                            , PianoRoll.chordTrackView pianoRollConfig pianoRollOpts
                             ]
                   in
-                  if model.selectedTrackId == Data.ChordTrack.trackId then ChordEditor.trackPaneView chordEditorConfig timeline model.playheadTicks model.project.chordTrack else case selectedTrackKind model of
+                  if model.selectedTrackId == Data.ChordTrack.trackId then chordTrackMainView else case selectedTrackKind model of
                     Just (DrumTrack _) ->
                         div []
                             [ button (Style.baseButton ++ [ onClick ToggledDrumView, style "margin-top" "0.5rem" ])

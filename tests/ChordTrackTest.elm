@@ -133,13 +133,4 @@ suite =
                 ChordTrack.namedSpans multiSectionTimeline (track "C | C | G | Am")
                     |> List.map .sectionIndex
                     |> Expect.equal [ Just 0, Just 0, Just 1, Just 1 ]
-        , test "sectionSummaries は連続同名を除去してセクションごとに連結する" <|
-            \_ ->
-                ChordTrack.sectionSummaries multiSectionTimeline 3 (track "C | C | G | Am")
-                    |> Expect.equal [ "C", "G Am", "" ]
-        , test "sectionSummaries は sectionCount 分の長さで返す" <|
-            \_ ->
-                ChordTrack.sectionSummaries multiSectionTimeline 3 (track "C | C | G | Am")
-                    |> List.length
-                    |> Expect.equal 3
         ]

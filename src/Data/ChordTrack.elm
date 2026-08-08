@@ -9,7 +9,6 @@ module Data.ChordTrack exposing
     , empty
     , namedSpans
     , resolved
-    , sectionSummaries
     , stripComments
     , toPlainText
     , trackId
@@ -216,46 +215,6 @@ namedSpans timeline track =
                 , sectionIndex = Data.Timeline.sectionIndexAt rc.startTicks timeline
                 }
             )
-
-
-dedupeConsecutive : List String -> List String
-dedupeConsecutive names =
-    names
-        |> List.foldl
-            (\name acc ->
-                case acc of
-                    last :: _ ->
-                        if last == name then
-                            acc
-
-                        else
-                            name :: acc
-
-                    [] ->
-                        [ name ]
-            )
-            []
-        |> List.reverse
-
-
-{-| セクションバーに小さく出すコード進行のサマリ。セクションインデックスごとにグループ化して連続同名を除去し、
-スペース区切りで連結する。`sectionCount` 分の長さで返し、コードのないセクションは空文字になる。
--}
-sectionSummaries : Timeline -> Int -> ChordTrack -> List String
-sectionSummaries timeline sectionCount track =
-    let
-        spans =
-            namedSpans timeline track
-
-        summaryFor idx =
-            spans
-                |> List.filter (\s -> s.sectionIndex == Just idx)
-                |> List.map .name
-                |> dedupeConsecutive
-                |> String.join " "
-    in
-    List.range 0 (sectionCount - 1)
-        |> List.map summaryFor
 
 
 resolveCell : ChordCell -> ResolveState -> ResolveState
