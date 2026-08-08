@@ -1,4 +1,4 @@
-module View.ChordEditor exposing (Config, view)
+module View.ChordEditor exposing (Config, progressionEditorView, view, voicingEditorView)
 
 import Data.Chord exposing (Chord)
 import Data.Chord.Format as Format
@@ -23,6 +23,7 @@ import View.VoicingKeyboard as VoicingKeyboard
 
 type alias Config msg =
     { changedText : String -> msg
+    , toggledChordProgressionModal : msg
     , toggledMute : msg
     , convertToTrack : msg
     , changedVolume : String -> msg
@@ -143,21 +144,15 @@ view config timeline playheadTicks isGhost loadStates voicingState track =
                         "📋 コード譜をコピー"
                     )
                 ]
+            , button
+                (Style.baseButton
+                    ++ [ HE.onClick config.toggledChordProgressionModal
+                       , HA.title "広い画面でコード進行のテキストを編集"
+                       ]
+                )
+                [ text "✎ コード進行を編集" ]
             ]
         , voiceLeadingView timeline playheadTicks voicingState.enabled voicingState.guitarFormEnabled voicingState.voicings track
-        , textarea
-            [ HA.value track.text
-            , HE.onInput config.changedText
-            , HA.placeholder "例:\nC | G/B | Am7 | F  // イントロ\nC | G7b5 | % | =  // Aメロ"
-            , HA.style "width" "98%"
-            , HA.style "font-size" "1rem"
-            , HA.style "margin-top" "0.4rem"
-            , HA.style "font-family" "monospace"
-            , HA.style "padding" "0.3rem"
-            , HA.style "min-height" "8rem"
-            , HA.style "resize" "vertical"
-            ]
-            []
         , div
             [ HA.style "display" "flex"
             , HA.style "gap" "2px"
@@ -166,6 +161,30 @@ view config timeline playheadTicks isGhost loadStates voicingState track =
             ]
             (List.map (cellView config timeline playheadTicks) (Data.ChordTrack.cells timeline track))
         , voicingsSection config voicingState (Data.ChordTrack.cells timeline track)
+        ]
+
+
+{-| コード進行のテキストエリア。380px のサイドバーには打ちづらいという声を受け、
+Main.elm 側で `View.Modal` に載せて広い画面で表示する想定。
+-}
+progressionEditorView : Config msg -> ChordTrack -> Html msg
+progressionEditorView config track =
+    div []
+        [ div Style.headingText [ text "コード進行を編集" ]
+        , textarea
+            [ HA.value track.text
+            , HE.onInput config.changedText
+            , HA.placeholder "例:\nC | G/B | Am7 | F  // イントロ\nC | G7b5 | % | =  // Aメロ"
+            , HA.style "width" "100%"
+            , HA.style "font-size" "1rem"
+            , HA.style "margin-top" "0.4rem"
+            , HA.style "font-family" "monospace"
+            , HA.style "padding" "0.3rem"
+            , HA.style "min-height" "16rem"
+            , HA.style "resize" "vertical"
+            , HA.style "box-sizing" "border-box"
+            ]
+            []
         ]
 
 
@@ -247,6 +266,7 @@ voiceLeadingView timeline playheadTicks voicingEnabled guitarFormEnabled voicing
                             [ HA.style "display" "flex"
                             , HA.style "align-items" "flex-start"
                             , HA.style "gap" "0.5rem"
+                            , HA.style "overflow-x" "auto"
                             ]
                             [ label chord
                             , Fretboard.viewReadOnly { rootPitch = 0, selected = currentSelected, picks = currentPicks }
@@ -272,6 +292,7 @@ voiceLeadingView timeline playheadTicks voicingEnabled guitarFormEnabled voicing
                                     [ HA.style "display" "flex"
                                     , HA.style "align-items" "flex-start"
                                     , HA.style "gap" "0.5rem"
+                                    , HA.style "overflow-x" "auto"
                                     ]
                                     [ label prevChord
                                     , Fretboard.viewReadOnly { rootPitch = 0, selected = previousSelected, picks = previousPicks }
@@ -371,10 +392,6 @@ voicingsSection config voicingState cells =
 
 voicingRow : Config msg -> VoicingState -> Int -> Voicing -> Html msg
 voicingRow config voicingState index voicing =
-    let
-        rootPitch =
-            anchorPitch + voicingState.previewRootPc
-    in
     div [ HA.style "margin-top" "0.4rem" ]
         [ div [ HA.style "display" "flex", HA.style "gap" "0.4rem", HA.style "align-items" "center" ]
             [ Html.input
@@ -396,7 +413,7 @@ voicingRow config voicingState index voicing =
                 ]
             , button
                 (Style.baseButton ++ [ HE.onClick (config.clickedPlayVoicing index), HA.title "このボイシングを和音で確かめる（試聴キーに従う）" ])
-                [ text "▶ 全部鳴らす" ]
+                [ text "▶　全部同時発音" ]
             , if voicingState.pendingDelete == Just index then
                 button
                     (Style.armedDangerButton ++ [ HE.onClick (config.clickedRemoveVoicing index) ])
@@ -407,54 +424,61 @@ voicingRow config voicingState index voicing =
                     (Style.dangerButton ++ [ HE.onClick (config.clickedRemoveVoicing index) ])
                     [ text "✕" ]
             ]
-        , if voicingState.editingIndex == Just index then
-            div []
-                [ div
-                    [ HA.style "display" "flex"
-                    , HA.style "gap" "0.4rem"
-                    , HA.style "align-items" "center"
-                    , HA.style "flex-wrap" "wrap"
-                    , HA.style "margin-top" "0.3rem"
-                    , HA.style "font-size" "0.75rem"
-                    , HA.style "color" "#666"
-                    ]
-                    [ text "試聴キー:"
-                    , previewRootSelect config voicingState.previewRootPc
-                    , Style.divider
-                    , text "プリセット:"
-                    , qualitySelect config voicingState.presetQualityName
-                    , shapeSelect config voicingState.presetShapeName
-                    , button
-                        (Style.baseButton
-                            ++ [ HE.onClick (config.appliedVoicingPreset index)
-                               , HA.title "選んだコード品質×配置で offsets を上書き"
-                               ]
-                        )
-                        [ text "プリセットを適用" ]
-                    ]
-                , let
-                    selected =
-                        Set.fromList (List.map ((+) rootPitch) voicing.offsets)
+        ]
 
-                    displayRootPitch =
-                        Data.Voicing.displayRoot rootPitch voicing.offsets
-                  in
-                  div [ HA.style "display" "flex", HA.style "gap" "0.6rem", HA.style "align-items" "flex-start", HA.style "overflow-x" "auto" ]
-                    [ VoicingKeyboard.view
-                        { pressedOffset = config.pressedVoicingOffset index
-                        , doubleClickedOffset = config.doubleClickedVoicingOffset index
-                        }
-                        { rootPitch = rootPitch, displayRootPitch = displayRootPitch, selected = selected }
-                    , Fretboard.view
-                        { pressedFret = config.pressedFretboardCell index
-                        , doubleClickedFret = config.doubleClickedFretboardCell index
-                        }
-                        { rootPitch = rootPitch, selected = selected, picks = voicing.stringPicks }
-                    ]
-                ]
 
-          else
-            text ""
+{-| ボイシング1件のピアノ＋指板編集画面。380px のサイドバーには収まらないので、
+Main.elm 側で `View.Modal` に載せて表示する想定。
+-}
+voicingEditorView : Config msg -> VoicingState -> Int -> Voicing -> Html msg
+voicingEditorView config voicingState index voicing =
+    let
+        rootPitch =
+            anchorPitch + voicingState.previewRootPc
+
+        selected =
+            Set.fromList (List.map ((+) rootPitch) voicing.offsets)
+
+        displayRootPitch =
+            Data.Voicing.displayRoot rootPitch voicing.offsets
+    in
+    div []
+        [ div Style.headingText [ text ("ボイシングを編集: " ++ voicing.name) ]
+        , div
+            [ HA.style "display" "flex"
+            , HA.style "gap" "0.4rem"
+            , HA.style "align-items" "center"
+            , HA.style "flex-wrap" "wrap"
+            , HA.style "margin-top" "0.5rem"
+            , HA.style "font-size" "0.75rem"
+            , HA.style "color" "#666"
+            ]
+            [ text "試聴キー:"
+            , previewRootSelect config voicingState.previewRootPc
+            , Style.divider
+            , text "プリセット:"
+            , qualitySelect config voicingState.presetQualityName
+            , shapeSelect config voicingState.presetShapeName
+            , button
+                (Style.baseButton
+                    ++ [ HE.onClick (config.appliedVoicingPreset index)
+                       , HA.title "選んだコード品質×配置で offsets を上書き"
+                       ]
+                )
+                [ text "プリセットを適用" ]
+            ]
+        , div [ HA.style "display" "flex", HA.style "gap" "0.6rem", HA.style "align-items" "flex-start", HA.style "overflow-x" "auto", HA.style "margin-top" "0.6rem" ]
+            [ VoicingKeyboard.view
+                { pressedOffset = config.pressedVoicingOffset index
+                , doubleClickedOffset = config.doubleClickedVoicingOffset index
+                }
+                { rootPitch = rootPitch, displayRootPitch = displayRootPitch, selected = selected }
+            , Fretboard.view
+                { pressedFret = config.pressedFretboardCell index
+                , doubleClickedFret = config.doubleClickedFretboardCell index
+                }
+                { rootPitch = rootPitch, selected = selected, picks = voicing.stringPicks }
+            ]
         ]
 
 

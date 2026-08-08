@@ -55,6 +55,7 @@ trackRow config totalBars selectedTrackId loadStates ghostTrackIds pendingDelete
     in
     div
         [ HA.style "display" "flex"
+        , HA.style "flex-wrap" "wrap"
         , HA.style "align-items" "center"
         , HA.style "gap" "0.5rem"
         , HA.style "padding" "0.25rem 0.5rem"

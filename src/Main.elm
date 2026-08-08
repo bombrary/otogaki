@@ -43,6 +43,7 @@ import View.Arrange as Arrange
 import View.ChordEditor as ChordEditor
 import View.DrumEditor as DrumEditor
 import View.Keyboard as Keyboard
+import View.Modal as Modal
 import View.PianoRoll as PianoRoll
 import View.RefAudio as RefAudio
 import View.ScrapShelf as ScrapShelf
@@ -154,11 +155,12 @@ type alias Model =
     , voicingDragState : VoicingDragState
     , pianoRollZoom : Int
     , sectionResizeDrag : Maybe { sectionId : Int, startClientX : Float, origLengthBars : Int, curLengthBars : Int }
-    , sectionMoveDrag : Maybe { sectionId : Int, lastClientX : Float, accumDx : Float }
+    , sectionMoveDrag : Maybe { sectionId : Int, lastClientX : Float, accumDx : Float, moved : Bool, wasSelected : Bool }
     , sectionBarZoom : Int
     , sectionLoopDrag : Maybe { fixedTicks : Int, baseTicks : Int, startClientX : Float, curTicks : Int }
     , leftPaneWidth : Int
     , paneDividerDrag : Maybe { startClientX : Float, origWidth : Int }
+    , chordProgressionModalOpen : Bool
     }
 
 
@@ -271,6 +273,7 @@ type Msg
     | PressedSectionRuler { offsetX : Float, clientX : Float, shift : Bool }
     | PressedSectionLoopHandle Bool Float
     | PressedPaneDivider Float
+    | ToggledChordProgressionModal
     | NoOp
 
 
@@ -331,6 +334,7 @@ init flags =
       , sectionLoopDrag = Nothing
       , leftPaneWidth = 380
       , paneDividerDrag = Nothing
+      , chordProgressionModalOpen = False
       }
     , Cmd.none
     )
@@ -807,6 +811,27 @@ resizeSectionBars sectionId newLenRaw model =
 parseInsertCount : String -> Int
 parseInsertCount raw =
     String.toInt raw |> Maybe.withDefault 1 |> clamp 1 64
+
+
+{-| セクションブロックのドラッグ終了時の共通ロジック。実際に並べ替えが起きていなければ
+（＝クリックのみと同等）、押した瞬間に既に選択中だったセクションはトグルオフする。
+-}
+releaseSectionMoveDrag : Model -> Model
+releaseSectionMoveDrag model =
+    case model.sectionMoveDrag of
+        Just d ->
+            { model
+                | sectionMoveDrag = Nothing
+                , selectedSectionId =
+                    if not d.moved && d.wasSelected then
+                        Nothing
+
+                    else
+                        model.selectedSectionId
+            }
+
+        Nothing ->
+            model
 
 
 {-| 再生位置を動かす共通入口。再生中なら音のエンジンにも同じ位置を伝える。
@@ -1556,7 +1581,7 @@ updateCore msg model =
                                                         Just ( targetIndex, remaining ) ->
                                                             ( { model
                                                                 | project = Data.Project.moveSectionToIndex d.sectionId targetIndex model.project
-                                                                , sectionMoveDrag = Just { d | lastClientX = pos.clientX, accumDx = remaining }
+                                                                , sectionMoveDrag = Just { d | lastClientX = pos.clientX, accumDx = remaining, moved = True }
                                                               }
                                                             , Cmd.none
                                                             )
@@ -1651,7 +1676,7 @@ updateCore msg model =
         
                                         Nothing ->
                                             if model.sectionMoveDrag /= Nothing then
-                                                ( { model | sectionMoveDrag = Nothing }, Cmd.none )
+                                                ( releaseSectionMoveDrag model, Cmd.none )
         
                                             else if model.voicingDragState /= NoVoicingDrag then
                                                 ( { model | voicingDragState = NoVoicingDrag }, Cmd.none )
@@ -1774,6 +1799,9 @@ updateCore msg model =
         PressedPaneDivider clientX ->
             ( { model | paneDividerDrag = Just { startClientX = clientX, origWidth = model.leftPaneWidth } }, Cmd.none )
 
+        ToggledChordProgressionModal ->
+            ( { model | chordProgressionModalOpen = not model.chordProgressionModalOpen }, Cmd.none )
+
         PressedSectionResizeHandle sectionId clientX ->
             let
                 origLen =
@@ -1793,7 +1821,7 @@ updateCore msg model =
         PressedSectionBlock sectionId clientX ->
             ( { model
                 | selectedSectionId = Just sectionId
-                , sectionMoveDrag = Just { sectionId = sectionId, lastClientX = clientX, accumDx = 0 }
+                , sectionMoveDrag = Just { sectionId = sectionId, lastClientX = clientX, accumDx = 0, moved = False, wasSelected = model.selectedSectionId == Just sectionId }
               }
             , Cmd.none
             )
@@ -3192,6 +3220,45 @@ view model =
 
         groupStyle =
             [ style "display" "flex", style "align-items" "center", style "gap" "0.3rem" ]
+
+        chordEditorConfig =
+            { changedText = ChangedChordText
+            , toggledChordProgressionModal = ToggledChordProgressionModal
+            , toggledMute = ToggledChordMute
+            , convertToTrack = ClickedConvertChords
+            , changedVolume = ChangedChordVolume
+            , clickedChord = ClickedChordAt
+            , toggledGhost = ToggledGhostTrack (negate 1)
+            , changedInstrument = ChangedChordInstrument
+            , toggledVoicingEnabled = ToggledVoicingEnabled
+            , toggledGuitarFormEnabled = ToggledGuitarFormEnabled
+            , clickedCopyText = ClickedCopyChordText
+            , clickedAddVoicing = ClickedAddVoicing
+            , clickedVoicingRow = ClickedVoicingRow
+            , changedVoicingName = ChangedVoicingName
+            , pressedVoicingOffset = PressedVoicingOffset
+            , doubleClickedVoicingOffset = DoubleClickedVoicingOffset
+            , pressedFretboardCell = PressedFretboardCell
+            , doubleClickedFretboardCell = DoubleClickedFretboardCell
+            , clickedPlayVoicing = ClickedPlayVoicing
+            , clickedRemoveVoicing = ClickedRemoveVoicing
+            , changedVoicingPreviewRoot = ChangedVoicingPreviewRoot
+            , changedVoicingPresetQuality = ChangedVoicingPresetQuality
+            , changedVoicingPresetShape = ChangedVoicingPresetShape
+            , appliedVoicingPreset = AppliedVoicingPreset
+            }
+
+        voicingState =
+            { voicings = model.project.voicings
+            , enabled = model.project.voicingEnabled
+            , guitarFormEnabled = model.project.guitarFormEnabled
+            , editingIndex = model.editingVoicingIndex
+            , pendingDelete = model.pendingVoicingDelete
+            , copyFeedback = model.chordCopyFeedback
+            , previewRootPc = model.voicingPreviewRoot
+            , presetQualityName = model.voicingPresetQuality
+            , presetShapeName = model.voicingPresetShape
+            }
     in
     div [ style "display" "flex", style "flex-direction" "column", style "height" "100vh", style "font-family" "sans-serif" ]
         [ Style.focusCss
@@ -3362,44 +3429,12 @@ view model =
                     model.pendingTrackDelete
                     model.project.tracks
                 , ChordEditor.view
-                    { changedText = ChangedChordText
-                    , toggledMute = ToggledChordMute
-                    , convertToTrack = ClickedConvertChords
-                    , changedVolume = ChangedChordVolume
-                    , clickedChord = ClickedChordAt
-                    , toggledGhost = ToggledGhostTrack (negate 1)
-                    , changedInstrument = ChangedChordInstrument
-                    , toggledVoicingEnabled = ToggledVoicingEnabled
-                    , toggledGuitarFormEnabled = ToggledGuitarFormEnabled
-                    , clickedCopyText = ClickedCopyChordText
-                    , clickedAddVoicing = ClickedAddVoicing
-                    , clickedVoicingRow = ClickedVoicingRow
-                    , changedVoicingName = ChangedVoicingName
-                    , pressedVoicingOffset = PressedVoicingOffset
-                    , doubleClickedVoicingOffset = DoubleClickedVoicingOffset
-                    , pressedFretboardCell = PressedFretboardCell
-                    , doubleClickedFretboardCell = DoubleClickedFretboardCell
-                    , clickedPlayVoicing = ClickedPlayVoicing
-                    , clickedRemoveVoicing = ClickedRemoveVoicing
-                    , changedVoicingPreviewRoot = ChangedVoicingPreviewRoot
-                    , changedVoicingPresetQuality = ChangedVoicingPresetQuality
-                    , changedVoicingPresetShape = ChangedVoicingPresetShape
-                    , appliedVoicingPreset = AppliedVoicingPreset
-                    }
+                    chordEditorConfig
                     timeline
                     model.playheadTicks
                     (Set.member (negate 1) model.ghostTrackIds)
                     model.instrumentLoad
-                    { voicings = model.project.voicings
-                    , enabled = model.project.voicingEnabled
-                    , guitarFormEnabled = model.project.guitarFormEnabled
-                    , editingIndex = model.editingVoicingIndex
-                    , pendingDelete = model.pendingVoicingDelete
-                    , copyFeedback = model.chordCopyFeedback
-                    , previewRootPc = model.voicingPreviewRoot
-                    , presetQualityName = model.voicingPresetQuality
-                    , presetShapeName = model.voicingPresetShape
-                    }
+                    voicingState
                     model.project.chordTrack
                 , RefAudio.view
                     { changedOffset = ChangedRefOffset
@@ -3580,6 +3615,24 @@ view model =
                     model.showKeyboard
                 ]
             ]
+        , if model.chordProgressionModalOpen then
+            Modal.view ToggledChordProgressionModal
+                [ ChordEditor.progressionEditorView chordEditorConfig model.project.chordTrack ]
+
+          else
+            text ""
+        , case model.editingVoicingIndex of
+            Just index ->
+                case List.drop index model.project.voicings |> List.head of
+                    Just voicing ->
+                        Modal.view (ClickedVoicingRow index)
+                            [ ChordEditor.voicingEditorView chordEditorConfig voicingState index voicing ]
+
+                    Nothing ->
+                        text ""
+
+            Nothing ->
+                text ""
         ]
 
 
