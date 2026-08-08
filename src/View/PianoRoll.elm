@@ -207,10 +207,16 @@ view config opts =
 -}
 chordStripView : Config msg -> ViewOpts -> Html msg
 chordStripView config opts =
+    chordStripViewWithHeight config opts ChordStrip.height
+
+
+chordStripViewWithHeight : Config msg -> ViewOpts -> Int -> Html msg
+chordStripViewWithHeight config opts stripHeight =
     ChordStrip.view config.clickedChord
         { ticksToX = ticksToPixels opts.pxPerSixteenth
         , width = gridWidth opts.pxPerSixteenth opts.totalBars
         , playheadTicks = opts.playheadTicks
+        , height = stripHeight
         }
         opts.chordSpans
 
@@ -220,8 +226,8 @@ chordStripView config opts =
 `pianoRollScrollId` を再利用することで、通常のピアノロールと同時にマウントされない前提で、
 追従スクロール・ホイールズーム・ループ編集がそのまま動く。
 -}
-chordTrackView : Config msg -> ViewOpts -> Html msg
-chordTrackView config opts =
+chordTrackView : Config msg -> ViewOpts -> List Note -> Html msg
+chordTrackView config opts previewNotesList =
     Html.div
         [ HA.style "margin-top" "1rem"
         , HA.style "border" "1px solid #ccc"
@@ -232,10 +238,38 @@ chordTrackView config opts =
             , HA.tabindex 0
             , HA.attribute "aria-label" "コード進行トラック"
             ]
-            [ rulerView config opts
-            , chordStripView config opts
-            ]
+            ([ rulerView config opts
+             , chordStripViewWithHeight config opts 36
+             ]
+                ++ (if List.isEmpty previewNotesList then
+                        []
+
+                    else
+                        [ chordTrackNoteGrid opts previewNotesList ]
+                   )
+            )
         ]
+
+
+{-| コード進行トラックのMIDIプレビュー用の読み取り専用ノートグリッド。通常の `gridView` と違い
+mousedown/click 系のハンドラを一切持たず、ノートの新規作成・選択・ドラッグは一切できない（`ghostNoteView` を
+流用しており、それ自体が `pointerEvents "none"` で非インタラクティブ）。
+-}
+chordTrackNoteGrid : ViewOpts -> List Note -> Html msg
+chordTrackNoteGrid opts previewNotesList =
+    Svg.svg
+        [ SA.width (String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars))
+        , SA.height (String.fromInt gridHeight)
+        , SA.viewBox ("0 0 " ++ String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars) ++ " " ++ String.fromInt gridHeight)
+        , HA.style "display" "block"
+        ]
+        (rowBackgrounds opts.pxPerSixteenth opts.totalBars
+            ++ List.concat (List.indexedMap (sectionTint opts.pxPerSixteenth) opts.sections)
+            ++ verticalLines opts.pxPerSixteenth opts.totalBars
+            ++ List.map (ghostNoteView opts.pxPerSixteenth 0) previewNotesList
+            ++ loopLinesView opts.pxPerSixteenth gridHeight opts.loop
+            ++ [ playheadLine opts.pxPerSixteenth gridHeight opts.playheadTicks ]
+        )
 
 
 waveformView : ViewOpts -> Html msg

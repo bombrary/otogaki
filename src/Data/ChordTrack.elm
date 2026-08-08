@@ -8,6 +8,7 @@ module Data.ChordTrack exposing
     , cells
     , empty
     , namedSpans
+    , previewNotes
     , resolved
     , stripComments
     , toPlainText
@@ -20,8 +21,10 @@ import Data.Chord exposing (Chord)
 import Data.Chord.Format as ChordFormat
 import Data.Chord.Parser as ChordParser
 import Data.Meter
+import Data.Note exposing (Note)
 import Data.Timeline exposing (Timeline)
 import Data.Track exposing (Instrument(..))
+import Data.Voicing exposing (Voicing)
 
 
 type alias ChordTrack =
@@ -215,6 +218,21 @@ namedSpans timeline track =
                 , sectionIndex = Data.Timeline.sectionIndexAt rc.startTicks timeline
                 }
             )
+
+
+{-| コード進行を実際にMIDI化（「→ MIDIトラック化」）した場合に鳴るはずのノート列を計算する。
+ピアノロールのMIDIプレビュー表示で使う。id はプレビュー専用の連番（実際のPianoRollのノートとは不一致する）。
+-}
+previewNotes : List Voicing -> Timeline -> ChordTrack -> List Note
+previewNotes voicings timeline track =
+    resolved timeline track
+        |> List.concatMap
+            (\ev ->
+                Data.Chord.toPitchesWith voicings ev.chord
+                    |> List.map (\p -> { pitch = p, start = ev.startTicks, duration = ev.durationTicks })
+            )
+        |> List.indexedMap
+            (\i n -> { id = i, pitch = n.pitch, start = n.start, duration = n.duration, velocity = 80 })
 
 
 resolveCell : ChordCell -> ResolveState -> ResolveState

@@ -40,6 +40,7 @@ import View.VoicingKeyboard as VoicingKeyboard
 import Process
 import Task
 import View.Arrange as Arrange
+import View.ChordBlocks as ChordBlocks
 import View.ChordEditor as ChordEditor
 import View.DrumEditor as DrumEditor
 import View.Keyboard as Keyboard
@@ -129,6 +130,8 @@ type alias Model =
     , refPeaks : Array Float
     , refPeakDt : Float
     , drumViewRoll : Bool
+    , chordBlockView : Bool
+    , chordMidiPreview : Bool
     , loopMode : LoopMode
     , undoStack : List Project
     , redoStack : List Project
@@ -245,6 +248,8 @@ type Msg
     | ChangedRefVolume String
     | ToggledRefMute
     | ToggledDrumView
+    | ToggledChordBlockView
+    | ToggledChordMidiPreview
     | ChangedMemo String
     | ChangedSectionKey Int String
     | ChangedSectionMode Int String
@@ -303,6 +308,8 @@ init flags =
       , refPeaks = Array.empty
       , refPeakDt = 0.02
       , drumViewRoll = False
+      , chordBlockView = False
+      , chordMidiPreview = False
       , loopMode = NoLoop
       , undoStack = []
       , redoStack = []
@@ -2893,6 +2900,12 @@ updateCore msg model =
         ToggledDrumView ->
             ( { model | drumViewRoll = not model.drumViewRoll, selectedNoteIds = Set.empty }, Cmd.none )
 
+        ToggledChordBlockView ->
+            ( { model | chordBlockView = not model.chordBlockView }, Cmd.none )
+
+        ToggledChordMidiPreview ->
+            ( { model | chordMidiPreview = not model.chordMidiPreview }, Cmd.none )
+
         TransposedSong delta ->
             let
                 withPitches =
@@ -3592,6 +3605,40 @@ view model =
                                            ]
                                     )
                                     [ text "✎ コード進行を編集" ]
+                                , button
+                                    (Style.baseButton
+                                        ++ [ onClick ToggledChordBlockView
+                                           , style "margin-left" "0.4rem"
+                                           , Html.Attributes.title "ブロック表示とライン表示を切り替え"
+                                           ]
+                                    )
+                                    [ text
+                                        (if model.chordBlockView then
+                                            "📈 ライン表示に切替"
+
+                                         else
+                                            "📦 ブロック表示に切替"
+                                        )
+                                    ]
+                                , if model.chordBlockView then
+                                    text ""
+
+                                  else
+                                    button
+                                        (Style.baseButton
+                                            ++ [ onClick ToggledChordMidiPreview
+                                               , style "margin-left" "0.4rem"
+                                               , Html.Attributes.title "MIDI化した場合のノートを重ねて表示（編集不可）"
+                                               ]
+                                        )
+                                        [ text
+                                            (if model.chordMidiPreview then
+                                                "🎹 MIDIプレビュー: ON"
+
+                                             else
+                                                "🎹 MIDIプレビュー: OFF"
+                                            )
+                                        ]
                                 ]
                             , if List.isEmpty chordParseErrors then
                                 text ""
@@ -3599,7 +3646,18 @@ view model =
                               else
                                 div [ style "margin-top" "0.4rem", style "font-size" "0.75rem", style "color" "#c0392b" ]
                                     (List.map (\msg -> div [] [ text msg ]) chordParseErrors)
-                            , PianoRoll.chordTrackView pianoRollConfig pianoRollOpts
+                            , if model.chordBlockView then
+                                ChordBlocks.view pianoRollConfig.clickedChord timeline model.playheadTicks model.project.chordTrack
+
+                              else
+                                PianoRoll.chordTrackView pianoRollConfig
+                                    pianoRollOpts
+                                    (if model.chordMidiPreview then
+                                        Data.ChordTrack.previewNotes (effectiveVoicings model) timeline model.project.chordTrack
+
+                                     else
+                                        []
+                                    )
                             ]
                   in
                   if model.selectedTrackId == Data.ChordTrack.trackId then chordTrackMainView else case selectedTrackKind model of

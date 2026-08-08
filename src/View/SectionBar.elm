@@ -185,6 +185,7 @@ view config rulerData chordSpans extras selectedId insertCountInput sections pen
                 { ticksToX = rulerData.ticksToPx
                 , width = totalBars * rulerData.pxPerBar
                 , playheadTicks = rulerData.playheadTicks
+                , height = ChordStrip.height
                 }
                 chordSpans
             , div
@@ -380,6 +381,8 @@ blockView config pxPerBar selectedId resizePreview extras idx section =
         , HA.style "box-sizing" "border-box"
         , HA.style "flex-shrink" "0"
         , HA.style "padding" "0.3rem"
+        , HA.style "min-height" "2.4rem"
+        , HA.style "box-sizing" "border-box"
         , HA.style "text-align" "center"
         , HA.style "border"
             ((if selected then
