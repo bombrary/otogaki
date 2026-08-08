@@ -152,6 +152,7 @@ type alias Model =
     , voicingPresetShape : String
     , voicingSelectedOffsets : Set Int
     , voicingDragState : VoicingDragState
+    , pianoRollZoom : Int
     }
 
 
@@ -255,6 +256,8 @@ type Msg
     | ToggledFollowPlayhead
     | GotPianoRollViewport Int (Result Browser.Dom.Error Browser.Dom.Viewport)
     | PressedLoopHandle Bool Float
+    | WheelZoomedRuler { deltaY : Float, offsetX : Float }
+    | GotPianoRollViewportForZoom { deltaY : Float, offsetX : Float } (Result Browser.Dom.Error Browser.Dom.Viewport)
     | NoOp
 
 
@@ -308,6 +311,7 @@ init flags =
       , voicingPresetShape = "クローズド"
       , voicingSelectedOffsets = Set.empty
       , voicingDragState = NoVoicingDrag
+      , pianoRollZoom = PianoRoll.defaultPxPerSixteenth
       }
     , Cmd.none
     )
@@ -1309,7 +1313,7 @@ updateCore msg model =
 
         PressedEmptyCell pos ->
             if pos.seekMod then
-                seekTo (snapFloor (PianoRoll.pixelsToTicks pos.offsetX)) model
+                seekTo (snapFloor (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX)) model
 
             else if pos.shift then
                 ( { model
@@ -1329,7 +1333,7 @@ updateCore msg model =
             else
                 let
                     start =
-                        Basics.max 0 (snapFloor (PianoRoll.pixelsToTicks pos.offsetX))
+                        Basics.max 0 (snapFloor (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX))
 
                     pitch =
                         clamp PianoRoll.minPitch PianoRoll.maxPitch (PianoRoll.yToPitch pos.offsetY)
@@ -1467,7 +1471,7 @@ updateCore msg model =
                                     Just
                                         { ld
                                             | curTicks =
-                                                Basics.max 0 (ld.baseTicks + snapRound (PianoRoll.pixelsToTicks (pos.clientX - ld.startClientX)))
+                                                Basics.max 0 (ld.baseTicks + snapRound (PianoRoll.pixelsToTicks model.pianoRollZoom (pos.clientX - ld.startClientX)))
                                         }
                               }
                             , Cmd.none
@@ -1539,10 +1543,10 @@ updateCore msg model =
                                     Basics.max rb.originY rb.curY
 
                                 t0 =
-                                    PianoRoll.pixelsToTicks x0
+                                    PianoRoll.pixelsToTicks model.pianoRollZoom x0
 
                                 t1 =
-                                    PianoRoll.pixelsToTicks x1
+                                    PianoRoll.pixelsToTicks model.pianoRollZoom x1
 
                                 pLow =
                                     PianoRoll.yToPitch y1
@@ -1571,12 +1575,12 @@ updateCore msg model =
             if pos.shift then
                 let
                     anchor =
-                        snapRound (PianoRoll.pixelsToTicks pos.offsetX)
+                        snapRound (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX)
                 in
                 ( { model | loopDrag = Just { fixedTicks = anchor, baseTicks = anchor, startClientX = pos.clientX, curTicks = anchor } }, Cmd.none )
 
             else
-                seekTo (snapFloor (PianoRoll.pixelsToTicks pos.offsetX)) model
+                seekTo (snapFloor (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX)) model
 
         PressedLoopHandle isEnd clientX ->
             case model.loopRange of
@@ -2819,7 +2823,7 @@ updateCore msg model =
                 Ok viewport ->
                     let
                         playheadPx =
-                            PianoRoll.ticksToPixels ticks
+                            PianoRoll.ticksToPixels model.pianoRollZoom ticks
 
                         visLeft =
                             viewport.viewport.x
@@ -2836,6 +2840,35 @@ updateCore msg model =
                 Err _ ->
                     ( model, Cmd.none )
 
+        WheelZoomedRuler w ->
+            ( model, Task.attempt (GotPianoRollViewportForZoom w) (Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId) )
+
+        GotPianoRollViewportForZoom w result ->
+            case result of
+                Ok viewport ->
+                    let
+                        anchorPx =
+                            viewport.viewport.x + w.offsetX
+
+                        anchorTicks =
+                            PianoRoll.pixelsToTicks model.pianoRollZoom anchorPx
+
+                        newZoom =
+                            PianoRoll.zoomStep w.deltaY model.pianoRollZoom
+
+                        newAnchorPx =
+                            PianoRoll.ticksToPixels newZoom anchorTicks
+
+                        newScrollLeft =
+                            Basics.max 0 (newAnchorPx - w.offsetX)
+                    in
+                    ( { model | pianoRollZoom = newZoom }
+                    , Task.attempt (\_ -> NoOp) (Browser.Dom.setViewportOf PianoRoll.pianoRollScrollId newScrollLeft 0)
+                    )
+
+                Err _ ->
+                    ( { model | pianoRollZoom = PianoRoll.zoomStep w.deltaY model.pianoRollZoom }, Cmd.none )
+
         NoOp ->
             ( model, Cmd.none )
 
@@ -2844,7 +2877,7 @@ dragMove : ClientPos -> DragInfo -> Model -> ( Model, Cmd Msg )
 dragMove pos d model =
     let
         dticks =
-            snapRound (PianoRoll.pixelsToTicks (pos.clientX - d.startClientX))
+            snapRound (PianoRoll.pixelsToTicks model.pianoRollZoom (pos.clientX - d.startClientX))
     in
     case d.mode of
         MoveNote ->
@@ -3184,6 +3217,7 @@ view model =
                     , pressedRuler = PressedRuler
                     , pressedLoopHandle = PressedLoopHandle
                     , pressedKey = PressedPianoKey
+                    , wheelZoomedRuler = WheelZoomedRuler
                     }
                     { notes = trackNotes model
                     , selectedIds = model.selectedNoteIds
@@ -3222,6 +3256,7 @@ view model =
                                 , offsetMs = model.project.referenceAudio.offsetMs
                                 }
                     , ghostNoteGroups = ghostNoteGroups model timeline
+                    , pxPerSixteenth = model.pianoRollZoom
                     }
                     ]
           in

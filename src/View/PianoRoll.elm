@@ -1,14 +1,18 @@
 module View.PianoRoll exposing
     ( Config
     , SectionSpan
+    , defaultPxPerSixteenth
     , maxPitch
+    , maxPxPerSixteenth
     , minPitch
+    , minPxPerSixteenth
     , pianoRollScrollId
     , pixelsToTicks
     , rowHeight
     , ticksToPixels
     , view
     , yToPitch
+    , zoomStep
     )
 
 import Array exposing (Array)
@@ -34,6 +38,7 @@ type alias Config msg =
     , pressedRuler : { offsetX : Float, clientX : Float, shift : Bool } -> msg
     , pressedLoopHandle : Bool -> Float -> msg
     , pressedKey : Int -> msg
+    , wheelZoomedRuler : { deltaY : Float, offsetX : Float } -> msg
     }
 
 
@@ -57,6 +62,7 @@ type alias ViewOpts =
     , scalePitchClasses : Set Int
     , loop : Maybe { startTicks : Int, endTicks : Int }
     , loopEditable : Bool
+    , pxPerSixteenth : Int
     }
 
 
@@ -78,9 +84,43 @@ rowHeight =
     14
 
 
-pxPerSixteenth : Int
-pxPerSixteenth =
+{-| ズーム機構導入前のデフォルト値。`pianoRollZoom` の初期値に使う。
+-}
+defaultPxPerSixteenth : Int
+defaultPxPerSixteenth =
     20
+
+
+minPxPerSixteenth : Int
+minPxPerSixteenth =
+    6
+
+
+maxPxPerSixteenth : Int
+maxPxPerSixteenth =
+    120
+
+
+{-| ルーラーのホイールズームの1ステップ。deltaY が負（手前に回す）ならズームイン、
+正（向こうに回す）ならズームアウト。範囲は `minPxPerSixteenth`〜`maxPxPerSixteenth` にクランプする。
+-}
+zoomStep : Float -> Int -> Int
+zoomStep deltaY current =
+    let
+        factor =
+            if deltaY < 0 then
+                1.2
+
+            else if deltaY > 0 then
+                1 / 1.2
+
+            else
+                1
+
+        next =
+            round (toFloat current * factor)
+    in
+    clamp minPxPerSixteenth maxPxPerSixteenth next
 
 
 minPitch : Int
@@ -105,18 +145,18 @@ pianoRollScrollId =
     "piano-roll-scroll"
 
 
-barWidth : Int
-barWidth =
+barWidth : Int -> Int
+barWidth pxPerSixteenth =
     16 * pxPerSixteenth
 
 
-pixelsToTicks : Float -> Int
-pixelsToTicks px =
+pixelsToTicks : Int -> Float -> Int
+pixelsToTicks pxPerSixteenth px =
     round (px * toFloat Data.Time.ticksPerSixteenth / toFloat pxPerSixteenth)
 
 
-ticksToPixels : Int -> Float
-ticksToPixels ticks =
+ticksToPixels : Int -> Int -> Float
+ticksToPixels pxPerSixteenth ticks =
     toFloat ticks * toFloat pxPerSixteenth / toFloat Data.Time.ticksPerSixteenth
 
 
@@ -125,9 +165,9 @@ yToPitch y =
     maxPitch - floor (y / toFloat rowHeight)
 
 
-gridWidth : Int -> Int
-gridWidth totalBars =
-    totalBars * barWidth
+gridWidth : Int -> Int -> Int
+gridWidth pxPerSixteenth totalBars =
+    totalBars * barWidth pxPerSixteenth
 
 
 gridHeight : Int
@@ -164,16 +204,16 @@ waveformView opts =
             Html.text ""
 
         Just w ->
-            Svg.Lazy.lazy5 waveStrip w.peaks w.peakDt w.secsPerTick w.offsetMs opts.totalBars
+            Svg.Lazy.lazy6 waveStrip w.peaks w.peakDt w.secsPerTick w.offsetMs opts.totalBars opts.pxPerSixteenth
 
 
 {-| 参考オーディオの波形帯。BPM とオフセットに合わせてタイムライン上に描く。
 -}
-waveStrip : Array Float -> Float -> Float -> Int -> Int -> Svg.Svg msg
-waveStrip peaks peakDt secsPerTick offsetMs totalBars =
+waveStrip : Array Float -> Float -> Float -> Int -> Int -> Int -> Svg.Svg msg
+waveStrip peaks peakDt secsPerTick offsetMs totalBars pxPerSixteenth =
     let
         width =
-            gridWidth totalBars
+            gridWidth pxPerSixteenth totalBars
 
         colStep =
             3
@@ -184,7 +224,7 @@ waveStrip peaks peakDt secsPerTick offsetMs totalBars =
         ampAt x =
             let
                 sec =
-                    toFloat (pixelsToTicks (toFloat x)) * secsPerTick + toFloat offsetMs / 1000
+                    toFloat (pixelsToTicks pxPerSixteenth (toFloat x)) * secsPerTick + toFloat offsetMs / 1000
             in
             if sec < 0 then
                 0
@@ -212,9 +252,9 @@ waveStrip peaks peakDt secsPerTick offsetMs totalBars =
                 |> List.map
                     (\i ->
                         Svg.line
-                            [ SA.x1 (String.fromInt (i * barWidth))
+                            [ SA.x1 (String.fromInt (i * barWidth pxPerSixteenth))
                             , SA.y1 "0"
-                            , SA.x2 (String.fromInt (i * barWidth))
+                            , SA.x2 (String.fromInt (i * barWidth pxPerSixteenth))
                             , SA.y2 (String.fromInt waveHeight)
                             , SA.stroke "#ccc"
                             ]
@@ -335,26 +375,27 @@ keyRow config highlightedPitch scalePitchClasses pitch =
 rulerView : Config msg -> ViewOpts -> Html msg
 rulerView config opts =
     Svg.svg
-        [ SA.width (String.fromInt (gridWidth opts.totalBars))
+        [ SA.width (String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars))
         , SA.height (String.fromInt rulerHeight)
-        , SA.viewBox ("0 0 " ++ String.fromInt (gridWidth opts.totalBars) ++ " " ++ String.fromInt rulerHeight)
+        , SA.viewBox ("0 0 " ++ String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars) ++ " " ++ String.fromInt rulerHeight)
         , HA.style "display" "block"
         , HA.style "cursor" "pointer"
-        , HA.title "クリックで再生位置を移動。shift + ドラッグでループ区間を作成"
+        , HA.title "クリックで再生位置を移動。shift + ドラッグでループ区間を作成。マウスホイールでズーム"
         , Html.Events.on "mousedown" (Decode.map config.pressedRuler rulerPressDecoder)
+        , Html.Events.preventDefaultOn "wheel" (Decode.map (\w -> ( config.wheelZoomedRuler w, True )) wheelDecoder)
         ]
         (Svg.rect
             [ SA.x "0"
             , SA.y "0"
-            , SA.width (String.fromInt (gridWidth opts.totalBars))
+            , SA.width (String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars))
             , SA.height (String.fromInt rulerHeight)
             , SA.fill "#f8f8f8"
             ]
             []
-            :: List.concat (List.indexedMap sectionBand opts.sections)
-            ++ barNumbers opts.totalBars
-            ++ loopBandView config opts.loopEditable opts.loop
-            ++ [ playheadLine rulerHeight opts.playheadTicks ]
+            :: List.concat (List.indexedMap (sectionBand opts.pxPerSixteenth) opts.sections)
+            ++ barNumbers opts.pxPerSixteenth opts.totalBars
+            ++ loopBandView config opts.pxPerSixteenth opts.loopEditable opts.loop
+            ++ [ playheadLine opts.pxPerSixteenth rulerHeight opts.playheadTicks ]
         )
 
 
@@ -366,10 +407,17 @@ rulerPressDecoder =
         (Decode.field "shiftKey" Decode.bool)
 
 
+wheelDecoder : Decode.Decoder { deltaY : Float, offsetX : Float }
+wheelDecoder =
+    Decode.map2 (\dy ox -> { deltaY = dy, offsetX = ox })
+        (Decode.field "deltaY" Decode.float)
+        (Decode.field "offsetX" Decode.float)
+
+
 {-| ルーラー上にループ区間を琥珀色の帯で示す。editable が真なら左右端につまむハンドルを追加で描く（「範囲」モードのループのみ）。
 -}
-loopBandView : Config msg -> Bool -> Maybe { startTicks : Int, endTicks : Int } -> List (Svg.Svg msg)
-loopBandView config editable loop =
+loopBandView : Config msg -> Int -> Bool -> Maybe { startTicks : Int, endTicks : Int } -> List (Svg.Svg msg)
+loopBandView config pxPerSixteenth editable loop =
     case loop of
         Nothing ->
             []
@@ -377,10 +425,10 @@ loopBandView config editable loop =
         Just l ->
             let
                 x0 =
-                    ticksToPixels l.startTicks
+                    ticksToPixels pxPerSixteenth l.startTicks
 
                 x1 =
-                    ticksToPixels l.endTicks
+                    ticksToPixels pxPerSixteenth l.endTicks
 
                 band =
                     Svg.rect
@@ -421,19 +469,19 @@ loopHandle config isEnd x =
         []
 
 
-sectionBand : Int -> SectionSpan -> List (Svg.Svg msg)
-sectionBand idx span =
+sectionBand : Int -> Int -> SectionSpan -> List (Svg.Svg msg)
+sectionBand pxPerSixteenth idx span =
     [ Svg.rect
-        [ SA.x (String.fromInt (span.startBar * barWidth))
+        [ SA.x (String.fromInt (span.startBar * barWidth pxPerSixteenth))
         , SA.y "0"
-        , SA.width (String.fromInt (span.lengthBars * barWidth))
+        , SA.width (String.fromInt (span.lengthBars * barWidth pxPerSixteenth))
         , SA.height "16"
         , SA.fill (Palette.sectionColor idx)
         , SA.fillOpacity "0.85"
         ]
         []
     , Svg.text_
-        [ SA.x (String.fromInt (span.startBar * barWidth + 4))
+        [ SA.x (String.fromInt (span.startBar * barWidth pxPerSixteenth + 4))
         , SA.y "12"
         , SA.fontSize "10"
         , SA.fill "#fff"
@@ -443,21 +491,21 @@ sectionBand idx span =
     ]
 
 
-barNumbers : Int -> List (Svg.Svg msg)
-barNumbers totalBars =
+barNumbers : Int -> Int -> List (Svg.Svg msg)
+barNumbers pxPerSixteenth totalBars =
     List.range 0 (totalBars - 1)
         |> List.concatMap
             (\i ->
                 [ Svg.line
-                    [ SA.x1 (String.fromInt (i * barWidth))
+                    [ SA.x1 (String.fromInt (i * barWidth pxPerSixteenth))
                     , SA.y1 "16"
-                    , SA.x2 (String.fromInt (i * barWidth))
+                    , SA.x2 (String.fromInt (i * barWidth pxPerSixteenth))
                     , SA.y2 (String.fromInt rulerHeight)
                     , SA.stroke "#ccc"
                     ]
                     []
                 , Svg.text_
-                    [ SA.x (String.fromInt (i * barWidth + 4))
+                    [ SA.x (String.fromInt (i * barWidth pxPerSixteenth + 4))
                     , SA.y "30"
                     , SA.fontSize "10"
                     , SA.fill "#888"
@@ -471,35 +519,35 @@ barNumbers totalBars =
 gridView : Config msg -> ViewOpts -> Html msg
 gridView config opts =
     Svg.svg
-        [ SA.width (String.fromInt (gridWidth opts.totalBars))
+        [ SA.width (String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars))
         , SA.height (String.fromInt gridHeight)
-        , SA.viewBox ("0 0 " ++ String.fromInt (gridWidth opts.totalBars) ++ " " ++ String.fromInt gridHeight)
+        , SA.viewBox ("0 0 " ++ String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars) ++ " " ++ String.fromInt gridHeight)
         , HA.style "display" "block"
         , HA.style "cursor" "crosshair"
         , Html.Events.on "mousedown" (Decode.map config.pressedEmpty emptyPressDecoder)
         ]
-        (rowBackgrounds opts.totalBars
-            ++ List.concat (List.indexedMap sectionTint opts.sections)
-            ++ verticalLines opts.totalBars
-            ++ List.concat (List.indexedMap (\idx notes -> List.map (ghostNoteView idx) notes) opts.ghostNoteGroups)
-            ++ List.concatMap (noteView config opts.selectedIds) opts.notes
+        (rowBackgrounds opts.pxPerSixteenth opts.totalBars
+            ++ List.concat (List.indexedMap (sectionTint opts.pxPerSixteenth) opts.sections)
+            ++ verticalLines opts.pxPerSixteenth opts.totalBars
+            ++ List.concat (List.indexedMap (\idx notes -> List.map (ghostNoteView opts.pxPerSixteenth idx) notes) opts.ghostNoteGroups)
+            ++ List.concatMap (noteView config opts.pxPerSixteenth opts.selectedIds) opts.notes
             ++ rubberBandView opts.rubberBand
-            ++ loopLinesView gridHeight opts.loop
-            ++ [ playheadLine gridHeight opts.playheadTicks ]
+            ++ loopLinesView opts.pxPerSixteenth gridHeight opts.loop
+            ++ [ playheadLine opts.pxPerSixteenth gridHeight opts.playheadTicks ]
         )
 
 
 {-| グリッド上にループ区間の開始・終了を縦の破線で示す。面を塗るとスケールガイドや sectionTint と層が重なって見づらくなるので線のみにする。
 -}
-loopLinesView : Int -> Maybe { startTicks : Int, endTicks : Int } -> List (Svg.Svg msg)
-loopLinesView height loop =
+loopLinesView : Int -> Int -> Maybe { startTicks : Int, endTicks : Int } -> List (Svg.Svg msg)
+loopLinesView pxPerSixteenth height loop =
     case loop of
         Nothing ->
             []
 
         Just l ->
-            [ loopLine height (ticksToPixels l.startTicks)
-            , loopLine height (ticksToPixels l.endTicks)
+            [ loopLine height (ticksToPixels pxPerSixteenth l.startTicks)
+            , loopLine height (ticksToPixels pxPerSixteenth l.endTicks)
             ]
 
 
@@ -518,12 +566,12 @@ loopLine height x =
         []
 
 
-sectionTint : Int -> SectionSpan -> List (Svg.Svg msg)
-sectionTint idx span =
+sectionTint : Int -> Int -> SectionSpan -> List (Svg.Svg msg)
+sectionTint pxPerSixteenth idx span =
     [ Svg.rect
-        [ SA.x (String.fromInt (span.startBar * barWidth))
+        [ SA.x (String.fromInt (span.startBar * barWidth pxPerSixteenth))
         , SA.y "0"
-        , SA.width (String.fromInt (span.lengthBars * barWidth))
+        , SA.width (String.fromInt (span.lengthBars * barWidth pxPerSixteenth))
         , SA.height (String.fromInt gridHeight)
         , SA.fill (Palette.sectionColor idx)
         , SA.fillOpacity "0.05"
@@ -563,8 +611,8 @@ notePressDecoder =
         (Decode.field "shiftKey" Decode.bool)
 
 
-rowBackgrounds : Int -> List (Svg.Svg msg)
-rowBackgrounds totalBars =
+rowBackgrounds : Int -> Int -> List (Svg.Svg msg)
+rowBackgrounds pxPerSixteenth totalBars =
     List.range minPitch maxPitch
         |> List.map
             (\pitch ->
@@ -578,7 +626,7 @@ rowBackgrounds totalBars =
                 Svg.rect
                     [ SA.x "0"
                     , SA.y (String.fromInt y)
-                    , SA.width (String.fromInt (gridWidth totalBars))
+                    , SA.width (String.fromInt (gridWidth pxPerSixteenth totalBars))
                     , SA.height (String.fromInt rowHeight)
                     , SA.fill
                         (if isBlack then
@@ -594,8 +642,8 @@ rowBackgrounds totalBars =
             )
 
 
-verticalLines : Int -> List (Svg.Svg msg)
-verticalLines totalBars =
+verticalLines : Int -> Int -> List (Svg.Svg msg)
+verticalLines pxPerSixteenth totalBars =
     List.range 0 (totalBars * 16)
         |> List.map
             (\i ->
@@ -639,17 +687,17 @@ verticalLines totalBars =
 {-| 他トラック・コードトラックを透けて重ね表示する用のノート。クリック・ドラッグ不可で、
 自分のノート（`noteView`）より下のレイヤーに描画される。idx はグループ（トラック）ごとの色分けに使う。
 -}
-ghostNoteView : Int -> Note -> Svg.Svg msg
-ghostNoteView idx note =
+ghostNoteView : Int -> Int -> Note -> Svg.Svg msg
+ghostNoteView pxPerSixteenth idx note =
     let
         x =
-            ticksToPixels note.start
+            ticksToPixels pxPerSixteenth note.start
 
         y =
             (maxPitch - note.pitch) * rowHeight
 
         w =
-            ticksToPixels note.duration
+            ticksToPixels pxPerSixteenth note.duration
     in
     Svg.rect
         [ SA.x (String.fromFloat x)
@@ -664,17 +712,17 @@ ghostNoteView idx note =
         []
 
 
-noteView : Config msg -> Set Int -> Note -> List (Svg.Svg msg)
-noteView config selectedIds note =
+noteView : Config msg -> Int -> Set Int -> Note -> List (Svg.Svg msg)
+noteView config pxPerSixteenth selectedIds note =
     let
         x =
-            ticksToPixels note.start
+            ticksToPixels pxPerSixteenth note.start
 
         y =
             (maxPitch - note.pitch) * rowHeight
 
         w =
-            ticksToPixels note.duration
+            ticksToPixels pxPerSixteenth note.duration
 
         handleWidth =
             6.0
@@ -754,12 +802,12 @@ rubberBandView band =
             ]
 
 
-playheadLine : Int -> Int -> Svg.Svg msg
-playheadLine height ticks =
+playheadLine : Int -> Int -> Int -> Svg.Svg msg
+playheadLine pxPerSixteenth height ticks =
     Svg.line
-        [ SA.x1 (String.fromFloat (ticksToPixels ticks))
+        [ SA.x1 (String.fromFloat (ticksToPixels pxPerSixteenth ticks))
         , SA.y1 "0"
-        , SA.x2 (String.fromFloat (ticksToPixels ticks))
+        , SA.x2 (String.fromFloat (ticksToPixels pxPerSixteenth ticks))
         , SA.y2 (String.fromInt height)
         , SA.stroke "#e74c3c"
         , SA.strokeWidth "2"
