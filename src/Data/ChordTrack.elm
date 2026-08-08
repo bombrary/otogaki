@@ -1,14 +1,18 @@
 module Data.ChordTrack exposing
     ( ChordCell
+    , ChordSpan
     , ChordTrack
     , ResolvedChord
     , TokenKind(..)
     , barCount
     , cells
     , empty
+    , namedSpans
     , resolved
+    , sectionSummaries
     , stripComments
     , toPlainText
+    , trackId
     , transpose
     , transposeBars
     )
@@ -27,6 +31,14 @@ type alias ChordTrack =
     , muted : Bool
     , volume : Int
     }
+
+
+{-| コードトラックを「特別なトラック」として扱う場所（トラック一覧・ゴースト表示など）で使う
+擬似的な Track ID。通常トラックの ID は 0 以上なので衝突しない。
+-}
+trackId : Int
+trackId =
+    -1
 
 
 empty : ChordTrack
@@ -177,6 +189,73 @@ resolved timeline track =
         |> List.foldl resolveCell { lastChord = Nothing, eventsRev = [] }
         |> .eventsRev
         |> List.reverse
+
+
+{-| ピアノロール上のコード帯など、名前付きで表示する際の単位。再生中判定（active）は
+ここには持たせず、呼び出し側が playheadTicks と startTicks/durationTicks を比べて求める
+（ChordEditor.adjacentChords と同じ式）。
+-}
+type alias ChordSpan =
+    { name : String
+    , startTicks : Int
+    , durationTicks : Int
+    , sectionIndex : Maybe Int
+    }
+
+
+{-| `resolved` を、表示用のコード名と所属セクション付きのスパン列に変換する。
+-}
+namedSpans : Timeline -> ChordTrack -> List ChordSpan
+namedSpans timeline track =
+    resolved timeline track
+        |> List.map
+            (\rc ->
+                { name = ChordFormat.format { preferFlat = False } rc.chord
+                , startTicks = rc.startTicks
+                , durationTicks = rc.durationTicks
+                , sectionIndex = Data.Timeline.sectionIndexAt rc.startTicks timeline
+                }
+            )
+
+
+dedupeConsecutive : List String -> List String
+dedupeConsecutive names =
+    names
+        |> List.foldl
+            (\name acc ->
+                case acc of
+                    last :: _ ->
+                        if last == name then
+                            acc
+
+                        else
+                            name :: acc
+
+                    [] ->
+                        [ name ]
+            )
+            []
+        |> List.reverse
+
+
+{-| セクションバーに小さく出すコード進行のサマリ。セクションインデックスごとにグループ化して連続同名を除去し、
+スペース区切りで連結する。`sectionCount` 分の長さで返し、コードのないセクションは空文字になる。
+-}
+sectionSummaries : Timeline -> Int -> ChordTrack -> List String
+sectionSummaries timeline sectionCount track =
+    let
+        spans =
+            namedSpans timeline track
+
+        summaryFor idx =
+            spans
+                |> List.filter (\s -> s.sectionIndex == Just idx)
+                |> List.map .name
+                |> dedupeConsecutive
+                |> String.join " "
+    in
+    List.range 0 (sectionCount - 1)
+        |> List.map summaryFor
 
 
 resolveCell : ChordCell -> ResolveState -> ResolveState

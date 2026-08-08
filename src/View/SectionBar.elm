@@ -1,5 +1,6 @@
 module View.SectionBar exposing
-    ( Config
+    ( BlockExtras
+    , Config
     , RulerData
     , defaultRegionPxPerBar
     , maxRegionPxPerBar
@@ -58,6 +59,16 @@ type alias RulerData =
     , loop : Maybe { startTicks : Int, endTicks : Int }
     , playheadTicks : Int
     , ticksToPx : Int -> Float
+    }
+
+
+{-| ブロック表示に上乗せするコード進行情報。`chordSummaries` は `sections` と同じ順序・同じ長さで、
+各セクションのコード進行を省略表示用に連結した文字列（`Data.ChordTrack.sectionSummaries` の戻り値）。
+`playingIndex` は今再生中のセクションのリスト内インデックス（`Main.sectionAtTicks` と同じ体系）。
+-}
+type alias BlockExtras =
+    { chordSummaries : List String
+    , playingIndex : Maybe Int
     }
 
 
@@ -157,8 +168,8 @@ sectionDragTargetIndex pxPerBar sections currentIndex accumDx =
                     Nothing
 
 
-view : Config msg -> RulerData -> Maybe Int -> String -> List Section -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> Html msg
-view config rulerData selectedId insertCountInput sections pendingDeleteId resizePreview =
+view : Config msg -> RulerData -> BlockExtras -> Maybe Int -> String -> List Section -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> Html msg
+view config rulerData extras selectedId insertCountInput sections pendingDeleteId resizePreview =
     div [ HA.style "margin-top" "1rem" ]
         [ div
             [ HA.id sectionBarScrollId
@@ -170,7 +181,7 @@ view config rulerData selectedId insertCountInput sections pendingDeleteId resiz
                 , HA.style "align-items" "stretch"
                 , HA.style "flex-wrap" "nowrap"
                 ]
-                (List.indexedMap (blockView config rulerData.pxPerBar selectedId resizePreview) sections
+                (List.indexedMap (blockView config rulerData.pxPerBar selectedId resizePreview extras) sections
                     ++ [ button (Style.baseButton ++ [ HE.onClick config.add, HA.style "flex" "0 0 auto" ]) [ text "+ セクション" ] ]
                 )
             ]
@@ -325,8 +336,8 @@ regionLoopHandle config isEnd x =
         []
 
 
-blockView : Config msg -> Int -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> Int -> Section -> Html msg
-blockView config pxPerBar selectedId resizePreview idx section =
+blockView : Config msg -> Int -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> BlockExtras -> Int -> Section -> Html msg
+blockView config pxPerBar selectedId resizePreview extras idx section =
     let
         selected =
             selectedId == Just section.id
@@ -342,6 +353,19 @@ blockView config pxPerBar selectedId resizePreview idx section =
 
                 Nothing ->
                     section.lengthBars
+
+        playing =
+            extras.playingIndex == Just idx
+
+        chordSummary =
+            List.drop idx extras.chordSummaries |> List.head |> Maybe.withDefault ""
+
+        baseTitle =
+            if section.memo == "" then
+                section.name
+
+            else
+                section.name ++ ": " ++ section.memo
     in
     div
         [ HA.style "width" (String.fromInt (displayLengthBars * pxPerBar) ++ "px")
@@ -366,6 +390,13 @@ blockView config pxPerBar selectedId resizePreview idx section =
              else
                 Palette.neutral
             )
+        , HA.style "box-shadow"
+            (if playing then
+                "0 0 8px " ++ Palette.sectionColor idx
+
+             else
+                "none"
+            )
         , HA.style "position" "relative"
         , HA.style "cursor" "grab"
         , HA.style "font-size" "0.85rem"
@@ -373,16 +404,28 @@ blockView config pxPerBar selectedId resizePreview idx section =
         , HA.style "white-space" "nowrap"
         , HE.on "mousedown" (Decode.map (config.pressedBlock section.id) (Decode.field "clientX" Decode.float))
         , HA.title
-            (if section.memo == "" then
-                section.name
+            (if chordSummary == "" then
+                baseTitle
 
              else
-                section.name ++ ": " ++ section.memo
+                baseTitle ++ " ♪ " ++ chordSummary
             )
         ]
         [ text section.name
         , if section.memo /= "" then
             span [ HA.style "margin-left" "0.2rem" ] [ text "📝" ]
+
+          else
+            text ""
+        , if chordSummary /= "" then
+            div
+                [ HA.style "font-size" "0.65rem"
+                , HA.style "color" "#666"
+                , HA.style "white-space" "nowrap"
+                , HA.style "overflow" "hidden"
+                , HA.style "text-overflow" "ellipsis"
+                ]
+                [ text chordSummary ]
 
           else
             text ""

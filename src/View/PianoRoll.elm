@@ -16,6 +16,7 @@ module View.PianoRoll exposing
     )
 
 import Array exposing (Array)
+import Data.ChordTrack exposing (ChordSpan)
 import Data.Note exposing (Note)
 import Data.Time
 import Html exposing (Html)
@@ -39,6 +40,7 @@ type alias Config msg =
     , pressedLoopHandle : Bool -> Float -> msg
     , pressedKey : Int -> msg
     , wheelZoomedRuler : { deltaY : Float, offsetX : Float } -> msg
+    , clickedChord : Int -> msg
     }
 
 
@@ -63,6 +65,7 @@ type alias ViewOpts =
     , loop : Maybe { startTicks : Int, endTicks : Int }
     , loopEditable : Bool
     , pxPerSixteenth : Int
+    , chordSpans : List ChordSpan
     }
 
 
@@ -182,7 +185,7 @@ view config opts =
         , HA.style "margin-top" "1rem"
         , HA.style "border" "1px solid #ccc"
         ]
-        [ keyColumn config (opts.waveform /= Nothing) opts.highlightedPitch opts.scalePitchClasses
+        [ keyColumn config (opts.waveform /= Nothing) (not (List.isEmpty opts.chordSpans)) opts.highlightedPitch opts.scalePitchClasses
         , Html.div
             [ HA.id pianoRollScrollId
             , HA.style "overflow-x" "auto"
@@ -191,10 +194,109 @@ view config opts =
             , HA.attribute "aria-label" "ピアノロール（矢印キーでノートを選択・移動）"
             ]
             [ rulerView config opts
+            , chordStripView config opts
             , waveformView opts
             , gridView config opts
             ]
         ]
+
+
+chordStripHeight : Int
+chordStripHeight =
+    18
+
+
+{-| ピアノロール上部に常時表示するコード名の帯。`rulerView` 内に描くと既存の mousedown/wheel
+ハンドラと衝突するため、`waveStrip` と同じように独立した SVG ストリップにする。
+コードが一つもなければ段自体を出さない（`keyColumn` の `hasChords` と一致させる必要がある）。
+-}
+chordStripView : Config msg -> ViewOpts -> Html msg
+chordStripView config opts =
+    if List.isEmpty opts.chordSpans then
+        Html.text ""
+
+    else
+        Svg.svg
+            [ SA.width (String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars))
+            , SA.height (String.fromInt chordStripHeight)
+            , HA.style "display" "block"
+            , HA.style "background" "#fbfcff"
+            , HA.style "border-bottom" "1px solid #ddd"
+            ]
+            (List.concatMap (chordSpanView config opts.pxPerSixteenth opts.playheadTicks) opts.chordSpans
+                ++ [ playheadLine opts.pxPerSixteenth chordStripHeight opts.playheadTicks ]
+            )
+
+
+{-| 個々のコードを矩形＋セクション色で塗り、再生中なら ChordEditor.cellView と同じ配色でハイライトする。
+クリックでその位置へシークする。
+-}
+chordSpanView : Config msg -> Int -> Int -> ChordSpan -> List (Svg.Svg msg)
+chordSpanView config pxPerSixteenth playheadTicks span =
+    let
+        x =
+            ticksToPixels pxPerSixteenth span.startTicks
+
+        w =
+            ticksToPixels pxPerSixteenth span.durationTicks
+
+        active =
+            playheadTicks >= span.startTicks && playheadTicks < span.startTicks + span.durationTicks
+
+        bgFill =
+            if active then
+                "#fff6dd"
+
+            else
+                case span.sectionIndex of
+                    Just idx ->
+                        Palette.sectionTint idx
+
+                    Nothing ->
+                        Palette.neutral
+
+        borderColor =
+            if active then
+                "#e6a817"
+
+            else
+                case span.sectionIndex of
+                    Just idx ->
+                        Palette.sectionColor idx
+
+                    Nothing ->
+                        "#ddd"
+
+        textColor =
+            case span.sectionIndex of
+                Just idx ->
+                    Palette.sectionColor idx
+
+                Nothing ->
+                    "#666"
+    in
+    [ Svg.rect
+        [ SA.x (String.fromFloat x)
+        , SA.y "0"
+        , SA.width (String.fromFloat (Basics.max 1 (w - 1)))
+        , SA.height (String.fromInt chordStripHeight)
+        , SA.fill bgFill
+        , SA.stroke borderColor
+        , SA.strokeWidth "1"
+        , SA.cursor "pointer"
+        , HA.title span.name
+        , Html.Events.onClick (config.clickedChord span.startTicks)
+        ]
+        []
+    , Svg.text_
+        [ SA.x (String.fromFloat (x + 3))
+        , SA.y "13"
+        , SA.fontSize "10"
+        , SA.fill textColor
+        , SA.pointerEvents "none"
+        ]
+        [ Svg.text span.name ]
+    ]
 
 
 waveformView : ViewOpts -> Html msg
@@ -274,11 +376,17 @@ waveStrip peaks peakDt secsPerTick offsetMs totalBars pxPerSixteenth =
         )
 
 
-keyColumn : Config msg -> Bool -> Set Int -> Set Int -> Html msg
-keyColumn config hasWave highlightedPitch scalePitchClasses =
+keyColumn : Config msg -> Bool -> Bool -> Set Int -> Set Int -> Html msg
+keyColumn config hasWave hasChords highlightedPitch scalePitchClasses =
     let
         spacerHeight =
             rulerHeight
+                + (if hasChords then
+                    chordStripHeight
+
+                   else
+                    0
+                  )
                 + (if hasWave then
                     waveHeight
 

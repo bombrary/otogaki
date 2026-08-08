@@ -1,5 +1,6 @@
 module View.Arrange exposing (Config, view)
 
+import Data.ChordTrack exposing (ChordTrack)
 import Data.Note exposing (Note)
 import Data.Time
 import Data.Track exposing (Track, TrackKind(..))
@@ -23,14 +24,28 @@ type alias Config msg =
     , changeVolume : Int -> String -> msg
     , renameTrack : Int -> String -> msg
     , toggledGhost : Int -> msg
+    , chordRow : ChordRowConfig msg
     }
 
 
-view : Config msg -> Int -> Int -> Dict String String -> Set Int -> Maybe Int -> List Track -> Html msg
-view config totalBars selectedTrackId loadStates ghostTrackIds pendingDeleteId tracks =
+{-| トラック一覧の先頭に置く「コード進行」行用のメッセージ。ChordTrack は id を持たない単一のトラックなので、
+通常トラックの Config とは別に、id 引数のない形（ChordEditor.Config と同じ体系）で持つ。
+-}
+type alias ChordRowConfig msg =
+    { select : msg
+    , toggleMute : msg
+    , changeInstrument : String -> msg
+    , changeVolume : String -> msg
+    , toggledGhost : msg
+    }
+
+
+view : Config msg -> Int -> Int -> Dict String String -> Set Int -> Maybe Int -> ChordTrack -> List Track -> Html msg
+view config totalBars selectedTrackId loadStates ghostTrackIds pendingDeleteId chordTrack tracks =
     Html.details
         [ HA.attribute "open" "", HA.style "margin-top" "1rem" ]
         (Html.summary (HA.style "cursor" "pointer" :: Style.headingText) [ text "トラック" ]
+            :: chordTrackRow config selectedTrackId loadStates ghostTrackIds chordTrack
             :: List.map (trackRow config totalBars selectedTrackId loadStates ghostTrackIds pendingDeleteId) tracks
             ++ [ button (Style.baseButton ++ [ HE.onClick config.addTrack, HA.style "margin-top" "0.5rem" ]) [ text "+ トラック" ] ]
         )
@@ -39,6 +54,96 @@ view config totalBars selectedTrackId loadStates ghostTrackIds pendingDeleteId t
 stopClick : msg -> Html.Attribute msg
 stopClick msg =
     HE.stopPropagationOn "click" (Decode.succeed ( msg, True ))
+
+
+{-| トラック一覧の先頭に置く「コード進行」行。ChordTrack は常に1本だけなので、通常トラックの trackRowと違い
+削除ボタン・リネーム入力は持たない。選択判定は Data.ChordTrack.trackId（擬似 ID -1）との比較で行う。
+-}
+chordTrackRow : Config msg -> Int -> Dict String String -> Set Int -> ChordTrack -> Html msg
+chordTrackRow config selectedTrackId loadStates ghostTrackIds chordTrack =
+    let
+        selected =
+            selectedTrackId == Data.ChordTrack.trackId
+
+        loadState =
+            Dict.get (Data.Track.instrumentToString chordTrack.instrument) loadStates
+
+        isGhost =
+            Set.member Data.ChordTrack.trackId ghostTrackIds
+
+        row =
+            config.chordRow
+    in
+    div
+        [ HA.style "display" "flex"
+        , HA.style "flex-wrap" "wrap"
+        , HA.style "align-items" "center"
+        , HA.style "gap" "0.5rem"
+        , HA.style "padding" "0.25rem 0.5rem"
+        , HA.style "background"
+            (if selected then
+                "#eef4fb"
+
+             else
+                "#fff"
+            )
+        , HA.style "border"
+            (if selected then
+                "1px solid #4a90d9"
+
+             else
+                "1px solid #ddd"
+            )
+        , HA.style "border-radius" "4px"
+        , HA.style "margin-bottom" "2px"
+        , HA.style "cursor" "pointer"
+        , HE.onClick row.select
+        ]
+        [ span [ HA.style "width" "6rem", HA.style "font-size" "0.9rem", HA.style "font-weight" "bold" ] [ text "コード進行" ]
+        , select
+            [ HE.onInput row.changeInstrument
+            , stopClick row.select
+            ]
+            (Data.Track.allInstruments
+                |> List.filter ((/=) Data.Track.DrumKit)
+                |> List.map
+                    (\inst ->
+                        option
+                            [ HA.value (Data.Track.instrumentToString inst)
+                            , HA.selected (inst == chordTrack.instrument)
+                            ]
+                            [ text (Data.Track.instrumentLabel inst) ]
+                    )
+            )
+        , loadBadge loadState
+        , button
+            (Style.toggleButton chordTrack.muted
+                ++ [ stopClick row.toggleMute
+                   , HA.title "ミュート"
+                   , HA.attribute "aria-label" "ミュート"
+                   ]
+            )
+            [ text "M" ]
+        , button
+            (Style.toggleButton isGhost
+                ++ [ stopClick row.toggledGhost
+                   , HA.title "ピアノロールにコードの構成音を透けて重ね表示"
+                   , HA.attribute "aria-label" "ゴースト表示を切替"
+                   ]
+            )
+            [ text "👻" ]
+        , input
+            [ HA.type_ "range"
+            , HA.min "0"
+            , HA.max "100"
+            , HA.value (String.fromInt chordTrack.volume)
+            , HE.onInput row.changeVolume
+            , stopClick row.select
+            , HA.style "width" "70px"
+            , HA.title ("音量 " ++ String.fromInt chordTrack.volume)
+            ]
+            []
+        ]
 
 
 trackRow : Config msg -> Int -> Int -> Dict String String -> Set Int -> Maybe Int -> Track -> Html msg

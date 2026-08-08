@@ -3193,11 +3193,15 @@ view model =
                     "再生中"
 
         selectedTrackName =
-            model.project.tracks
-                |> List.filter (\t -> t.id == model.selectedTrackId)
-                |> List.head
-                |> Maybe.map .name
-                |> Maybe.withDefault "(トラック未選択)"
+            if model.selectedTrackId == Data.ChordTrack.trackId then
+                "コード進行"
+
+            else
+                model.project.tracks
+                    |> List.filter (\t -> t.id == model.selectedTrackId)
+                    |> List.head
+                    |> Maybe.map .name
+                    |> Maybe.withDefault "(トラック未選択)"
 
         selectionInfo =
             let
@@ -3386,6 +3390,9 @@ view model =
                 , playheadTicks = model.playheadTicks
                 , ticksToPx = \ticks -> Data.Timeline.ticksToFractionalBar ticks timeline * toFloat model.sectionBarZoom
                 }
+                { chordSummaries = Data.ChordTrack.sectionSummaries timeline (List.length model.project.sections) model.project.chordTrack
+                , playingIndex = sectionAtTicks model.playheadTicks model.project
+                }
                 model.selectedSectionId
                 model.insertCountInput
                 model.project.sections
@@ -3421,12 +3428,20 @@ view model =
                     , changeVolume = ChangedVolume
                     , renameTrack = ChangedTrackName
                     , toggledGhost = ToggledGhostTrack
+                    , chordRow =
+                        { select = SelectedTrack Data.ChordTrack.trackId
+                        , toggleMute = ToggledChordMute
+                        , changeInstrument = ChangedChordInstrument
+                        , changeVolume = ChangedChordVolume
+                        , toggledGhost = ToggledGhostTrack Data.ChordTrack.trackId
+                        }
                     }
                     (totalBarsFor model.project)
                     model.selectedTrackId
                     model.instrumentLoad
                     model.ghostTrackIds
                     model.pendingTrackDelete
+                    model.project.chordTrack
                     model.project.tracks
                 , ChordEditor.view
                     chordEditorConfig
@@ -3509,6 +3524,7 @@ view model =
                             , pressedLoopHandle = PressedLoopHandle
                             , pressedKey = PressedPianoKey
                             , wheelZoomedRuler = WheelZoomedRuler
+                            , clickedChord = ClickedChordAt
                             }
                             { notes = trackNotes model
                             , selectedIds = model.selectedNoteIds
@@ -3548,10 +3564,11 @@ view model =
                                         }
                             , ghostNoteGroups = ghostNoteGroups model timeline
                             , pxPerSixteenth = model.pianoRollZoom
+                            , chordSpans = Data.ChordTrack.namedSpans timeline model.project.chordTrack
                             }
                             ]
                   in
-                  case selectedTrackKind model of
+                  if model.selectedTrackId == Data.ChordTrack.trackId then ChordEditor.trackPaneView chordEditorConfig timeline model.playheadTicks model.project.chordTrack else case selectedTrackKind model of
                     Just (DrumTrack _) ->
                         div []
                             [ button (Style.baseButton ++ [ onClick ToggledDrumView, style "margin-top" "0.5rem" ])

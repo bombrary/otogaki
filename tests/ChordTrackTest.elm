@@ -23,6 +23,17 @@ timeline =
         [ { id = 1, name = "s", lengthBars = 64, memo = "", key = Data.Key.default, meter = Data.Meter.default } ]
 
 
+{-| 2小節ずつの 3 セクションを持つ timeline。namedSpans/sectionSummaries のセクション跨ぎテストで使う。
+-}
+multiSectionTimeline : Data.Timeline.Timeline
+multiSectionTimeline =
+    Data.Timeline.fromSections { minBars = 6 }
+        [ { id = 1, name = "A", lengthBars = 2, memo = "", key = Data.Key.default, meter = Data.Meter.default }
+        , { id = 2, name = "B", lengthBars = 2, memo = "", key = Data.Key.default, meter = Data.Meter.default }
+        , { id = 3, name = "C", lengthBars = 2, memo = "", key = Data.Key.default, meter = Data.Meter.default }
+        ]
+
+
 resolved : ChordTrack.ChordTrack -> List ChordTrack.ResolvedChord
 resolved =
     ChordTrack.resolved timeline
@@ -102,4 +113,33 @@ suite =
             \_ ->
                 (ChordTrack.transposeBars 0 1 2 (track "C // note\n| D")).text
                     |> Expect.equal "D // note\n| D"
+        , test "namedSpans は % と = を解決したコード名を返す" <|
+            \_ ->
+                ChordTrack.namedSpans timeline (track "C | G7 | % | =")
+                    |> List.map .name
+                    |> Expect.equal [ "C", "G7", "G7" ]
+        , test "namedSpans は = で伸ばされたスパンを 1 つにまとめる" <|
+            \_ ->
+                ChordTrack.namedSpans timeline (track "C | G7 | % | =")
+                    |> List.length
+                    |> Expect.equal 3
+        , test "namedSpans は単一セクションなら全て sectionIndex 0" <|
+            \_ ->
+                ChordTrack.namedSpans timeline (track "C | G | Am | F")
+                    |> List.map .sectionIndex
+                    |> Expect.equal [ Just 0, Just 0, Just 0, Just 0 ]
+        , test "namedSpans はセクションをまたぐと sectionIndex が切り替わる" <|
+            \_ ->
+                ChordTrack.namedSpans multiSectionTimeline (track "C | C | G | Am")
+                    |> List.map .sectionIndex
+                    |> Expect.equal [ Just 0, Just 0, Just 1, Just 1 ]
+        , test "sectionSummaries は連続同名を除去してセクションごとに連結する" <|
+            \_ ->
+                ChordTrack.sectionSummaries multiSectionTimeline 3 (track "C | C | G | Am")
+                    |> Expect.equal [ "C", "G Am", "" ]
+        , test "sectionSummaries は sectionCount 分の長さで返す" <|
+            \_ ->
+                ChordTrack.sectionSummaries multiSectionTimeline 3 (track "C | C | G | Am")
+                    |> List.length
+                    |> Expect.equal 3
         ]

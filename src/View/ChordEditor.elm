@@ -1,4 +1,4 @@
-module View.ChordEditor exposing (Config, progressionEditorView, view, voicingEditorView)
+module View.ChordEditor exposing (Config, progressionEditorView, trackPaneView, view, voicingEditorView)
 
 import Data.Chord exposing (Chord)
 import Data.Chord.Format as Format
@@ -153,14 +153,44 @@ view config timeline playheadTicks isGhost loadStates voicingState track =
                 [ text "✎ コード進行を編集" ]
             ]
         , voiceLeadingView timeline playheadTicks voicingState.enabled voicingState.guitarFormEnabled voicingState.voicings track
-        , div
-            [ HA.style "display" "flex"
-            , HA.style "gap" "2px"
-            , HA.style "margin-top" "0.4rem"
-            , HA.style "flex-wrap" "wrap"
-            ]
-            (List.map (cellView config timeline playheadTicks) (Data.ChordTrack.cells timeline track))
+        , cellsView config timeline playheadTicks track
         , voicingsSection config voicingState (Data.ChordTrack.cells timeline track)
+        ]
+
+
+{-| コードセル一覧。サイドバーの `view` とメインペインの `trackPaneView` の両方から呼ばれる。
+-}
+cellsView : Config msg -> Timeline -> Int -> ChordTrack -> Html msg
+cellsView config timeline playheadTicks track =
+    div
+        [ HA.style "display" "flex"
+        , HA.style "gap" "2px"
+        , HA.style "margin-top" "0.4rem"
+        , HA.style "flex-wrap" "wrap"
+        ]
+        (List.map (cellView config timeline playheadTicks) (Data.ChordTrack.cells timeline track))
+
+
+{-| トラック一覧で「コード進行」行を選択した時にメインペインに表示するビュー。
+cellView は小節/トークンクリックでシーク・現在小節ハイライト・度数表示・パースエラー表示を既に持つので、
+メインペイン幅で表示するだけでよい。
+-}
+trackPaneView : Config msg -> Timeline -> Int -> ChordTrack -> Html msg
+trackPaneView config timeline playheadTicks track =
+    div []
+        [ div Style.headingText [ text "コード進行" ]
+        , span [ HA.style "font-size" "0.75rem", HA.style "color" "#888" ]
+            [ text "| で小節区切り（改行は無視されるので自由に使ってOK）、空白で小節内分割。% = 直前のコードを繰返し、_ = 休符、= = 直前のコードを伸ばす、// 以降は行末までコメント。コードをクリックすると再生位置がそこへ移動" ]
+        , div [ HA.style "margin-top" "0.4rem" ]
+            [ button
+                (Style.baseButton
+                    ++ [ HE.onClick config.toggledChordProgressionModal
+                       , HA.title "広い画面でコード進行のテキストを編集"
+                       ]
+                )
+                [ text "✎ コード進行を編集" ]
+            ]
+        , cellsView config timeline playheadTicks track
         ]
 
 
