@@ -144,7 +144,7 @@ view config timeline playheadTicks isGhost loadStates voicingState track =
                     )
                 ]
             ]
-        , nowPlayingView timeline playheadTicks voicingState.enabled voicingState.guitarFormEnabled voicingState.voicings track
+        , voiceLeadingView timeline playheadTicks voicingState.enabled voicingState.guitarFormEnabled voicingState.voicings track
         , textarea
             [ HA.value track.text
             , HE.onInput config.changedText
@@ -169,25 +169,40 @@ view config timeline playheadTicks isGhost loadStates voicingState track =
         ]
 
 
-{-| 再生位置にあるコード。`cellView` の isCurrentBar と同じ判定。
+{-| 再生位置にあるコードと、その直前のコード。`Data.ChordTrack.resolved` は時系列順なので、
+現在イベントの判定は `cellView` の isCurrentBar と同じで、その直前に見たイベントを一回の走査で追う。
 -}
-currentChord : Timeline -> Int -> ChordTrack -> Maybe Chord
-currentChord timeline playheadTicks track =
-    Data.ChordTrack.resolved timeline track
-        |> List.filter (\rc -> playheadTicks >= rc.startTicks && playheadTicks < rc.startTicks + rc.durationTicks)
-        |> List.head
-        |> Maybe.map .chord
+adjacentChords : Timeline -> Int -> ChordTrack -> { previous : Maybe Chord, current : Maybe Chord }
+adjacentChords timeline playheadTicks track =
+    let
+        go remaining prev =
+            case remaining of
+                [] ->
+                    { previous = prev, current = Nothing }
+
+                rc :: rest ->
+                    if playheadTicks >= rc.startTicks && playheadTicks < rc.startTicks + rc.durationTicks then
+                        { previous = prev, current = Just rc.chord }
+
+                    else
+                        go rest (Just rc.chord)
+    in
+    go (Data.ChordTrack.resolved timeline track) Nothing
 
 
-{-| 今鳴っているコードの運指を常時表示する。Data.StrumExpand.formFor で Form を決めるので、
-実際のストローク音生成・普段の再生と必ず一致する。ボイシングトグル OFF のときは voicings を空にする。
-`guitarFormEnabled` が False（ピアノモード）のときは指板自体を出さずコード名だけ表示する。True（ギターモード）のときは
-`formFor` が Nothing でも常に指板ボックスを一緒に描画して（空のまま）、進行中のコードごとに箱が出たり消えたりして
-UI がガタつくのを防ぐ。
+{-| 今鳴っているコードの運指を、直前コードとの比較（保持=青、移動=灰）付きで常時表示する（ボイスリーディング表示）。
+Data.StrumExpand.formFor で Form を決めるので、実際のストローク音生成・普段の再生と必ず一致する。ボイシングトグル OFF
+のときは voicings を空にする。`guitarFormEnabled` が False（ピアノモード）のときは指板自体を出さず現在コード名だけ
+表示する。True（ギターモード）のときは `formFor` が Nothing でも常に指板ボックスを一緒に描画して（空のまま）、
+進行中のコードごとに箱が出たり消えたりして UI がガタつくのを防ぐ。
 -}
-nowPlayingView : Timeline -> Int -> Bool -> Bool -> List Voicing -> ChordTrack -> Html msg
-nowPlayingView timeline playheadTicks voicingEnabled guitarFormEnabled voicings track =
-    case currentChord timeline playheadTicks track of
+voiceLeadingView : Timeline -> Int -> Bool -> Bool -> List Voicing -> ChordTrack -> Html msg
+voiceLeadingView timeline playheadTicks voicingEnabled guitarFormEnabled voicings track =
+    let
+        adjacent =
+            adjacentChords timeline playheadTicks track
+    in
+    case adjacent.current of
         Nothing ->
             text ""
 
@@ -200,35 +215,78 @@ nowPlayingView timeline playheadTicks voicingEnabled guitarFormEnabled voicings 
                     else
                         []
 
-                label =
+                label c =
                     span [ HA.style "font-weight" "bold", HA.style "white-space" "nowrap" ]
-                        [ text ("🎸 " ++ Format.format { preferFlat = False } chord) ]
+                        [ text ("🎸 " ++ Format.format { preferFlat = False } c) ]
             in
             if not guitarFormEnabled then
-                div [ HA.style "margin-top" "0.4rem" ] [ label ]
+                div [ HA.style "margin-top" "0.4rem" ] [ label chord ]
 
             else
                 let
-                    indexed =
-                        Data.StrumExpand.formFor guitarFormEnabled activeVoicings chord
-                            |> Maybe.map GuitarForm.toIndexedPitches
-                            |> Maybe.withDefault []
+                    currentForm =
+                        Data.StrumExpand.formFor True activeVoicings chord
 
-                    selected =
-                        List.map Tuple.second indexed |> Set.fromList
+                    previousForm =
+                        adjacent.previous |> Maybe.andThen (Data.StrumExpand.formFor True activeVoicings)
 
-                    picks =
-                        List.map (\( s, p ) -> ( p, s )) indexed |> Set.fromList
+                    currentIndexed =
+                        currentForm |> Maybe.map GuitarForm.toIndexedPitches |> Maybe.withDefault []
+
+                    heldIndexed =
+                        currentForm |> Maybe.map (GuitarForm.heldPitches previousForm) |> Maybe.withDefault []
+
+                    currentSelected =
+                        List.map Tuple.second currentIndexed |> Set.fromList
+
+                    currentPicks =
+                        List.map (\( s, p ) -> ( p, s )) heldIndexed |> Set.fromList
+
+                    currentBoard =
+                        div
+                            [ HA.style "display" "flex"
+                            , HA.style "align-items" "flex-start"
+                            , HA.style "gap" "0.5rem"
+                            ]
+                            [ label chord
+                            , Fretboard.viewReadOnly { rootPitch = 0, selected = currentSelected, picks = currentPicks }
+                            ]
                 in
-                div
-                    [ HA.style "display" "flex"
-                    , HA.style "align-items" "flex-start"
-                    , HA.style "gap" "0.5rem"
-                    , HA.style "margin-top" "0.4rem"
-                    ]
-                    [ label
-                    , Fretboard.viewReadOnly { rootPitch = 0, selected = selected, picks = picks }
-                    ]
+                case adjacent.previous of
+                    Nothing ->
+                        div [ HA.style "margin-top" "0.4rem" ] [ currentBoard ]
+
+                    Just prevChord ->
+                        let
+                            previousIndexed =
+                                previousForm |> Maybe.map GuitarForm.toIndexedPitches |> Maybe.withDefault []
+
+                            previousSelected =
+                                List.map Tuple.second previousIndexed |> Set.fromList
+
+                            previousPicks =
+                                List.map (\( s, p ) -> ( p, s )) previousIndexed |> Set.fromList
+
+                            previousBoard =
+                                div
+                                    [ HA.style "display" "flex"
+                                    , HA.style "align-items" "flex-start"
+                                    , HA.style "gap" "0.5rem"
+                                    ]
+                                    [ label prevChord
+                                    , Fretboard.viewReadOnly { rootPitch = 0, selected = previousSelected, picks = previousPicks }
+                                    ]
+                        in
+                        div
+                            [ HA.style "display" "flex"
+                            , HA.style "align-items" "flex-start"
+                            , HA.style "gap" "0.5rem"
+                            , HA.style "margin-top" "0.4rem"
+                            ]
+                            [ previousBoard
+                            , span [ HA.style "align-self" "center", HA.style "color" "#aaa" ] [ text "→" ]
+                            , currentBoard
+                            ]
 
 
 {-| コード進行で使われているが未登録のボイシング名を重複なく列挙する。
