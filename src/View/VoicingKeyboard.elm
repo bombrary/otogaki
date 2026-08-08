@@ -93,6 +93,7 @@ view config { rootPitch, displayRootPitch, selected } =
         , HA.style "overflow-y" "auto"
         , HA.style "border" "1px solid #ccc"
         , HA.style "margin-top" "0.4rem"
+        , HA.style "flex-shrink" "0"
         ]
         [ div [ HA.style "display" "flex" ]
             [ div [ HA.style "flex" ("0 0 " ++ String.fromInt keyColumnWidth ++ "px") ]
