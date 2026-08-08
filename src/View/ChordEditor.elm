@@ -439,7 +439,7 @@ voicingRow config voicingState index voicing =
                     displayRootPitch =
                         Data.Voicing.displayRoot rootPitch voicing.offsets
                   in
-                  div [ HA.style "display" "flex", HA.style "gap" "0.6rem", HA.style "align-items" "flex-start" ]
+                  div [ HA.style "display" "flex", HA.style "gap" "0.6rem", HA.style "align-items" "flex-start", HA.style "overflow-x" "auto" ]
                     [ VoicingKeyboard.view
                         { pressedOffset = config.pressedVoicingOffset index
                         , doubleClickedOffset = config.doubleClickedVoicingOffset index

@@ -3330,6 +3330,7 @@ view model =
                 [ style "width" (String.fromInt model.leftPaneWidth ++ "px")
                 , style "flex" "0 0 auto"
                 , style "overflow-y" "auto"
+                , style "overflow-x" "auto"
                 , style "padding" "0 1rem 1rem 1rem"
                 , style "box-sizing" "border-box"
                 ]
