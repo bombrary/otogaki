@@ -1,4 +1,4 @@
-module View.SectionBar exposing (Config, view)
+module View.SectionBar exposing (Config, regionPxPerBar, sectionDragTargetIndex, view)
 
 import Data.Key
 import Data.Meter
@@ -27,11 +27,55 @@ type alias Config msg =
     , removeFromStart : Int -> msg
     , seekToStart : Int -> msg
     , transpose : Int -> Int -> msg
+    , pressedBlock : Int -> Float -> msg
+    , pressedResizeHandle : Int -> Float -> msg
     }
 
 
-view : Config msg -> Maybe Int -> String -> List Section -> Maybe Int -> Html msg
-view config selectedId insertCountInput sections pendingDeleteId =
+{-| セクション行（リージョン行）の横幅スケール。ピアノロールの `pxPerSixteenth`とは意図的に別々
+（セクション行とピアノロールは現状別々のスクロール領域なので、合わせても画面上で位置が整合しない）。
+-}
+regionPxPerBar : Int
+regionPxPerBar =
+    40
+
+
+{-| ドラッグ中の累積 dx から、進行方向の隣接セクション幅の半分を超えたら入れ替え先 index と、次の判定に
+持ち越す分の dx を返す。超えていなければ `Nothing`（まだ入れ替えない）。
+古典的なソータブルリストの「隣の中間点を超えたら入れ替える」しきい値判定。
+-}
+sectionDragTargetIndex : List Section -> Int -> Float -> Maybe ( Int, Float )
+sectionDragTargetIndex sections currentIndex accumDx =
+    let
+        dir =
+            if accumDx > 0 then
+                1
+
+            else
+                -1
+    in
+    if currentIndex + dir < 0 then
+        Nothing
+
+    else
+        case sections |> List.drop (currentIndex + dir) |> List.head of
+            Nothing ->
+                Nothing
+
+            Just neighbor ->
+                let
+                    widthPx =
+                        toFloat (neighbor.lengthBars * regionPxPerBar)
+                in
+                if abs accumDx >= widthPx / 2 then
+                    Just ( currentIndex + dir, accumDx - toFloat dir * widthPx )
+
+                else
+                    Nothing
+
+
+view : Config msg -> Maybe Int -> String -> List Section -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> Html msg
+view config selectedId insertCountInput sections pendingDeleteId resizePreview =
     div [ HA.style "margin-top" "1rem" ]
         [ div
             [ HA.style "display" "flex"
@@ -39,7 +83,7 @@ view config selectedId insertCountInput sections pendingDeleteId =
             , HA.style "align-items" "stretch"
             , HA.style "flex-wrap" "wrap"
             ]
-            (List.indexedMap (blockView config selectedId) sections
+            (List.indexedMap (blockView config selectedId resizePreview) sections
                 ++ [ button (Style.baseButton ++ [ HE.onClick config.add ]) [ text "+ セクション" ] ]
             )
         , case selectedId |> Maybe.andThen (\sid -> sections |> List.filter (\s -> s.id == sid) |> List.head) of
@@ -51,14 +95,26 @@ view config selectedId insertCountInput sections pendingDeleteId =
         ]
 
 
-blockView : Config msg -> Maybe Int -> Int -> Section -> Html msg
-blockView config selectedId idx section =
+blockView : Config msg -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> Int -> Section -> Html msg
+blockView config selectedId resizePreview idx section =
     let
         selected =
             selectedId == Just section.id
+
+        displayLengthBars =
+            case resizePreview of
+                Just rp ->
+                    if rp.sectionId == section.id then
+                        rp.lengthBars
+
+                    else
+                        section.lengthBars
+
+                Nothing ->
+                    section.lengthBars
     in
     div
-        [ HA.style "width" (String.fromInt (section.lengthBars * 40) ++ "px")
+        [ HA.style "width" (String.fromInt (displayLengthBars * regionPxPerBar) ++ "px")
         , HA.style "padding" "0.3rem"
         , HA.style "text-align" "center"
         , HA.style "border"
@@ -78,11 +134,12 @@ blockView config selectedId idx section =
              else
                 Palette.neutral
             )
-        , HA.style "cursor" "pointer"
+        , HA.style "position" "relative"
+        , HA.style "cursor" "grab"
         , HA.style "font-size" "0.85rem"
         , HA.style "overflow" "hidden"
         , HA.style "white-space" "nowrap"
-        , HE.onClick (config.select section.id)
+        , HE.on "mousedown" (Decode.map (config.pressedBlock section.id) (Decode.field "clientX" Decode.float))
         , HA.title
             (if section.memo == "" then
                 section.name
@@ -97,6 +154,17 @@ blockView config selectedId idx section =
 
           else
             text ""
+        , div
+            [ HA.style "position" "absolute"
+            , HA.style "right" "0"
+            , HA.style "top" "0"
+            , HA.style "bottom" "0"
+            , HA.style "width" "6px"
+            , HA.style "cursor" "ew-resize"
+            , HE.stopPropagationOn "mousedown"
+                (Decode.map (\cx -> ( config.pressedResizeHandle section.id cx, True )) (Decode.field "clientX" Decode.float))
+            ]
+            []
         ]
 
 

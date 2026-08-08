@@ -1,13 +1,29 @@
 module ProjectTest exposing (suite)
 
+import Data.Key
+import Data.Meter
 import Data.Project as Project
+import Data.Section exposing (Section)
 import Data.Timeline as Timeline
 import Expect
 import Test exposing (Test, describe, test)
 
 
+section : Int -> Section
+section id =
+    { id = id, name = "s" ++ String.fromInt id, lengthBars = 4, memo = "", key = Data.Key.default, meter = Data.Meter.default }
+
+
 suite : Test
 suite =
+    Test.concat
+        [ timelineSuite
+        , moveSectionToIndexSuite
+        ]
+
+
+timelineSuite : Test
+timelineSuite =
     describe "Data.Project.timeline"
         [ test "参考オーディオが長ければ minBars が伸びる" <|
             \_ ->
@@ -54,4 +70,42 @@ suite =
                 Expect.atMost
                     (Timeline.totalBars (Project.timeline withoutOffset))
                     (Timeline.totalBars (Project.timeline withOffset))
+        ]
+
+
+moveSectionToIndexSuite : Test
+moveSectionToIndexSuite =
+    let
+        project =
+            { demo | sections = [ section 1, section 2, section 3 ] }
+
+        demo =
+            Project.demo
+    in
+    describe "Data.Project.moveSectionToIndex"
+        [ test "後ろの index に移動できる" <|
+            \_ ->
+                (Project.moveSectionToIndex 1 2 project).sections
+                    |> List.map .id
+                    |> Expect.equal [ 2, 3, 1 ]
+        , test "前の index に移動できる" <|
+            \_ ->
+                (Project.moveSectionToIndex 3 0 project).sections
+                    |> List.map .id
+                    |> Expect.equal [ 3, 1, 2 ]
+        , test "負の index は先頭にクランプされる" <|
+            \_ ->
+                (Project.moveSectionToIndex 3 -5 project).sections
+                    |> List.map .id
+                    |> Expect.equal [ 3, 1, 2 ]
+        , test "大きすぎる index は末尾にクランプされる" <|
+            \_ ->
+                (Project.moveSectionToIndex 1 99 project).sections
+                    |> List.map .id
+                    |> Expect.equal [ 2, 3, 1 ]
+        , test "存在しない sectionId を渡すと何も変わらない" <|
+            \_ ->
+                (Project.moveSectionToIndex 999 0 project).sections
+                    |> List.map .id
+                    |> Expect.equal [ 1, 2, 3 ]
         ]

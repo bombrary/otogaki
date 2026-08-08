@@ -11,6 +11,7 @@ module Data.Project exposing
     , mapNoteTrackNotes
     , mapNotes
     , moveSection
+    , moveSectionToIndex
     , removeBars
     , removeNote
     , removeScrap
@@ -294,6 +295,29 @@ moveSection sectionId delta project =
 
             else
                 { project | sections = swap i j project.sections }
+
+        Nothing ->
+            project
+
+
+{-| セクションを任意の絶対 index に移動する。`moveSection`（相対 delta での swap）と違い、ドラッグで任意の
+位置へ一発で移動させるのに使う。targetIndex は自動的に 0..(セクション数-1) にクランプされる。
+-}
+moveSectionToIndex : Int -> Int -> Project -> Project
+moveSectionToIndex sectionId targetIndex project =
+    let
+        moving =
+            project.sections |> List.filter (\s -> s.id == sectionId) |> List.head
+
+        rest =
+            project.sections |> List.filter (\s -> s.id /= sectionId)
+
+        clampedIndex =
+            clamp 0 (List.length rest) targetIndex
+    in
+    case moving of
+        Just s ->
+            { project | sections = List.take clampedIndex rest ++ s :: List.drop clampedIndex rest }
 
         Nothing ->
             project

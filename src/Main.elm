@@ -153,6 +153,8 @@ type alias Model =
     , voicingSelectedOffsets : Set Int
     , voicingDragState : VoicingDragState
     , pianoRollZoom : Int
+    , sectionResizeDrag : Maybe { sectionId : Int, startClientX : Float, origLengthBars : Int, curLengthBars : Int }
+    , sectionMoveDrag : Maybe { sectionId : Int, lastClientX : Float, accumDx : Float }
     }
 
 
@@ -258,6 +260,8 @@ type Msg
     | PressedLoopHandle Bool Float
     | WheelZoomedRuler { deltaY : Float, offsetX : Float }
     | GotPianoRollViewportForZoom { deltaY : Float, offsetX : Float } (Result Browser.Dom.Error Browser.Dom.Viewport)
+    | PressedSectionResizeHandle Int Float
+    | PressedSectionBlock Int Float
     | NoOp
 
 
@@ -312,6 +316,8 @@ init flags =
       , voicingSelectedOffsets = Set.empty
       , voicingDragState = NoVoicingDrag
       , pianoRollZoom = PianoRoll.defaultPxPerSixteenth
+      , sectionResizeDrag = Nothing
+      , sectionMoveDrag = Nothing
       }
     , Cmd.none
     )
@@ -753,6 +759,36 @@ sectionStartBar : Int -> Project -> Maybe Int
 sectionStartBar sectionId project =
     Data.Project.sectionBounds sectionId project
         |> Maybe.map (\b -> (Data.Timeline.ticksToBarBeat b.startTicks (Data.Project.timeline project)).bar - 1)
+
+
+{-| セクションの小節数を newLenRaw（1..64 にクランプ）に変える。小節数入力（`ChangedSectionBars`）と
+リサイズハンドルのドラッグリリース両方から共通で呼ばれる。
+-}
+resizeSectionBars : Int -> Int -> Model -> Model
+resizeSectionBars sectionId newLenRaw model =
+    let
+        newLen =
+            clamp 1 64 newLenRaw
+
+        oldLen =
+            model.project.sections
+                |> List.filter (\s -> s.id == sectionId)
+                |> List.head
+                |> Maybe.map .lengthBars
+    in
+    case ( sectionStartBar sectionId model.project, oldLen ) of
+        ( Just startBar, Just old ) ->
+            if newLen > old then
+                { model | project = Data.Project.insertBars { beforeBar = startBar + old - 1, count = newLen - old } model.project }
+
+            else if newLen < old then
+                { model | project = Data.Project.removeBars { fromBar = startBar + newLen, count = old - newLen } model.project }
+
+            else
+                model
+
+        _ ->
+            { model | project = Data.Project.updateSection sectionId (\s -> { s | lengthBars = newLen }) model.project }
 
 
 parseInsertCount : String -> Int
@@ -1434,142 +1470,186 @@ updateCore msg model =
             )
 
         DraggedTo pos ->
-            case model.voicingDragState of
-                DraggingVoicingOffsets d ->
+            case model.sectionResizeDrag of
+                Just d ->
                     let
-                        rootPitch =
-                            Data.Voicing.anchorPitch + model.voicingPreviewRoot
-
-                        maxOffset =
-                            VoicingKeyboard.maxPitch - rootPitch
-
-                        dpitch =
-                            negate (round ((pos.clientY - d.startClientY) / toFloat VoicingKeyboard.rowHeight))
-
-                        newOffsets =
-                            Data.Voicing.shiftOffsets dpitch maxOffset d.origSelected d.origOffsets
-
-                        newSelected =
-                            Set.map (\o -> clamp 0 maxOffset (o + dpitch)) d.origSelected
-                                |> Set.filter (\o -> List.member o newOffsets)
-
-                        newPicks =
-                            Data.GuitarForm.shiftPicks dpitch maxOffset d.origSelected d.origPicks
+                        deltaBars =
+                            round ((pos.clientX - d.startClientX) / toFloat SectionBar.regionPxPerBar)
                     in
-                    ( { model
-                        | project = Data.Project.updateVoicing d.index (\v -> { v | offsets = newOffsets, stringPicks = newPicks }) model.project
-                        , voicingSelectedOffsets = newSelected
-                      }
-                    , Cmd.none
-                    )
+                    ( { model | sectionResizeDrag = Just { d | curLengthBars = clamp 1 64 (d.origLengthBars + deltaBars) } }, Cmd.none )
 
-                NoVoicingDrag ->
-                    case model.loopDrag of
-                        Just ld ->
-                            ( { model
-                                | loopDrag =
-                                    Just
-                                        { ld
-                                            | curTicks =
-                                                Basics.max 0 (ld.baseTicks + snapRound (PianoRoll.pixelsToTicks model.pianoRollZoom (pos.clientX - ld.startClientX)))
-                                        }
-                              }
-                            , Cmd.none
-                            )
+                Nothing ->
+                    case model.sectionMoveDrag of
+                        Just d ->
+                            let
+                                accum =
+                                    d.accumDx + (pos.clientX - d.lastClientX)
 
-                        Nothing ->
-                            case model.rubberBand of
-                                Just rb ->
+                                currentIndex =
+                                    model.project.sections
+                                        |> List.indexedMap Tuple.pair
+                                        |> List.filter (\( _, s ) -> s.id == d.sectionId)
+                                        |> List.head
+                                        |> Maybe.map Tuple.first
+                                        |> Maybe.withDefault 0
+                            in
+                            case SectionBar.sectionDragTargetIndex model.project.sections currentIndex accum of
+                                Just ( targetIndex, remaining ) ->
                                     ( { model
-                                        | rubberBand =
-                                            Just
-                                                { rb
-                                                    | curX = rb.originX + (pos.clientX - rb.startClientX)
-                                                    , curY = rb.originY + (pos.clientY - rb.startClientY)
-                                                }
+                                        | project = Data.Project.moveSectionToIndex d.sectionId targetIndex model.project
+                                        , sectionMoveDrag = Just { d | lastClientX = pos.clientX, accumDx = remaining }
                                       }
                                     , Cmd.none
                                     )
 
                                 Nothing ->
-                                    case model.dragState of
-                                        Dragging d ->
-                                            dragMove pos d model
-
-                                        NoDrag ->
-                                            ( model, Cmd.none )
-
-        ReleasedDrag ->
-            if model.voicingDragState /= NoVoicingDrag then
-                ( { model | voicingDragState = NoVoicingDrag }, Cmd.none )
-
-            else
-            case model.loopDrag of
-                Just ld ->
-                    let
-                        t0 =
-                            Basics.min ld.fixedTicks ld.curTicks
-
-                        t1 =
-                            Basics.max ld.fixedTicks ld.curTicks
-
-                        newModel =
-                            if t0 == t1 then
-                                { model | loopDrag = Nothing, loopRange = Nothing, loopMode = NoLoop }
-
-                            else
-                                { model | loopDrag = Nothing, loopRange = Just { startTicks = t0, endTicks = t1 }, loopMode = LoopRange }
-                    in
-                    if model.playState == Playing then
-                        playWithLoop newModel
-
-                    else
-                        ( newModel, Cmd.none )
-
-                Nothing ->
-                    case model.rubberBand of
-                        Just rb ->
-                            let
-                                x0 =
-                                    Basics.min rb.originX rb.curX
-
-                                x1 =
-                                    Basics.max rb.originX rb.curX
-
-                                y0 =
-                                    Basics.min rb.originY rb.curY
-
-                                y1 =
-                                    Basics.max rb.originY rb.curY
-
-                                t0 =
-                                    PianoRoll.pixelsToTicks model.pianoRollZoom x0
-
-                                t1 =
-                                    PianoRoll.pixelsToTicks model.pianoRollZoom x1
-
-                                pLow =
-                                    PianoRoll.yToPitch y1
-
-                                pHigh =
-                                    PianoRoll.yToPitch y0
-
-                                sel =
-                                    trackNotes model
-                                        |> List.filter
-                                            (\n ->
-                                                (n.start < t1)
-                                                    && (n.start + n.duration > t0)
-                                                    && (n.pitch >= pLow)
-                                                    && (n.pitch <= pHigh)
-                                            )
-                                        |> List.map .id
-                                        |> Set.fromList
-                            in
-                            ( { model | rubberBand = Nothing, dragState = NoDrag, selectedNoteIds = sel }, Cmd.none )
+                                    ( { model | sectionMoveDrag = Just { d | lastClientX = pos.clientX, accumDx = accum } }, Cmd.none )
 
                         Nothing ->
-                            ( { model | dragState = NoDrag }, Cmd.none )
+                            case model.voicingDragState of
+                                DraggingVoicingOffsets d ->
+                                    let
+                                        rootPitch =
+                                            Data.Voicing.anchorPitch + model.voicingPreviewRoot
+
+                                        maxOffset =
+                                            VoicingKeyboard.maxPitch - rootPitch
+
+                                        dpitch =
+                                            negate (round ((pos.clientY - d.startClientY) / toFloat VoicingKeyboard.rowHeight))
+
+                                        newOffsets =
+                                            Data.Voicing.shiftOffsets dpitch maxOffset d.origSelected d.origOffsets
+
+                                        newSelected =
+                                            Set.map (\o -> clamp 0 maxOffset (o + dpitch)) d.origSelected
+                                                |> Set.filter (\o -> List.member o newOffsets)
+
+                                        newPicks =
+                                            Data.GuitarForm.shiftPicks dpitch maxOffset d.origSelected d.origPicks
+                                    in
+                                    ( { model
+                                        | project = Data.Project.updateVoicing d.index (\v -> { v | offsets = newOffsets, stringPicks = newPicks }) model.project
+                                        , voicingSelectedOffsets = newSelected
+                                      }
+                                    , Cmd.none
+                                    )
+
+                                NoVoicingDrag ->
+                                    case model.loopDrag of
+                                        Just ld ->
+                                            ( { model
+                                                | loopDrag =
+                                                    Just
+                                                        { ld
+                                                            | curTicks =
+                                                                Basics.max 0 (ld.baseTicks + snapRound (PianoRoll.pixelsToTicks model.pianoRollZoom (pos.clientX - ld.startClientX)))
+                                                        }
+                                              }
+                                            , Cmd.none
+                                            )
+
+                                        Nothing ->
+                                            case model.rubberBand of
+                                                Just rb ->
+                                                    ( { model
+                                                        | rubberBand =
+                                                            Just
+                                                                { rb
+                                                                    | curX = rb.originX + (pos.clientX - rb.startClientX)
+                                                                    , curY = rb.originY + (pos.clientY - rb.startClientY)
+                                                                }
+                                                      }
+                                                    , Cmd.none
+                                                    )
+
+                                                Nothing ->
+                                                    case model.dragState of
+                                                        Dragging d ->
+                                                            dragMove pos d model
+
+                                                        NoDrag ->
+                                                            ( model, Cmd.none )
+
+        ReleasedDrag ->
+            case model.sectionResizeDrag of
+                Just d ->
+                    ( resizeSectionBars d.sectionId d.curLengthBars { model | sectionResizeDrag = Nothing }, Cmd.none )
+
+                Nothing ->
+                    if model.sectionMoveDrag /= Nothing then
+                        ( { model | sectionMoveDrag = Nothing }, Cmd.none )
+
+                    else if model.voicingDragState /= NoVoicingDrag then
+                        ( { model | voicingDragState = NoVoicingDrag }, Cmd.none )
+
+                    else
+                    case model.loopDrag of
+                        Just ld ->
+                            let
+                                t0 =
+                                    Basics.min ld.fixedTicks ld.curTicks
+
+                                t1 =
+                                    Basics.max ld.fixedTicks ld.curTicks
+
+                                newModel =
+                                    if t0 == t1 then
+                                        { model | loopDrag = Nothing, loopRange = Nothing, loopMode = NoLoop }
+
+                                    else
+                                        { model | loopDrag = Nothing, loopRange = Just { startTicks = t0, endTicks = t1 }, loopMode = LoopRange }
+                            in
+                            if model.playState == Playing then
+                                playWithLoop newModel
+
+                            else
+                                ( newModel, Cmd.none )
+
+                        Nothing ->
+                            case model.rubberBand of
+                                Just rb ->
+                                    let
+                                        x0 =
+                                            Basics.min rb.originX rb.curX
+
+                                        x1 =
+                                            Basics.max rb.originX rb.curX
+
+                                        y0 =
+                                            Basics.min rb.originY rb.curY
+
+                                        y1 =
+                                            Basics.max rb.originY rb.curY
+
+                                        t0 =
+                                            PianoRoll.pixelsToTicks model.pianoRollZoom x0
+
+                                        t1 =
+                                            PianoRoll.pixelsToTicks model.pianoRollZoom x1
+
+                                        pLow =
+                                            PianoRoll.yToPitch y1
+
+                                        pHigh =
+                                            PianoRoll.yToPitch y0
+
+                                        sel =
+                                            trackNotes model
+                                                |> List.filter
+                                                    (\n ->
+                                                        (n.start < t1)
+                                                            && (n.start + n.duration > t0)
+                                                            && (n.pitch >= pLow)
+                                                            && (n.pitch <= pHigh)
+                                                    )
+                                                |> List.map .id
+                                                |> Set.fromList
+                                    in
+                                    ( { model | rubberBand = Nothing, dragState = NoDrag, selectedNoteIds = sel }, Cmd.none )
+
+                                Nothing ->
+                                    ( { model | dragState = NoDrag }, Cmd.none )
 
         PressedRuler pos ->
             if pos.shift then
@@ -1597,6 +1677,30 @@ updateCore msg model =
 
                 Nothing ->
                     ( model, Cmd.none )
+
+        PressedSectionResizeHandle sectionId clientX ->
+            let
+                origLen =
+                    model.project.sections
+                        |> List.filter (\s -> s.id == sectionId)
+                        |> List.head
+                        |> Maybe.map .lengthBars
+                        |> Maybe.withDefault 1
+            in
+            ( { model
+                | selectedSectionId = Just sectionId
+                , sectionResizeDrag = Just { sectionId = sectionId, startClientX = clientX, origLengthBars = origLen, curLengthBars = origLen }
+              }
+            , Cmd.none
+            )
+
+        PressedSectionBlock sectionId clientX ->
+            ( { model
+                | selectedSectionId = Just sectionId
+                , sectionMoveDrag = Just { sectionId = sectionId, lastClientX = clientX, accumDx = 0 }
+              }
+            , Cmd.none
+            )
 
         PressedPianoKey pitch ->
             ( { model | highlightedPitches = Set.singleton pitch }
@@ -2388,35 +2492,7 @@ updateCore msg model =
         ChangedSectionBars sectionId raw ->
             case String.toInt raw of
                 Just bars ->
-                    let
-                        newLen =
-                            clamp 1 64 bars
-
-                        oldLen =
-                            model.project.sections
-                                |> List.filter (\s -> s.id == sectionId)
-                                |> List.head
-                                |> Maybe.map .lengthBars
-                    in
-                    case ( sectionStartBar sectionId model.project, oldLen ) of
-                        ( Just startBar, Just old ) ->
-                            if newLen > old then
-                                ( { model | project = Data.Project.insertBars { beforeBar = startBar + old - 1, count = newLen - old } model.project }
-                                , Cmd.none
-                                )
-
-                            else if newLen < old then
-                                ( { model | project = Data.Project.removeBars { fromBar = startBar + newLen, count = old - newLen } model.project }
-                                , Cmd.none
-                                )
-
-                            else
-                                ( model, Cmd.none )
-
-                        _ ->
-                            ( { model | project = Data.Project.updateSection sectionId (\s -> { s | lengthBars = newLen }) model.project }
-                            , Cmd.none
-                            )
+                    ( resizeSectionBars sectionId bars model, Cmd.none )
 
                 Nothing ->
                     ( model, Cmd.none )
@@ -3102,11 +3178,14 @@ view model =
             , removeFromStart = RemovedBarsFromSection
             , seekToStart = ClickedSeekSectionStart
             , transpose = TransposedSection
+            , pressedBlock = PressedSectionBlock
+            , pressedResizeHandle = PressedSectionResizeHandle
             }
             model.selectedSectionId
             model.insertCountInput
             model.project.sections
             model.pendingSectionDelete
+            (model.sectionResizeDrag |> Maybe.map (\d -> { sectionId = d.sectionId, lengthBars = d.curLengthBars }))
         , Arrange.view
             { selectTrack = SelectedTrack
             , addTrack = ClickedAddTrack
@@ -3329,7 +3408,7 @@ subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
         [ Ports.fromAudio (AudioMsg.decode >> GotAudio)
-        , if model.dragState /= NoDrag || model.rubberBand /= Nothing || model.loopDrag /= Nothing || model.voicingDragState /= NoVoicingDrag then
+        , if model.dragState /= NoDrag || model.rubberBand /= Nothing || model.loopDrag /= Nothing || model.voicingDragState /= NoVoicingDrag || model.sectionResizeDrag /= Nothing || model.sectionMoveDrag /= Nothing then
             Browser.Events.onMouseMove (Decode.map DraggedTo clientPosDecoder)
 
           else
