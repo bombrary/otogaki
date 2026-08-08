@@ -23,6 +23,14 @@ sections =
 
 suite : Test
 suite =
+    Test.concat
+        [ sectionDragTargetIndexSuite
+        , sectionStartBarsSuite
+        ]
+
+
+sectionDragTargetIndexSuite : Test
+sectionDragTargetIndexSuite =
     describe "View.SectionBar.sectionDragTargetIndex"
         [ test "隣接セクション幅の半分未満の accumDx（正方向）では Nothingを返す" <|
             \_ ->
@@ -48,4 +56,22 @@ suite =
             \_ ->
                 SectionBar.sectionDragTargetIndex sections 0 -1000
                     |> Expect.equal Nothing
+        ]
+
+
+sectionStartBarsSuite : Test
+sectionStartBarsSuite =
+    describe "View.SectionBar.sectionStartBars"
+        [ test "セクションの開始小節（0-based）を累積で返す" <|
+            \_ ->
+                SectionBar.sectionStartBars sections
+                    |> Expect.equal [ 0, 4, 6 ]
+        , test "空リストでは空リストを返す" <|
+            \_ ->
+                SectionBar.sectionStartBars []
+                    |> Expect.equal []
+        , test "セクションが1つだけなら [0] を返す" <|
+            \_ ->
+                SectionBar.sectionStartBars [ section 1 8 ]
+                    |> Expect.equal [ 0 ]
         ]

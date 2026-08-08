@@ -1,4 +1,11 @@
-module View.SectionBar exposing (Config, regionPxPerBar, sectionDragTargetIndex, view)
+module View.SectionBar exposing
+    ( Config
+    , regionPxPerBar
+    , sectionBarScrollId
+    , sectionDragTargetIndex
+    , sectionStartBars
+    , view
+    )
 
 import Data.Key
 import Data.Meter
@@ -7,6 +14,8 @@ import Html exposing (Html, button, div, input, span, text, textarea)
 import Html.Attributes as HA
 import Html.Events as HE
 import Json.Decode as Decode
+import Svg
+import Svg.Attributes as SA
 import View.Palette as Palette
 import View.Style as Style
 
@@ -40,8 +49,31 @@ regionPxPerBar =
     40
 
 
+{-| ブロック行の水平スクロールで Browser.Dom から参照するスクロールコンテナの id。
+-}
+sectionBarScrollId : String
+sectionBarScrollId =
+    "section-bar-scroll"
+
+
+regionRulerHeight : Int
+regionRulerHeight =
+    16
+
+
+{-| 各セクションの開始小節（0-based）を、リストの先頭からの累積で求める。ルーラーの目盛り位置計算で使う。
+-}
+sectionStartBars : List Section -> List Int
+sectionStartBars sections =
+    List.foldl
+        (\s ( acc, offset ) -> ( acc ++ [ offset ], offset + s.lengthBars ))
+        ( [], 0 )
+        sections
+        |> Tuple.first
+
+
 {-| ドラッグ中の累積 dx から、進行方向の隣接セクション幅の半分を超えたら入れ替え先 index と、次の判定に
-持ち越す分の dx を返す。超えていなければ `Nothing`（まだ入れ替えない）。
+持ち越す分の dx を返す。超えていなければ `Nothing`（まだ動かさない）。
 古典的なソータブルリストの「隣の中間点を超えたら入れ替える」しきい値判定。
 -}
 sectionDragTargetIndex : List Section -> Int -> Float -> Maybe ( Int, Float )
@@ -78,14 +110,19 @@ view : Config msg -> Maybe Int -> String -> List Section -> Maybe Int -> Maybe {
 view config selectedId insertCountInput sections pendingDeleteId resizePreview =
     div [ HA.style "margin-top" "1rem" ]
         [ div
-            [ HA.style "display" "flex"
-            , HA.style "gap" "2px"
-            , HA.style "align-items" "stretch"
-            , HA.style "flex-wrap" "wrap"
+            [ HA.id sectionBarScrollId
+            , HA.style "overflow-x" "auto"
             ]
-            (List.indexedMap (blockView config selectedId resizePreview) sections
-                ++ [ button (Style.baseButton ++ [ HE.onClick config.add ]) [ text "+ セクション" ] ]
-            )
+            [ regionRulerView sections
+            , div
+                [ HA.style "display" "flex"
+                , HA.style "align-items" "stretch"
+                , HA.style "flex-wrap" "nowrap"
+                ]
+                (List.indexedMap (blockView config selectedId resizePreview) sections
+                    ++ [ button (Style.baseButton ++ [ HE.onClick config.add, HA.style "flex" "0 0 auto" ]) [ text "+ セクション" ] ]
+                )
+            ]
         , case selectedId |> Maybe.andThen (\sid -> sections |> List.filter (\s -> s.id == sid) |> List.head) of
             Just section ->
                 editPanel config insertCountInput section pendingDeleteId
@@ -93,6 +130,61 @@ view config selectedId insertCountInput sections pendingDeleteId resizePreview =
             Nothing ->
                 text ""
         ]
+
+
+{-| セクションの開始小節番号だけをラベル化した簡易ルーラー。毎小節に細い目盛り、セクション境界に太い目盛り＋数字。
+ブロック行と同じ `regionPxPerBar` スケールを使い、gap のないブロック境界とピクセル単位で一致させる。
+-}
+regionRulerView : List Section -> Html msg
+regionRulerView sections =
+    let
+        totalBars =
+            List.sum (List.map .lengthBars sections)
+
+        width =
+            totalBars * regionPxPerBar
+
+        boundaries =
+            sectionStartBars sections
+
+        tick bar =
+            Svg.line
+                [ SA.x1 (String.fromInt (bar * regionPxPerBar))
+                , SA.y1 "0"
+                , SA.x2 (String.fromInt (bar * regionPxPerBar))
+                , SA.y2 (String.fromInt regionRulerHeight)
+                , SA.stroke
+                    (if List.member bar boundaries then
+                        "#888"
+
+                     else
+                        "#ddd"
+                    )
+                , SA.strokeWidth
+                    (if List.member bar boundaries then
+                        "1.5"
+
+                     else
+                        "1"
+                    )
+                ]
+                []
+
+        label bar =
+            Svg.text_
+                [ SA.x (String.fromInt (bar * regionPxPerBar + 3))
+                , SA.y "12"
+                , SA.fontSize "10"
+                , SA.fill "#888"
+                ]
+                [ Svg.text (String.fromInt (bar + 1)) ]
+    in
+    Svg.svg
+        [ SA.width (String.fromInt width)
+        , SA.height (String.fromInt regionRulerHeight)
+        , HA.style "display" "block"
+        ]
+        (List.map tick (List.range 0 totalBars) ++ List.map label boundaries)
 
 
 blockView : Config msg -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> Int -> Section -> Html msg
@@ -115,6 +207,7 @@ blockView config selectedId resizePreview idx section =
     in
     div
         [ HA.style "width" (String.fromInt (displayLengthBars * regionPxPerBar) ++ "px")
+        , HA.style "flex-shrink" "0"
         , HA.style "padding" "0.3rem"
         , HA.style "text-align" "center"
         , HA.style "border"
@@ -161,6 +254,8 @@ blockView config selectedId resizePreview idx section =
             , HA.style "bottom" "0"
             , HA.style "width" "6px"
             , HA.style "cursor" "ew-resize"
+            , HA.style "background" Style.colorPrimary
+            , HA.style "border-radius" "0 3px 3px 0"
             , HE.stopPropagationOn "mousedown"
                 (Decode.map (\cx -> ( config.pressedResizeHandle section.id cx, True )) (Decode.field "clientX" Decode.float))
             ]
