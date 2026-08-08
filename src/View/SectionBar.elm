@@ -1,6 +1,10 @@
 module View.SectionBar exposing
     ( Config
-    , regionPxPerBar
+    , RulerData
+    , defaultRegionPxPerBar
+    , maxRegionPxPerBar
+    , minRegionPxPerBar
+    , regionZoomStep
     , sectionBarScrollId
     , sectionDragTargetIndex
     , sectionStartBars
@@ -38,15 +42,62 @@ type alias Config msg =
     , transpose : Int -> Int -> msg
     , pressedBlock : Int -> Float -> msg
     , pressedResizeHandle : Int -> Float -> msg
+    , wheelZoomed : { deltaY : Float, offsetX : Float } -> msg
+    , pressedRuler : { offsetX : Float, clientX : Float, shift : Bool } -> msg
+    , pressedLoopHandle : Bool -> Float -> msg
     }
 
 
-{-| セクション行（リージョン行）の横幅スケール。ピアノロールの `pxPerSixteenth`とは意図的に別々
-（セクション行とピアノロールは現状別々のスクロール領域なので、合わせても画面上で位置が整合しない）。
+{-| セクションルーラーの描画に必要な、Msg ではないデータだけをまとめたもの。`ticksToPx` は Main 側が
+`Data.Timeline.ticksToFractionalBar` と `pxPerBar` を合わせて作る変換関数（`SectionBar.elm` は `Data.Timeline` を
+知らなくて済む）。
 -}
-regionPxPerBar : Int
-regionPxPerBar =
+type alias RulerData =
+    { pxPerBar : Int
+    , loopEditable : Bool
+    , loop : Maybe { startTicks : Int, endTicks : Int }
+    , playheadTicks : Int
+    , ticksToPx : Int -> Float
+    }
+
+
+{-| セクション行（リージョン行）のデフォルト横幅スケール。ズーム機構導入前の値。ピアノロールの
+ズームとは意図的に別々（セクション行とピアノロールは現状別々のスクロール領域なので）。
+-}
+defaultRegionPxPerBar : Int
+defaultRegionPxPerBar =
     40
+
+
+minRegionPxPerBar : Int
+minRegionPxPerBar =
+    6
+
+
+maxRegionPxPerBar : Int
+maxRegionPxPerBar =
+    120
+
+
+{-| セクションルーラーのホイールズームの1ステップ。`PianoRoll.zoomStep` と完全に同じロジック。
+-}
+regionZoomStep : Float -> Int -> Int
+regionZoomStep deltaY current =
+    let
+        factor =
+            if deltaY < 0 then
+                1.2
+
+            else if deltaY > 0 then
+                1 / 1.2
+
+            else
+                1
+
+        next =
+            round (toFloat current * factor)
+    in
+    clamp minRegionPxPerBar maxRegionPxPerBar next
 
 
 {-| ブロック行の水平スクロールで Browser.Dom から参照するスクロールコンテナの id。
@@ -76,8 +127,8 @@ sectionStartBars sections =
 持ち越す分の dx を返す。超えていなければ `Nothing`（まだ動かさない）。
 古典的なソータブルリストの「隣の中間点を超えたら入れ替える」しきい値判定。
 -}
-sectionDragTargetIndex : List Section -> Int -> Float -> Maybe ( Int, Float )
-sectionDragTargetIndex sections currentIndex accumDx =
+sectionDragTargetIndex : Int -> List Section -> Int -> Float -> Maybe ( Int, Float )
+sectionDragTargetIndex pxPerBar sections currentIndex accumDx =
     let
         dir =
             if accumDx > 0 then
@@ -97,7 +148,7 @@ sectionDragTargetIndex sections currentIndex accumDx =
             Just neighbor ->
                 let
                     widthPx =
-                        toFloat (neighbor.lengthBars * regionPxPerBar)
+                        toFloat (neighbor.lengthBars * pxPerBar)
                 in
                 if abs accumDx >= widthPx / 2 then
                     Just ( currentIndex + dir, accumDx - toFloat dir * widthPx )
@@ -106,20 +157,20 @@ sectionDragTargetIndex sections currentIndex accumDx =
                     Nothing
 
 
-view : Config msg -> Maybe Int -> String -> List Section -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> Html msg
-view config selectedId insertCountInput sections pendingDeleteId resizePreview =
+view : Config msg -> RulerData -> Maybe Int -> String -> List Section -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> Html msg
+view config rulerData selectedId insertCountInput sections pendingDeleteId resizePreview =
     div [ HA.style "margin-top" "1rem" ]
         [ div
             [ HA.id sectionBarScrollId
             , HA.style "overflow-x" "auto"
             ]
-            [ regionRulerView sections
+            [ regionRulerView config rulerData.pxPerBar rulerData.loopEditable rulerData.loop rulerData.ticksToPx rulerData.playheadTicks sections
             , div
                 [ HA.style "display" "flex"
                 , HA.style "align-items" "stretch"
                 , HA.style "flex-wrap" "nowrap"
                 ]
-                (List.indexedMap (blockView config selectedId resizePreview) sections
+                (List.indexedMap (blockView config rulerData.pxPerBar selectedId resizePreview) sections
                     ++ [ button (Style.baseButton ++ [ HE.onClick config.add, HA.style "flex" "0 0 auto" ]) [ text "+ セクション" ] ]
                 )
             ]
@@ -132,26 +183,27 @@ view config selectedId insertCountInput sections pendingDeleteId resizePreview =
         ]
 
 
-{-| セクションの開始小節番号だけをラベル化した簡易ルーラー。毎小節に細い目盛り、セクション境界に太い目盛り＋数字。
-ブロック行と同じ `regionPxPerBar` スケールを使い、gap のないブロック境界とピクセル単位で一致させる。
+{-| セクションの開始小節番号ラベル、マウスホイールズーム、shift+ドラッグによるループ作成・伸縮、再生位置の
+表示を全て担う対話型ルーラー。`PianoRoll.elm` の `rulerView`/`loopBandView`/`loopHandle`/`playheadLine` と同じ形を
+このスケール（`pxPerBar`）向けにミラーしている。
 -}
-regionRulerView : List Section -> Html msg
-regionRulerView sections =
+regionRulerView : Config msg -> Int -> Bool -> Maybe { startTicks : Int, endTicks : Int } -> (Int -> Float) -> Int -> List Section -> Html msg
+regionRulerView config pxPerBar loopEditable loop ticksToPx playheadTicks sections =
     let
         totalBars =
             List.sum (List.map .lengthBars sections)
 
         width =
-            totalBars * regionPxPerBar
+            totalBars * pxPerBar
 
         boundaries =
             sectionStartBars sections
 
         tick bar =
             Svg.line
-                [ SA.x1 (String.fromInt (bar * regionPxPerBar))
+                [ SA.x1 (String.fromInt (bar * pxPerBar))
                 , SA.y1 "0"
-                , SA.x2 (String.fromInt (bar * regionPxPerBar))
+                , SA.x2 (String.fromInt (bar * pxPerBar))
                 , SA.y2 (String.fromInt regionRulerHeight)
                 , SA.stroke
                     (if List.member bar boundaries then
@@ -172,23 +224,109 @@ regionRulerView sections =
 
         label bar =
             Svg.text_
-                [ SA.x (String.fromInt (bar * regionPxPerBar + 3))
+                [ SA.x (String.fromInt (bar * pxPerBar + 3))
                 , SA.y "12"
                 , SA.fontSize "10"
                 , SA.fill "#888"
                 ]
                 [ Svg.text (String.fromInt (bar + 1)) ]
+
+        loopBand =
+            case loop of
+                Nothing ->
+                    []
+
+                Just l ->
+                    let
+                        x0 =
+                            ticksToPx l.startTicks
+
+                        x1 =
+                            ticksToPx l.endTicks
+
+                        band =
+                            Svg.rect
+                                [ SA.x (String.fromFloat x0)
+                                , SA.y "11"
+                                , SA.width (String.fromFloat (Basics.max 0 (x1 - x0)))
+                                , SA.height "4"
+                                , SA.fill Style.colorLoop
+                                , SA.pointerEvents "none"
+                                ]
+                                []
+                    in
+                    band
+                        :: (if loopEditable then
+                                [ regionLoopHandle config False x0
+                                , regionLoopHandle config True x1
+                                ]
+
+                            else
+                                []
+                           )
+
+        playhead =
+            Svg.line
+                [ SA.x1 (String.fromFloat (ticksToPx playheadTicks))
+                , SA.y1 "0"
+                , SA.x2 (String.fromFloat (ticksToPx playheadTicks))
+                , SA.y2 (String.fromInt regionRulerHeight)
+                , SA.stroke "#e74c3c"
+                , SA.strokeWidth "2"
+                ]
+                []
     in
     Svg.svg
         [ SA.width (String.fromInt width)
         , SA.height (String.fromInt regionRulerHeight)
         , HA.style "display" "block"
+        , HA.style "cursor" "pointer"
+        , HA.title "クリックで再生位置を移動。shift + ドラッグでループ区間を作成。マウスホイールでズーム"
+        , HE.on "mousedown" (Decode.map config.pressedRuler rulerPressDecoder)
+        , HE.preventDefaultOn "wheel" (Decode.map (\w -> ( config.wheelZoomed w, True )) wheelDecoder)
         ]
-        (List.map tick (List.range 0 totalBars) ++ List.map label boundaries)
+        (List.map tick (List.range 0 totalBars)
+            ++ List.map label boundaries
+            ++ loopBand
+            ++ [ playhead ]
+        )
 
 
-blockView : Config msg -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> Int -> Section -> Html msg
-blockView config selectedId resizePreview idx section =
+rulerPressDecoder : Decode.Decoder { offsetX : Float, clientX : Float, shift : Bool }
+rulerPressDecoder =
+    Decode.map3 (\ox cx sh -> { offsetX = ox, clientX = cx, shift = sh })
+        (Decode.field "offsetX" Decode.float)
+        (Decode.field "clientX" Decode.float)
+        (Decode.field "shiftKey" Decode.bool)
+
+
+wheelDecoder : Decode.Decoder { deltaY : Float, offsetX : Float }
+wheelDecoder =
+    Decode.map2 (\dy ox -> { deltaY = dy, offsetX = ox })
+        (Decode.field "deltaY" Decode.float)
+        (Decode.field "offsetX" Decode.float)
+
+
+{-| ループ帯の端をつまんで伸縮するためのハンドル。`PianoRoll.loopHandle` と同じ形だが、このルーラーの高さ（regionRulerHeight）に
+合わせて小さめにしている。
+-}
+regionLoopHandle : Config msg -> Bool -> Float -> Svg.Svg msg
+regionLoopHandle config isEnd x =
+    Svg.rect
+        [ SA.x (String.fromFloat (x - 5))
+        , SA.y "2"
+        , SA.width "10"
+        , SA.height "12"
+        , SA.fill Style.colorLoopHandle
+        , SA.cursor "ew-resize"
+        , HE.stopPropagationOn "mousedown"
+            (Decode.map (\cx -> ( config.pressedLoopHandle isEnd cx, True )) (Decode.field "clientX" Decode.float))
+        ]
+        []
+
+
+blockView : Config msg -> Int -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> Int -> Section -> Html msg
+blockView config pxPerBar selectedId resizePreview idx section =
     let
         selected =
             selectedId == Just section.id
@@ -206,7 +344,8 @@ blockView config selectedId resizePreview idx section =
                     section.lengthBars
     in
     div
-        [ HA.style "width" (String.fromInt (displayLengthBars * regionPxPerBar) ++ "px")
+        [ HA.style "width" (String.fromInt (displayLengthBars * pxPerBar) ++ "px")
+        , HA.style "box-sizing" "border-box"
         , HA.style "flex-shrink" "0"
         , HA.style "padding" "0.3rem"
         , HA.style "text-align" "center"

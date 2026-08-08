@@ -118,4 +118,60 @@ suite =
                         Timeline.ticksToBarBeat (Meter.ticksPerBar Meter.default + Meter.ticksPerBeat Meter.default) tl
                 in
                 Expect.equal { bar = 2, beat = 2 } result
+        , test "ticksToFractionalBar は小節先頭で整数値を返す" <|
+            \_ ->
+                let
+                    tl =
+                        Timeline.fromSections { minBars = 4 } []
+                in
+                Expect.within (Expect.Absolute 0.0001) 2.0 (Timeline.ticksToFractionalBar (Meter.ticksPerBar Meter.default * 2) tl)
+        , test "ticksToFractionalBar は小節の中間で 0.5 を返す" <|
+            \_ ->
+                let
+                    tl =
+                        Timeline.fromSections { minBars = 4 } []
+                in
+                Expect.within (Expect.Absolute 0.0001) 1.5 (Timeline.ticksToFractionalBar (Meter.ticksPerBar Meter.default + Meter.ticksPerBar Meter.default // 2) tl)
+        , test "fractionalBarToTicks は ticksToFractionalBar の逆変換になる（小節先頭）" <|
+            \_ ->
+                let
+                    tl =
+                        Timeline.fromSections { minBars = 4 } []
+
+                    ticks =
+                        Meter.ticksPerBar Meter.default * 3
+                in
+                Expect.equal ticks (Timeline.fractionalBarToTicks (Timeline.ticksToFractionalBar ticks tl) tl)
+        , test "拍子が変わるセクションをまたいでも正しい小数点位置を返す" <|
+            \_ ->
+                let
+                    tl =
+                        Timeline.fromSections { minBars = 0 }
+                            [ section 1 2 Meter.default Key.default
+                            , section 2 2 { numerator = 3, denominator = 4 } Key.default
+                            ]
+
+                    bar2Start =
+                        Meter.ticksPerBar Meter.default * 2
+
+                    threeQuarterBarTicks =
+                        Meter.ticksPerBar { numerator = 3, denominator = 4 }
+                in
+                Expect.within (Expect.Absolute 0.0001) 2.5 (Timeline.ticksToFractionalBar (bar2Start + threeQuarterBarTicks // 2) tl)
+        , test "fractionalBarToTicks は拍子が変わるセクション内でも正しい tick を返す" <|
+            \_ ->
+                let
+                    tl =
+                        Timeline.fromSections { minBars = 0 }
+                            [ section 1 2 Meter.default Key.default
+                            , section 2 2 { numerator = 3, denominator = 4 } Key.default
+                            ]
+
+                    bar2Start =
+                        Meter.ticksPerBar Meter.default * 2
+
+                    threeQuarterBarTicks =
+                        Meter.ticksPerBar { numerator = 3, denominator = 4 }
+                in
+                Expect.equal (bar2Start + threeQuarterBarTicks // 2) (Timeline.fractionalBarToTicks 2.5 tl)
         ]

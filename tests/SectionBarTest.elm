@@ -26,6 +26,7 @@ suite =
     Test.concat
         [ sectionDragTargetIndexSuite
         , sectionStartBarsSuite
+        , regionZoomStepSuite
         ]
 
 
@@ -34,28 +35,54 @@ sectionDragTargetIndexSuite =
     describe "View.SectionBar.sectionDragTargetIndex"
         [ test "隣接セクション幅の半分未満の accumDx（正方向）では Nothingを返す" <|
             \_ ->
-                SectionBar.sectionDragTargetIndex sections 0 39
+                SectionBar.sectionDragTargetIndex SectionBar.defaultRegionPxPerBar sections 0 39
                     |> Expect.equal Nothing
         , test "隣接セクション幅の半分以上（正方向）で Just を返し、index が1進む" <|
             \_ ->
-                SectionBar.sectionDragTargetIndex sections 0 40
+                SectionBar.sectionDragTargetIndex SectionBar.defaultRegionPxPerBar sections 0 40
                     |> Expect.equal (Just ( 1, -40 ))
         , test "隣接セクション幅の半分以上（負方向）で Just を返し、index が1減る" <|
             \_ ->
-                SectionBar.sectionDragTargetIndex sections 2 -40
+                SectionBar.sectionDragTargetIndex SectionBar.defaultRegionPxPerBar sections 2 -40
                     |> Expect.equal (Just ( 1, 40 ))
         , test "隣接セクション幅の半分未満の accumDx（負方向）では Nothingを返す" <|
             \_ ->
-                SectionBar.sectionDragTargetIndex sections 2 -39
+                SectionBar.sectionDragTargetIndex SectionBar.defaultRegionPxPerBar sections 2 -39
                     |> Expect.equal Nothing
         , test "進行方向（末尾）に隣接セクションがなければ常に Nothing" <|
             \_ ->
-                SectionBar.sectionDragTargetIndex sections 2 1000
+                SectionBar.sectionDragTargetIndex SectionBar.defaultRegionPxPerBar sections 2 1000
                     |> Expect.equal Nothing
         , test "進行方向（先頭）に隣接セクションがなければ常に Nothing" <|
             \_ ->
-                SectionBar.sectionDragTargetIndex sections 0 -1000
+                SectionBar.sectionDragTargetIndex SectionBar.defaultRegionPxPerBar sections 0 -1000
                     |> Expect.equal Nothing
+        ]
+
+
+regionZoomStepSuite : Test
+regionZoomStepSuite =
+    describe "View.SectionBar.regionZoomStep"
+        [ test "deltaY が負（ホイール上）なら拡大する" <|
+            \_ ->
+                SectionBar.regionZoomStep -1 40
+                    |> Expect.equal 48
+        , test "deltaY が正（ホイール下）なら縮小する" <|
+            \_ ->
+                SectionBar.regionZoomStep 1 48
+                    |> Expect.equal 40
+        , test "deltaY が 0 なら変化しない" <|
+            \_ ->
+                SectionBar.regionZoomStep 0 40
+                    |> Expect.equal 40
+        , test "上限（maxRegionPxPerBar）を超えて拡大しない" <|
+            \_ ->
+                SectionBar.regionZoomStep -1 SectionBar.maxRegionPxPerBar
+                    |> Expect.equal SectionBar.maxRegionPxPerBar
+        , test "下限（minRegionPxPerBar）を下回って縮小しない" <|
+            \_ ->
+                SectionBar.regionZoomStep 1 SectionBar.minRegionPxPerBar
+                    |> Expect.equal SectionBar.minRegionPxPerBar
         ]
 
 

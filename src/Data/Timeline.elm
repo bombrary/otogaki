@@ -2,6 +2,7 @@ module Data.Timeline exposing
     ( Bar
     , Timeline
     , barAt
+    , fractionalBarToTicks
     , fromSections
     , keyAt
     , meterAt
@@ -10,6 +11,7 @@ module Data.Timeline exposing
     , sectionIndexAt
     , tailPaddingBars
     , ticksToBarBeat
+    , ticksToFractionalBar
     , totalBars
     , totalTicks
     )
@@ -149,6 +151,38 @@ barContaining ticks timeline =
                         go (i + 1)
     in
     go 0
+
+
+{-| tick 位置を、拍子の違う小節をまたいでも正しい小数点付き小節位置（0-based）に変換する。セクションルーラー上の
+再生位置・ループ範囲の描画位置計算で使う。
+-}
+ticksToFractionalBar : Int -> Timeline -> Float
+ticksToFractionalBar ticks timeline =
+    case barContaining ticks timeline of
+        Just bar ->
+            toFloat bar.index + toFloat (ticks - bar.startTicks) / toFloat bar.lengthTicks
+
+        Nothing ->
+            0
+
+
+{-| `ticksToFractionalBar` の逆変換。セクションルーラー上のクリック/ドラッグ位置を tick に戻すのに使う。
+-}
+fractionalBarToTicks : Float -> Timeline -> Int
+fractionalBarToTicks fractionalBar timeline =
+    let
+        wholeBar =
+            floor fractionalBar
+
+        frac =
+            fractionalBar - toFloat wholeBar
+    in
+    case barAt wholeBar timeline of
+        Just bar ->
+            bar.startTicks + round (frac * toFloat bar.lengthTicks)
+
+        Nothing ->
+            totalTicks timeline
 
 
 meterAt : Int -> Timeline -> Meter
