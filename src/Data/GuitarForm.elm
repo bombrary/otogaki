@@ -1,4 +1,4 @@
-module Data.GuitarForm exposing (Form, StringPicks, bestForm, forChord, formFromPicks, heldPitches, openStrings, removePicks, shiftPicks, toIndexedPitches, toPitches)
+module Data.GuitarForm exposing (Form, StringPicks, bestForm, forChord, formFromPicks, openStrings, removePicks, shiftPicks, toPitches)
 
 import Data.Chord exposing (Chord, Quality(..))
 import Set exposing (Set)
@@ -308,26 +308,3 @@ formFromPicks rootPitch offsets picks =
     else
         Nothing
 
-
-{-| Form を「押さえている弦インデックスとそのピッチ」のペア列に分解する。ミュート弦は含まない。
-弦インデックスは低音弦（E）を 0 として数える。
--}
-toIndexedPitches : Form -> List ( Int, Int )
-toIndexedPitches f =
-    List.map3 (\i open fret -> Maybe.map (\fr -> ( i, open + fr )) fret)
-        (List.range 0 (List.length openStrings - 1))
-        openStrings
-        f.frets
-        |> List.filterMap identity
-
-
-{-| curr の押弦位置を、prev と比べて「同じ弦・同じフレットで保持できる（押さえ直さなくていい）」位置だけに
-絞り込む。prev が Nothing なら常に空リスト（全て移動扱い）。ボイスリーディング表示で使う。
--}
-heldPitches : Maybe Form -> Form -> List ( Int, Int )
-heldPitches maybePrev curr =
-    let
-        prevIndexed =
-            maybePrev |> Maybe.map toIndexedPitches |> Maybe.withDefault []
-    in
-    toIndexedPitches curr |> List.filter (\pair -> List.member pair prevIndexed)

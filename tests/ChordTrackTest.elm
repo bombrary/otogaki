@@ -7,6 +7,7 @@ import Data.Section exposing (Section)
 import Data.Timeline
 import Data.Track exposing (Instrument(..))
 import Expect
+import Set
 import Test exposing (Test, describe, test)
 
 
@@ -41,6 +42,17 @@ resolved =
 
 suite : Test
 suite =
+    Test.concat
+        [ resolveSuite
+        , tokenSpansSuite
+        , tokenKeysInTickRangeSuite
+        , moveTokensSuite
+        , removeTokensSuite
+        ]
+
+
+resolveSuite : Test
+resolveSuite =
     describe "コードトラック展開"
         [ test "% は直前のコードを繰り返す" <|
             \_ ->
@@ -133,4 +145,176 @@ suite =
                 ChordTrack.namedSpans multiSectionTimeline (track "C | C | G | Am")
                     |> List.map .sectionIndex
                     |> Expect.equal [ Just 0, Just 0, Just 1, Just 1 ]
+        ]
+
+
+barLen : Int
+barLen =
+    Data.Meter.ticksPerBar Data.Meter.default
+
+
+tokenSpansSuite : Test
+tokenSpansSuite =
+    describe "Data.ChordTrack.tokenSpans"
+        [ test "キーと tick 分割が cells と一致する" <|
+            \_ ->
+                ChordTrack.tokenSpans timeline (track "C G | Am")
+                    |> List.map (\s -> { key = s.key, token = s.token, startTicks = s.startTicks, durationTicks = s.durationTicks })
+                    |> Expect.equal
+                        [ { key = ( 0, 0 ), token = "C", startTicks = 0, durationTicks = barLen // 2 }
+                        , { key = ( 0, 1 ), token = "G", startTicks = barLen // 2, durationTicks = barLen // 2 }
+                        , { key = ( 1, 0 ), token = "Am", startTicks = barLen, durationTicks = barLen }
+                        ]
+        , test "% の resolvedName は直前のコード名" <|
+            \_ ->
+                ChordTrack.tokenSpans timeline (track "C | %")
+                    |> List.filterMap (\s -> Maybe.map (\n -> ( s.key, n )) s.resolvedName)
+                    |> Expect.equal [ ( ( 0, 0 ), "C" ), ( ( 1, 0 ), "C" ) ]
+        , test "= の resolvedName も直前のコード名" <|
+            \_ ->
+                ChordTrack.tokenSpans timeline (track "C | =")
+                    |> List.filterMap (\s -> Maybe.map (\n -> ( s.key, n )) s.resolvedName)
+                    |> Expect.equal [ ( ( 0, 0 ), "C" ), ( ( 1, 0 ), "C" ) ]
+        , test "_ とパース不能トークンの resolvedName は Nothing" <|
+            \_ ->
+                ChordTrack.tokenSpans timeline (track "C | _ | XYZ123")
+                    |> List.map (\s -> s.resolvedName)
+                    |> Expect.equal [ Just "C", Nothing, Nothing ]
+        ]
+
+
+tokenKeysInTickRangeSuite : Test
+tokenKeysInTickRangeSuite =
+    describe "Data.ChordTrack.tokenKeysInTickRange"
+        [ test "半開区間で先頭小節のみ拾う" <|
+            \_ ->
+                ChordTrack.tokenKeysInTickRange timeline 0 barLen (track "C | G | Am")
+                    |> Expect.equal (Set.fromList [ ( 0, 0 ) ])
+        , test "次の区間は次の小節のみ" <|
+            \_ ->
+                ChordTrack.tokenKeysInTickRange timeline barLen (barLen * 2) (track "C | G | Am")
+                    |> Expect.equal (Set.fromList [ ( 1, 0 ) ])
+        , test "幅を広げれば複数拾う" <|
+            \_ ->
+                ChordTrack.tokenKeysInTickRange timeline 0 (barLen * 2) (track "C | G | Am")
+                    |> Expect.equal (Set.fromList [ ( 0, 0 ), ( 1, 0 ) ])
+        ]
+
+
+moveTokensSuite : Test
+moveTokensSuite =
+    describe "Data.ChordTrack.moveTokens"
+        [ test "空小節への移動" <|
+            \_ ->
+                let
+                    result =
+                        ChordTrack.moveTokens timeline 1 (Set.fromList [ ( 0, 0 ) ]) (track "C | ")
+                in
+                ( ChordTrack.cells timeline result.track |> List.map (\c -> List.map .token c.chords), result.movedKeys )
+                    |> Expect.equal ( [ [], [ "C" ] ], Set.fromList [ ( 1, 0 ) ] )
+        , test "既存セルへの合流は末尾追記" <|
+            \_ ->
+                let
+                    result =
+                        ChordTrack.moveTokens timeline 1 (Set.fromList [ ( 0, 0 ) ]) (track "C | G")
+                in
+                ChordTrack.cells timeline result.track
+                    |> List.map (\c -> List.map .token c.chords)
+                    |> Expect.equal [ [], [ "G", "C" ] ]
+        , test "% は展開して移動する" <|
+            \_ ->
+                let
+                    result =
+                        ChordTrack.moveTokens timeline 1 (Set.fromList [ ( 1, 0 ) ]) (track "C | % | ")
+                in
+                ChordTrack.cells timeline result.track
+                    |> List.map (\c -> List.map .token c.chords)
+                    |> Expect.equal [ [ "C" ], [], [ "C" ] ]
+        , test "= も展開して移動する" <|
+            \_ ->
+                let
+                    result =
+                        ChordTrack.moveTokens timeline 1 (Set.fromList [ ( 1, 0 ) ]) (track "C | = | ")
+                in
+                ChordTrack.cells timeline result.track
+                    |> List.map (\c -> List.map .token c.chords)
+                    |> Expect.equal [ [ "C" ], [], [ "C" ] ]
+        , test "deltaBars が 0 ならテキスト不変" <|
+            \_ ->
+                let
+                    original =
+                        track "C | G"
+
+                    result =
+                        ChordTrack.moveTokens timeline 0 (Set.fromList [ ( 0, 0 ) ]) original
+                in
+                result.track.text |> Expect.equal original.text
+        , test "選択が空なら何もしない" <|
+            \_ ->
+                let
+                    original =
+                        track "C | G"
+
+                    result =
+                        ChordTrack.moveTokens timeline 2 Set.empty original
+                in
+                result.track.text |> Expect.equal original.text
+        , test "負方向は選択の最小 barIndex が 0 を下回らないようにクランプされる" <|
+            \_ ->
+                let
+                    result =
+                        ChordTrack.moveTokens timeline -5 (Set.fromList [ ( 1, 0 ) ]) (track "C | G")
+                in
+                ChordTrack.cells timeline result.track
+                    |> List.map (\c -> List.map .token c.chords)
+                    |> Expect.equal [ [ "C", "G" ], [] ]
+        , test "末尾を超える移動は空小節でパディングされる" <|
+            \_ ->
+                let
+                    result =
+                        ChordTrack.moveTokens timeline 3 (Set.fromList [ ( 0, 0 ) ]) (track "C")
+                in
+                ChordTrack.cells timeline result.track
+                    |> List.map (\c -> List.map .token c.chords)
+                    |> Expect.equal [ [], [], [], [ "C" ] ]
+        , test "無変更の小節のコメントは温存される" <|
+            \_ ->
+                let
+                    result =
+                        ChordTrack.moveTokens timeline 2 (Set.fromList [ ( 0, 0 ) ]) (track "C | G // secret\n | Am")
+                in
+                String.split "|" result.track.text
+                    |> List.drop 1
+                    |> List.head
+                    |> Maybe.withDefault ""
+                    |> String.contains "// secret"
+                    |> Expect.equal True
+        ]
+
+
+removeTokensSuite : Test
+removeTokensSuite =
+    describe "Data.ChordTrack.removeTokens"
+        [ test "選択トークンを除去しても小節数（| の数）は不変" <|
+            \_ ->
+                let
+                    result =
+                        ChordTrack.removeTokens timeline (Set.fromList [ ( 0, 0 ) ]) (track "C G | Am")
+                in
+                ( ChordTrack.barCount result, ChordTrack.cells timeline result |> List.map (\c -> List.map .token c.chords) )
+                    |> Expect.equal ( 2, [ [ "G" ], [ "Am" ] ] )
+        , test "選択が空なら何もしない" <|
+            \_ ->
+                let
+                    original =
+                        track "C | G"
+                in
+                (ChordTrack.removeTokens timeline Set.empty original).text |> Expect.equal original.text
+        , test "無変更の小節のコメントは温存される" <|
+            \_ ->
+                let
+                    result =
+                        ChordTrack.removeTokens timeline (Set.fromList [ ( 0, 0 ) ]) (track "C | G // secret")
+                in
+                String.contains "// secret" result.text |> Expect.equal True
         ]

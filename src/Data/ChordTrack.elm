@@ -3,14 +3,19 @@ module Data.ChordTrack exposing
     , ChordSpan
     , ChordTrack
     , ResolvedChord
+    , TokenKey
     , TokenKind(..)
+    , TokenSpan
     , barCount
     , cells
     , empty
+    , moveTokens
     , namedSpans
-    , previewNotes
+    , removeTokens
     , resolved
     , stripComments
+    , tokenKeysInTickRange
+    , tokenSpans
     , toPlainText
     , trackId
     , transpose
@@ -21,10 +26,10 @@ import Data.Chord exposing (Chord)
 import Data.Chord.Format as ChordFormat
 import Data.Chord.Parser as ChordParser
 import Data.Meter
-import Data.Note exposing (Note)
 import Data.Timeline exposing (Timeline)
 import Data.Track exposing (Instrument(..))
-import Data.Voicing exposing (Voicing)
+import Dict exposing (Dict)
+import Set exposing (Set)
 
 
 type alias ChordTrack =
@@ -194,8 +199,7 @@ resolved timeline track =
 
 
 {-| ピアノロール上のコード帯など、名前付きで表示する際の単位。再生中判定（active）は
-ここには持たせず、呼び出し側が playheadTicks と startTicks/durationTicks を比べて求める
-（ChordEditor.adjacentChords と同じ式）。
+ここには持たせず、呼び出し側が playheadTicks と startTicks/durationTicks を比べて求める。
 -}
 type alias ChordSpan =
     { name : String
@@ -218,21 +222,6 @@ namedSpans timeline track =
                 , sectionIndex = Data.Timeline.sectionIndexAt rc.startTicks timeline
                 }
             )
-
-
-{-| コード進行を実際にMIDI化（「→ MIDIトラック化」）した場合に鳴るはずのノート列を計算する。
-ピアノロールのMIDIプレビュー表示で使う。id はプレビュー専用の連番（実際のPianoRollのノートとは不一致する）。
--}
-previewNotes : List Voicing -> Timeline -> ChordTrack -> List Note
-previewNotes voicings timeline track =
-    resolved timeline track
-        |> List.concatMap
-            (\ev ->
-                Data.Chord.toPitchesWith voicings ev.chord
-                    |> List.map (\p -> { pitch = p, start = ev.startTicks, duration = ev.durationTicks })
-            )
-        |> List.indexedMap
-            (\i n -> { id = i, pitch = n.pitch, start = n.start, duration = n.duration, velocity = 80 })
 
 
 resolveCell : ChordCell -> ResolveState -> ResolveState
@@ -296,6 +285,312 @@ resolveCell cell state =
                             st
                 )
                 state
+
+
+type alias TokenKey =
+    ( Int, Int )
+
+
+{-| トークン単位の表示・選択情報。key は (barIndex, その小節内の tokenIndex)。resolvedName は
+% や = が実際に何のコードを指しているか（ドラッグ移動時の展開に使う）。TRest/Err は Nothing。
+-}
+type alias TokenSpan =
+    { key : TokenKey
+    , token : String
+    , result : Result String TokenKind
+    , resolvedName : Maybe String
+    , startTicks : Int
+    , durationTicks : Int
+    , sectionIndex : Maybe Int
+    }
+
+
+type alias TokenSpanState =
+    { lastChord : Maybe Chord
+    , spansRev : List TokenSpan
+    }
+
+
+{-| 全トークンをジオメトリ付きで列挙する。均等分割式（lengthTicks // n）は resolveCell と同じなので、
+タイミングは resolved/namedSpans と一致する。
+-}
+tokenSpans : Timeline -> ChordTrack -> List TokenSpan
+tokenSpans timeline track =
+    cells timeline track
+        |> List.foldl (tokenSpansForCell timeline) { lastChord = Nothing, spansRev = [] }
+        |> .spansRev
+        |> List.reverse
+
+
+tokenSpansForCell : Timeline -> ChordCell -> TokenSpanState -> TokenSpanState
+tokenSpansForCell timeline cell state =
+    let
+        n =
+            List.length cell.chords
+    in
+    if n == 0 then
+        state
+
+    else
+        let
+            dur =
+                cell.lengthTicks // n
+        in
+        cell.chords
+            |> List.indexedMap Tuple.pair
+            |> List.foldl
+                (\( j, c ) st ->
+                    let
+                        start =
+                            cell.startTicks + j * dur
+
+                        ( newLastChord, resolvedChord ) =
+                            case c.result of
+                                Ok (TChord chord) ->
+                                    ( Just chord, Just chord )
+
+                                Ok TRepeat ->
+                                    ( st.lastChord, st.lastChord )
+
+                                Ok THold ->
+                                    ( st.lastChord, st.lastChord )
+
+                                Ok TRest ->
+                                    ( st.lastChord, Nothing )
+
+                                Err _ ->
+                                    ( st.lastChord, Nothing )
+
+                        span =
+                            { key = ( cell.barIndex, j )
+                            , token = c.token
+                            , result = c.result
+                            , resolvedName = Maybe.map (ChordFormat.format { preferFlat = False }) resolvedChord
+                            , startTicks = start
+                            , durationTicks = dur
+                            , sectionIndex = Data.Timeline.sectionIndexAt start timeline
+                            }
+                    in
+                    { lastChord = newLastChord, spansRev = span :: st.spansRev }
+                )
+                state
+
+
+{-| tick 範囲 [t0, t1) に開始位置が入るトークンのキー集合。矩形選択・セクション内選択で使う。
+ピアノロールの Cmd+Shift+A 選択（n.start >= startTicks && n.start < endTicks）と同じ半開区間。
+-}
+tokenKeysInTickRange : Timeline -> Int -> Int -> ChordTrack -> Set TokenKey
+tokenKeysInTickRange timeline t0 t1 track =
+    tokenSpans timeline track
+        |> List.filter (\s -> s.startTicks >= t0 && s.startTicks < t1)
+        |> List.map .key
+        |> Set.fromList
+
+
+{-| 選択トークンを deltaBars 小節移動してテキストを再構成する。移動先セルへは末尾追記（上書き・押し出しなし）。
+% と = は移動前の resolvedName（実コード名）に展開して移動する（参照先が変わる事故を防ぐため）。
+_ と Err はリテラルのまま。変更した小節だけ正規化再構成し、無変更の小節は生チャンク（コメント含む）を温存する。
+deltaBars が 0 または選択が空なら何もしない。
+-}
+moveTokens : Timeline -> Int -> Set TokenKey -> ChordTrack -> { track : ChordTrack, movedKeys : Set TokenKey }
+moveTokens timeline deltaBarsRaw selectedKeys track =
+    if deltaBarsRaw == 0 || Set.isEmpty selectedKeys then
+        { track = track, movedKeys = selectedKeys }
+
+    else
+        let
+            cellsList =
+                cells timeline track
+
+            movedText span =
+                case span.result of
+                    Ok TRepeat ->
+                        Maybe.withDefault span.token span.resolvedName
+
+                    Ok THold ->
+                        Maybe.withDefault span.token span.resolvedName
+
+                    _ ->
+                        span.token
+
+            spanLookup =
+                tokenSpans timeline track
+                    |> List.filter (\s -> Set.member s.key selectedKeys)
+                    |> List.map (\s -> ( s.key, movedText s ))
+                    |> Dict.fromList
+
+            minBar =
+                selectedKeys |> Set.toList |> List.map Tuple.first |> List.minimum |> Maybe.withDefault 0
+
+            deltaBars =
+                Basics.max deltaBarsRaw (negate minBar)
+
+            rawChunks =
+                String.split "|" track.text
+
+            barCountRaw =
+                List.length rawChunks
+
+            maxDestBar =
+                selectedKeys
+                    |> Set.toList
+                    |> List.map (\( b, _ ) -> b + deltaBars)
+                    |> List.maximum
+                    |> Maybe.withDefault 0
+
+            totalBars =
+                Basics.max barCountRaw (maxDestBar + 1)
+
+            paddedChunks =
+                rawChunks ++ List.repeat (totalBars - barCountRaw) ""
+
+            barTokens b =
+                cellsList
+                    |> List.filter (\c -> c.barIndex == b)
+                    |> List.head
+                    |> Maybe.map (\c -> List.indexedMap Tuple.pair c.chords)
+                    |> Maybe.withDefault []
+
+            keptTokens b =
+                barTokens b
+                    |> List.filter (\( j, _ ) -> not (Set.member ( b, j ) selectedKeys))
+                    |> List.map (\( _, c ) -> c.token)
+
+            selectedTokensOf b =
+                barTokens b
+                    |> List.filterMap
+                        (\( j, _ ) ->
+                            if Set.member ( b, j ) selectedKeys then
+                                Dict.get ( b, j ) spanLookup |> Maybe.map (\txt -> ( j, txt ))
+
+                            else
+                                Nothing
+                        )
+
+            initFinal =
+                List.range 0 (totalBars - 1) |> List.map (\b -> ( b, keptTokens b )) |> Dict.fromList
+
+            ( finalTokensDict, keyMapList, touchedBars ) =
+                List.range 0 (barCountRaw - 1)
+                    |> List.foldl
+                        (\b ( finalAcc, mapAcc, touchedAcc ) ->
+                            let
+                                moving =
+                                    selectedTokensOf b
+                            in
+                            if List.isEmpty moving then
+                                ( finalAcc, mapAcc, touchedAcc )
+
+                            else
+                                let
+                                    destBar =
+                                        b + deltaBars
+
+                                    currentDestTokens =
+                                        Dict.get destBar finalAcc |> Maybe.withDefault []
+
+                                    baseIndex =
+                                        List.length currentDestTokens
+
+                                    appended =
+                                        List.indexedMap (\i ( srcIdx, txt ) -> ( srcIdx, txt, baseIndex + i )) moving
+
+                                    newTokens =
+                                        List.map (\( _, txt, _ ) -> txt) appended
+
+                                    newMapEntries =
+                                        List.map (\( srcIdx, _, newIdx ) -> ( ( b, srcIdx ), ( destBar, newIdx ) )) appended
+                                in
+                                ( Dict.insert destBar (currentDestTokens ++ newTokens) finalAcc
+                                , mapAcc ++ newMapEntries
+                                , touchedAcc |> Set.insert b |> Set.insert destBar
+                                )
+                        )
+                        ( initFinal, [], Set.empty )
+
+            newChunks =
+                List.range 0 (totalBars - 1)
+                    |> List.map
+                        (\b ->
+                            if Set.member b touchedBars then
+                                let
+                                    toks =
+                                        Dict.get b finalTokensDict |> Maybe.withDefault []
+                                in
+                                if List.isEmpty toks then
+                                    ""
+
+                                else
+                                    " " ++ String.join " " toks ++ " "
+
+                            else
+                                paddedChunks |> List.drop b |> List.head |> Maybe.withDefault ""
+                        )
+
+            newText =
+                String.join "|" newChunks
+
+            movedKeys =
+                keyMapList |> List.map Tuple.second |> Set.fromList
+        in
+        { track = { track | text = newText }, movedKeys = movedKeys }
+
+
+{-| 選択トークンを削除する。| の数（小節構造）は絶対に変えない。変更した小節だけ正規化再構成し、
+無変更の小節は生チャンク（コメント含む）を温存する。
+-}
+removeTokens : Timeline -> Set TokenKey -> ChordTrack -> ChordTrack
+removeTokens timeline selectedKeys track =
+    if Set.isEmpty selectedKeys then
+        track
+
+    else
+        let
+            cellsList =
+                cells timeline track
+
+            rawChunks =
+                String.split "|" track.text
+
+            barCountRaw =
+                List.length rawChunks
+
+            touchedBars =
+                selectedKeys |> Set.toList |> List.map Tuple.first |> Set.fromList
+
+            keptTokens b =
+                cellsList
+                    |> List.filter (\c -> c.barIndex == b)
+                    |> List.head
+                    |> Maybe.map
+                        (\c ->
+                            c.chords
+                                |> List.indexedMap Tuple.pair
+                                |> List.filter (\( j, _ ) -> not (Set.member ( b, j ) selectedKeys))
+                                |> List.map (\( _, tk ) -> tk.token)
+                        )
+                    |> Maybe.withDefault []
+
+            newChunks =
+                List.range 0 (barCountRaw - 1)
+                    |> List.map
+                        (\b ->
+                            if Set.member b touchedBars then
+                                let
+                                    toks =
+                                        keptTokens b
+                                in
+                                if List.isEmpty toks then
+                                    ""
+
+                                else
+                                    " " ++ String.join " " toks ++ " "
+
+                            else
+                                rawChunks |> List.drop b |> List.head |> Maybe.withDefault ""
+                        )
+        in
+        { track | text = String.join "|" newChunks }
 
 
 {-| コード進行テキストを丸ごと移調する。`%`・`_`・`=`・改行・空白・`|` はテキストの部分置換で

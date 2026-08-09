@@ -6,6 +6,7 @@ module Data.Project exposing
     , addTrack
     , addVoicing
     , demo
+    , empty
     , insertBars
     , mapAllNotes
     , mapNoteTrackNotes
@@ -18,6 +19,7 @@ module Data.Project exposing
     , removeSection
     , removeTrack
     , removeVoicing
+    , reorderSectionsWithContent
     , sectionBounds
     , timeline
     , updateChordTrack
@@ -168,6 +170,35 @@ demo =
     }
 
 
+{-| 新規プロジェクトの初期値。`demo` と違いトラックはノートなしの空 NoteTrack 1本、コードは空、
+セクション1つ（4小節）のみ。
+-}
+empty : Project
+empty =
+    { name = "新規プロジェクト"
+    , bpm = 120.0
+    , tracks =
+        [ { id = 1
+          , name = "トラック 1"
+          , instrument = Piano
+          , muted = False
+          , volume = 100
+          , kind = NoteTrack []
+          }
+        ]
+    , chordTrack = Data.ChordTrack.empty
+    , sections =
+        [ { id = 2, name = "セクション 1", lengthBars = 4, memo = "", key = Data.Key.default, meter = Data.Meter.default } ]
+    , scraps = []
+    , referenceAudio = Data.ReferenceAudio.empty
+    , nextId = 100
+    , memo = ""
+    , voicings = []
+    , voicingEnabled = True
+    , guitarFormEnabled = True
+    }
+
+
 updateChordTrack : (ChordTrack -> ChordTrack) -> Project -> Project
 updateChordTrack f project =
     { project | chordTrack = f project.chordTrack }
@@ -294,7 +325,7 @@ moveSection sectionId delta project =
                 project
 
             else
-                { project | sections = swap i j project.sections }
+                reorderSectionsWithContent (swap i j project.sections) project
 
         Nothing ->
             project
@@ -317,10 +348,129 @@ moveSectionToIndex sectionId targetIndex project =
     in
     case moving of
         Just s ->
-            { project | sections = List.take clampedIndex rest ++ s :: List.drop clampedIndex rest }
+            reorderSectionsWithContent (List.take clampedIndex rest ++ s :: List.drop clampedIndex rest) project
 
         Nothing ->
             project
+
+
+type alias SectionPlacement =
+    { startBar : Int, startTicks : Int, endTicks : Int }
+
+
+{-| 各セクションの開始小節・開始/終了 tick を、timeline を経由せず sections の fold で直接計算する。
+（timeline は minBars 余白を含むため、セクション自体の配置のみが欲しいここでは使わない）。拍子がセクションごとに違っても正しく累積する。
+-}
+sectionPlacements : List Section -> Dict.Dict Int SectionPlacement
+sectionPlacements sections =
+    sections
+        |> List.foldl
+            (\s ( accBar, accTicks, dict ) ->
+                let
+                    ticksLen =
+                        s.lengthBars * Data.Meter.ticksPerBar s.meter
+                in
+                ( accBar + s.lengthBars
+                , accTicks + ticksLen
+                , Dict.insert s.id { startBar = accBar, startTicks = accTicks, endTicks = accTicks + ticksLen } dict
+                )
+            )
+            ( 0, 0, Dict.empty )
+        |> (\( _, _, dict ) -> dict)
+
+
+{-| 末尾から、前後の空白しかないチャンクを削っていく。パディングで余分に伸びた | を残さないため。
+-}
+dropTrailingBlankChunks : List String -> List String
+dropTrailingBlankChunks chunks =
+    chunks |> List.reverse |> dropWhileBlank |> List.reverse
+
+
+dropWhileBlank : List String -> List String
+dropWhileBlank chunks =
+    case chunks of
+        first :: rest ->
+            if String.trim first == "" then
+                dropWhileBlank rest
+
+            else
+                chunks
+
+        [] ->
+            []
+
+
+{-| セクションの並べ替えを、各セクションに属するノート・コード小節ごと適用して行う。newSections は
+`project.sections` の並び替え（要素集合は同一）であること。どのセクションにも属さない余白領域（セクション
+合計を超えた部分）のノート・コードは動かさない。コメント内に | があるとチャンク境界がズレる
+（`transposeBars` と同じ既知の限界）。
+-}
+reorderSectionsWithContent : List Section -> Project -> Project
+reorderSectionsWithContent newSections project =
+    let
+        oldPlacements =
+            sectionPlacements project.sections
+
+        newPlacements =
+            sectionPlacements newSections
+
+        oldPlacementsList =
+            project.sections
+                |> List.filterMap (\s -> Dict.get s.id oldPlacements |> Maybe.map (\p -> ( s.id, p )))
+
+        findOldSection tick =
+            oldPlacementsList |> List.filter (\( _, p ) -> tick >= p.startTicks && tick < p.endTicks) |> List.head
+
+        shiftNote note =
+            case findOldSection note.start of
+                Just ( sid, oldP ) ->
+                    case Dict.get sid newPlacements of
+                        Just newP ->
+                            { note | start = note.start + (newP.startTicks - oldP.startTicks) }
+
+                        Nothing ->
+                            note
+
+                Nothing ->
+                    note
+
+        shiftedProject =
+            mapAllNotes (List.map shiftNote) project
+
+        totalBars =
+            List.foldl (\s acc -> acc + s.lengthBars) 0 project.sections
+
+        rawChunks =
+            splitChordBars project.chordTrack.text
+
+        paddedChunks =
+            rawChunks ++ List.repeat (Basics.max 0 (totalBars - List.length rawChunks)) ""
+
+        sectionChunks =
+            List.take totalBars paddedChunks
+
+        overflowChunks =
+            List.drop totalBars paddedChunks
+
+        chunkFor sid =
+            case Dict.get sid oldPlacements of
+                Just p ->
+                    List.take (Maybe.withDefault 0 (project.sections |> List.filter (\s -> s.id == sid) |> List.head |> Maybe.map .lengthBars))
+                        (List.drop p.startBar sectionChunks)
+
+                Nothing ->
+                    []
+
+        reorderedChunks =
+            newSections |> List.concatMap (\s -> chunkFor s.id)
+
+        newChordText =
+            joinChordBars (dropTrailingBlankChunks (reorderedChunks ++ overflowChunks))
+
+        ct =
+            shiftedProject.chordTrack
+    in
+    { shiftedProject | sections = newSections, chordTrack = { ct | text = newChordText } }
 
 
 swap : Int -> Int -> List a -> List a

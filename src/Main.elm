@@ -86,6 +86,20 @@ type alias RubberBand =
     }
 
 
+{-| コードトークンのドラッグ移動中の状態。origText/origKeys はドラッグ開始時のスナップショットで、
+moveTokens は毎 move でこのスナップショットから再計算する（累積誤差を防ぐため）。
+-}
+type alias ChordDrag =
+    { anchorKey : ( Int, Int )
+    , anchorStartTicks : Int
+    , startClientX : Float
+    , startClientY : Float
+    , origText : String
+    , origKeys : Set ( Int, Int )
+    , lastDeltaBars : Int
+    }
+
+
 type VoicingDragState
     = NoVoicingDrag
     | DraggingVoicingOffsets
@@ -143,11 +157,12 @@ type alias Model =
     , heldKeyPitches : Set Int
     , followPlayhead : Bool
     , loopRange : Maybe Performance.Loop
-    , loopDrag : Maybe { fixedTicks : Int, baseTicks : Int, startClientX : Float, curTicks : Int }
+    , loopDrag : Maybe LoopDrag
     , lastEditLabel : String
     , pendingSectionDelete : Maybe Int
     , pendingTrackDelete : Maybe Int
     , pendingScrapDelete : Maybe Int
+    , pendingNewProject : Bool
     , editingVoicingIndex : Maybe Int
     , pendingVoicingDelete : Maybe Int
     , chordCopyFeedback : Bool
@@ -160,11 +175,23 @@ type alias Model =
     , sectionResizeDrag : Maybe { sectionId : Int, startClientX : Float, origLengthBars : Int, curLengthBars : Int }
     , sectionMoveDrag : Maybe { sectionId : Int, lastClientX : Float, accumDx : Float, moved : Bool, wasSelected : Bool }
     , sectionBarZoom : Int
-    , sectionLoopDrag : Maybe { fixedTicks : Int, baseTicks : Int, startClientX : Float, curTicks : Int }
+    , sectionLoopDrag : Maybe LoopDrag
     , leftPaneWidth : Int
     , paneDividerDrag : Maybe { startClientX : Float, origWidth : Int }
     , chordProgressionModalOpen : Bool
+    , hoveredNote : Maybe { note : Data.Note.Note, x : Float, y : Float }
+    , selectedChordKeys : Set ( Int, Int )
+    , chordDrag : Maybe ChordDrag
+    , chordRubberBand : Maybe RubberBand
     }
+
+
+{-| ループ範囲ドラッグの進行状態。fixedTicks = 動かさない側の端、
+baseTicks = ドラッグ開始時点の可動側の端。ピアノロールのルーラーと
+セクションバーの両方で同じ形を使う。
+-}
+type alias LoopDrag =
+    { fixedTicks : Int, baseTicks : Int, startClientX : Float, curTicks : Int }
 
 
 type LoopMode
@@ -186,6 +213,8 @@ type Msg
     | GotAudio AudioEvent
     | PressedEmptyCell { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, seekMod : Bool }
     | PressedNote Int Bool { clientX : Float, clientY : Float, shift : Bool }
+    | PressedChordToken ( Int, Int ) { clientX : Float, clientY : Float, shift : Bool }
+    | PressedChordLane { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, seekMod : Bool }
     | DoubleClickedNote Int
     | RightClickedNote Int
     | DraggedTo ClientPos
@@ -200,6 +229,7 @@ type Msg
     | ToggledMute Int
     | ChangedInstrument Int String
     | ChangedVolume Int String
+    | ClickedNewProject
     | ClickedExport
     | ClickedImport
     | GotImportFile File.File
@@ -250,6 +280,8 @@ type Msg
     | ToggledDrumView
     | ToggledChordBlockView
     | ToggledChordMidiPreview
+    | HoveredNote Data.Note.Note Float Float
+    | UnhoveredNote
     | ChangedMemo String
     | ChangedSectionKey Int String
     | ChangedSectionMode Int String
@@ -326,6 +358,7 @@ init flags =
       , pendingSectionDelete = Nothing
       , pendingTrackDelete = Nothing
       , pendingScrapDelete = Nothing
+      , pendingNewProject = False
       , editingVoicingIndex = Nothing
       , pendingVoicingDelete = Nothing
       , chordCopyFeedback = False
@@ -342,6 +375,10 @@ init flags =
       , leftPaneWidth = 380
       , paneDividerDrag = Nothing
       , chordProgressionModalOpen = False
+      , hoveredNote = Nothing
+      , selectedChordKeys = Set.empty
+      , chordDrag = Nothing
+      , chordRubberBand = Nothing
       }
     , Cmd.none
     )
@@ -651,6 +688,9 @@ maxUndoSteps =
 describeMsg : Msg -> String
 describeMsg msg =
     case msg of
+        ClickedNewProject ->
+            "新規プロジェクト"
+
         ClickedRemoveSection _ ->
             "セクション削除"
 
@@ -675,6 +715,119 @@ describeMsg msg =
         _ ->
             "編集"
 
+
+
+{-| ドラッグ中のトークンをアンカーの横移動量から小節差に換算して moveTokens を呼ぶ。毎 move で origText/origKeys
+（ドラッグ開始時のスナップショット）から再計算するので累積誤差は出ない。deltaBars が前回と同じなら何もしない。
+-}
+chordDragMove : ClientPos -> ChordDrag -> Model -> ( Model, Cmd Msg )
+chordDragMove pos cd model =
+    let
+        timeline =
+            Data.Project.timeline model.project
+
+        dxTicks =
+            PianoRoll.pixelsToTicks model.pianoRollZoom (pos.clientX - cd.startClientX)
+
+        targetBar =
+            (Data.Timeline.ticksToBarBeat (Basics.max 0 (cd.anchorStartTicks + dxTicks)) timeline).bar - 1
+
+        deltaBars =
+            targetBar - Tuple.first cd.anchorKey
+    in
+    if deltaBars == cd.lastDeltaBars then
+        ( model, Cmd.none )
+
+    else
+        let
+            origTrack =
+                model.project.chordTrack
+
+            moveResult =
+                Data.ChordTrack.moveTokens timeline deltaBars cd.origKeys { origTrack | text = cd.origText }
+        in
+        ( { model
+            | project = Data.Project.updateChordTrack (\ct -> { ct | text = moveResult.track.text }) model.project
+            , selectedChordKeys = moveResult.movedKeys
+            , chordDrag = Just { cd | lastDeltaBars = deltaBars }
+          }
+        , Cmd.none
+        )
+
+
+{-| ノートの矩形選択・ドラッグ移動の mousemove 処理。DraggedTo カスケードの末端（他のドラッグ状態がすべて Nothing）で呼ばれる。
+-}
+draggedToNoteOrRubberBand : ClientPos -> Model -> ( Model, Cmd Msg )
+draggedToNoteOrRubberBand pos model =
+    case model.rubberBand of
+        Just rb ->
+            ( { model
+                | rubberBand =
+                    Just
+                        { rb
+                            | curX = rb.originX + (pos.clientX - rb.startClientX)
+                            , curY = rb.originY + (pos.clientY - rb.startClientY)
+                        }
+              }
+            , Cmd.none
+            )
+
+        Nothing ->
+            case model.dragState of
+                Dragging d ->
+                    dragMove pos d model
+
+                NoDrag ->
+                    ( model, Cmd.none )
+
+
+{-| ノートの矩形選択・ドラッグ移動の mouseup 処理。ReleasedDrag カスケードの末端で呼ばれる。
+-}
+releasedDragNoteOrRubberBand : Model -> ( Model, Cmd Msg )
+releasedDragNoteOrRubberBand model =
+    case model.rubberBand of
+        Just rb ->
+            let
+                x0 =
+                    Basics.min rb.originX rb.curX
+
+                x1 =
+                    Basics.max rb.originX rb.curX
+
+                y0 =
+                    Basics.min rb.originY rb.curY
+
+                y1 =
+                    Basics.max rb.originY rb.curY
+
+                t0 =
+                    PianoRoll.pixelsToTicks model.pianoRollZoom x0
+
+                t1 =
+                    PianoRoll.pixelsToTicks model.pianoRollZoom x1
+
+                pLow =
+                    PianoRoll.yToPitch y1
+
+                pHigh =
+                    PianoRoll.yToPitch y0
+
+                sel =
+                    trackNotes model
+                        |> List.filter
+                            (\n ->
+                                (n.start < t1)
+                                    && (n.start + n.duration > t0)
+                                    && (n.pitch >= pLow)
+                                    && (n.pitch <= pHigh)
+                            )
+                        |> List.map .id
+                        |> Set.fromList
+            in
+            ( { model | rubberBand = Nothing, dragState = NoDrag, selectedNoteIds = sel }, Cmd.none )
+
+        Nothing ->
+            ( { model | dragState = NoDrag }, Cmd.none )
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
@@ -709,7 +862,7 @@ update msg model =
                 { coreModel | editBurst = False }
 
         stillDragging =
-            newModel.dragState /= NoDrag
+            newModel.dragState /= NoDrag || newModel.chordDrag /= Nothing || newModel.chordRubberBand /= Nothing
 
         saveCmds =
             if projectChanged then
@@ -786,33 +939,12 @@ sectionStartBar sectionId project =
 
 
 {-| セクションの小節数を newLenRaw（1..64 にクランプ）に変える。小節数入力（`ChangedSectionBars`）と
-リサイズハンドルのドラッグリリース両方から共通で呼ばれる。
+リサイズハンドルのドラッグリリース両方から共通で呼ばれる。lengthBars を変えるだけで、ノート・コードは
+絶対位置に留まる（追従しない）。
 -}
 resizeSectionBars : Int -> Int -> Model -> Model
 resizeSectionBars sectionId newLenRaw model =
-    let
-        newLen =
-            clamp 1 64 newLenRaw
-
-        oldLen =
-            model.project.sections
-                |> List.filter (\s -> s.id == sectionId)
-                |> List.head
-                |> Maybe.map .lengthBars
-    in
-    case ( sectionStartBar sectionId model.project, oldLen ) of
-        ( Just startBar, Just old ) ->
-            if newLen > old then
-                { model | project = Data.Project.insertBars { beforeBar = startBar + old - 1, count = newLen - old } model.project }
-
-            else if newLen < old then
-                { model | project = Data.Project.removeBars { fromBar = startBar + newLen, count = old - newLen } model.project }
-
-            else
-                model
-
-        _ ->
-            { model | project = Data.Project.updateSection sectionId (\s -> { s | lengthBars = newLen }) model.project }
+    { model | project = Data.Project.updateSection sectionId (\s -> { s | lengthBars = clamp 1 64 newLenRaw }) model.project }
 
 
 parseInsertCount : String -> Int
@@ -909,6 +1041,96 @@ currentLoop model =
 
         LoopRange ->
             model.loopRange
+
+
+{-| ループ端ハンドルのドラッグ開始状態。isEnd なら終端側を動かし始端を固定、そうでなければ逆。
+ピアノロールのルーラーとセクションバーの両方の PressedLoopHandle 系ハンドラーが共有する。
+-}
+loopHandleDrag : Bool -> Float -> Performance.Loop -> LoopDrag
+loopHandleDrag isEnd clientX loop =
+    let
+        ( fixedTicks, baseTicks ) =
+            if isEnd then
+                ( loop.startTicks, loop.endTicks )
+
+            else
+                ( loop.endTicks, loop.startTicks )
+    in
+    { fixedTicks = fixedTicks, baseTicks = baseTicks, startClientX = clientX, curTicks = baseTicks }
+
+
+{-| ループ範囲の表示値。ドラッグ中はその暫定範囲（fixed/cur を正順に並べたもの）を、そうでなければ
+確定済みの `currentLoop` を返す。ピアノロール・セクションバーの view で共通使用。
+-}
+displayedLoop : Maybe LoopDrag -> Model -> Maybe Performance.Loop
+displayedLoop drag model =
+    case drag of
+        Just ld ->
+            Just { startTicks = Basics.min ld.fixedTicks ld.curTicks, endTicks = Basics.max ld.fixedTicks ld.curTicks }
+
+        Nothing ->
+            currentLoop model
+
+
+{-| アンカー保存ズーム後のスクロール位置補正コマンド。
+oldPxToTicks は旧ズームでの px→ticks、newTicksToPx は新ズームでの ticks→px。
+ピアノロール・セクションバーの GotXxxViewportForZoom ハンドラーが共通使用。
+-}
+zoomScrollCmd :
+    { scrollId : String
+    , offsetX : Float
+    , viewportX : Float
+    , oldPxToTicks : Float -> Int
+    , newTicksToPx : Int -> Float
+    }
+    -> Cmd Msg
+zoomScrollCmd cfg =
+    let
+        anchorTicks =
+            cfg.oldPxToTicks (cfg.viewportX + cfg.offsetX)
+
+        newScrollLeft =
+            Basics.max 0 (cfg.newTicksToPx anchorTicks - cfg.offsetX)
+    in
+    Task.attempt (\_ -> NoOp) (Browser.Dom.setViewportOf cfg.scrollId newScrollLeft 0)
+
+
+{-| 削除ボタンの2度押し確認。pending が今回の id と一致していれば confirm（実削除）を、
+そうでなければ arm（アーム状態にするだけ）を返す。
+-}
+confirmTwice : { pending : Maybe id, id : id, arm : ( Model, Cmd Msg ), confirm : ( Model, Cmd Msg ) } -> ( Model, Cmd Msg )
+confirmTwice cfg =
+    if cfg.pending == Just cfg.id then
+        cfg.confirm
+
+    else
+        cfg.arm
+
+
+{-| プロジェクトを丸ごと差し替える（新規作成・JSON読込共通）。選択・ループ範囲・ドラッグ中の pending 系を全てリセットし、再生を止める。
+-}
+resetToProject : Data.Project.Project -> Model -> ( Model, Cmd Msg )
+resetToProject project model =
+    ( { model
+        | project = project
+        , selectedTrackId = firstTrackId project
+        , playState = Idle
+        , playheadTicks = 0
+        , bpmInput = String.fromFloat project.bpm
+        , selectedNoteIds = Set.empty
+        , selectedSectionId = Nothing
+        , loopRange = Nothing
+        , refOffsetInput = String.fromInt project.referenceAudio.offsetMs
+        , refLoaded = False
+        , refPeaks = Array.empty
+        , pendingNewProject = False
+        , hoveredNote = Nothing
+        , selectedChordKeys = Set.empty
+        , chordDrag = Nothing
+        , chordRubberBand = Nothing
+      }
+    , Ports.toAudio Performance.encodeStop
+    )
 
 
 {-| ▶ と Space の共通入口。現在のループモードに従って再生する。
@@ -1523,6 +1745,74 @@ updateCore msg model =
                 Nothing ->
                     ( model, Cmd.none )
 
+        PressedChordToken key pos ->
+            if pos.shift then
+                ( { model
+                    | selectedChordKeys =
+                        if Set.member key model.selectedChordKeys then
+                            Set.remove key model.selectedChordKeys
+
+                        else
+                            Set.insert key model.selectedChordKeys
+                  }
+                , Cmd.none
+                )
+
+            else
+                let
+                    sel =
+                        if Set.member key model.selectedChordKeys then
+                            model.selectedChordKeys
+
+                        else
+                            Set.singleton key
+
+                    timeline =
+                        Data.Project.timeline model.project
+
+                    anchorStartTicks =
+                        Data.ChordTrack.tokenSpans timeline model.project.chordTrack
+                            |> List.filter (\s -> s.key == key)
+                            |> List.head
+                            |> Maybe.map .startTicks
+                            |> Maybe.withDefault 0
+                in
+                ( { model
+                    | selectedChordKeys = sel
+                    , chordDrag =
+                        Just
+                            { anchorKey = key
+                            , anchorStartTicks = anchorStartTicks
+                            , startClientX = pos.clientX
+                            , startClientY = pos.clientY
+                            , origText = model.project.chordTrack.text
+                            , origKeys = sel
+                            , lastDeltaBars = 0
+                            }
+                  }
+                , Cmd.none
+                )
+
+        PressedChordLane pos ->
+            if pos.seekMod then
+                seekTo (snapFloor (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX)) model
+
+            else
+                ( { model
+                    | chordRubberBand =
+                        Just
+                            { originX = pos.offsetX
+                            , originY = 0
+                            , startClientX = pos.clientX
+                            , startClientY = pos.clientY
+                            , curX = pos.offsetX
+                            , curY = 0
+                            }
+                    , selectedChordKeys = Set.empty
+                  }
+                , Cmd.none
+                )
+
         DoubleClickedNote noteId ->
             ( { model
                 | project = Data.Project.removeNote model.selectedTrackId noteId model.project
@@ -1641,26 +1931,17 @@ updateCore msg model =
                                                                     )
                         
                                                                 Nothing ->
-                                                                    case model.rubberBand of
-                                                                        Just rb ->
-                                                                            ( { model
-                                                                                | rubberBand =
-                                                                                    Just
-                                                                                        { rb
-                                                                                            | curX = rb.originX + (pos.clientX - rb.startClientX)
-                                                                                            , curY = rb.originY + (pos.clientY - rb.startClientY)
-                                                                                        }
-                                                                              }
-                                                                            , Cmd.none
-                                                                            )
-                        
+                                                                    case model.chordDrag of
+                                                                        Just cd ->
+                                                                            chordDragMove pos cd model
+
                                                                         Nothing ->
-                                                                            case model.dragState of
-                                                                                Dragging d ->
-                                                                                    dragMove pos d model
-                        
-                                                                                NoDrag ->
-                                                                                    ( model, Cmd.none )
+                                                                            case model.chordRubberBand of
+                                                                                Just crb ->
+                                                                                    ( { model | chordRubberBand = Just { crb | curX = crb.originX + (pos.clientX - crb.startClientX) } }, Cmd.none )
+
+                                                                                Nothing ->
+                                                                                    draggedToNoteOrRubberBand pos model
 
         ReleasedDrag ->
             case model.paneDividerDrag of
@@ -1698,49 +1979,36 @@ updateCore msg model =
                                                     ( { committedModel | loopDrag = Nothing }, cmd )
         
                                                 Nothing ->
-                                                    case model.rubberBand of
-                                                        Just rb ->
-                                                            let
-                                                                x0 =
-                                                                    Basics.min rb.originX rb.curX
-        
-                                                                x1 =
-                                                                    Basics.max rb.originX rb.curX
-        
-                                                                y0 =
-                                                                    Basics.min rb.originY rb.curY
-        
-                                                                y1 =
-                                                                    Basics.max rb.originY rb.curY
-        
-                                                                t0 =
-                                                                    PianoRoll.pixelsToTicks model.pianoRollZoom x0
-        
-                                                                t1 =
-                                                                    PianoRoll.pixelsToTicks model.pianoRollZoom x1
-        
-                                                                pLow =
-                                                                    PianoRoll.yToPitch y1
-        
-                                                                pHigh =
-                                                                    PianoRoll.yToPitch y0
-        
-                                                                sel =
-                                                                    trackNotes model
-                                                                        |> List.filter
-                                                                            (\n ->
-                                                                                (n.start < t1)
-                                                                                    && (n.start + n.duration > t0)
-                                                                                    && (n.pitch >= pLow)
-                                                                                    && (n.pitch <= pHigh)
-                                                                            )
-                                                                        |> List.map .id
-                                                                        |> Set.fromList
-                                                            in
-                                                            ( { model | rubberBand = Nothing, dragState = NoDrag, selectedNoteIds = sel }, Cmd.none )
-        
+                                                    case model.chordDrag of
+                                                        Just _ ->
+                                                            ( { model | chordDrag = Nothing }, Cmd.none )
+
                                                         Nothing ->
-                                                            ( { model | dragState = NoDrag }, Cmd.none )
+                                                            case model.chordRubberBand of
+                                                                Just crb ->
+                                                                    let
+                                                                        x0 =
+                                                                            Basics.min crb.originX crb.curX
+
+                                                                        x1 =
+                                                                            Basics.max crb.originX crb.curX
+
+                                                                        t0 =
+                                                                            PianoRoll.pixelsToTicks model.pianoRollZoom x0
+
+                                                                        t1 =
+                                                                            PianoRoll.pixelsToTicks model.pianoRollZoom x1
+
+                                                                        timeline =
+                                                                            Data.Project.timeline model.project
+
+                                                                        sel =
+                                                                            Data.ChordTrack.tokenKeysInTickRange timeline t0 t1 model.project.chordTrack
+                                                                    in
+                                                                    ( { model | chordRubberBand = Nothing, selectedChordKeys = sel }, Cmd.none )
+
+                                                                Nothing ->
+                                                                    releasedDragNoteOrRubberBand model
 
         PressedRuler pos ->
             if pos.shift then
@@ -1756,15 +2024,7 @@ updateCore msg model =
         PressedLoopHandle isEnd clientX ->
             case model.loopRange of
                 Just loop ->
-                    let
-                        ( fixedTicks, baseTicks ) =
-                            if isEnd then
-                                ( loop.startTicks, loop.endTicks )
-
-                            else
-                                ( loop.endTicks, loop.startTicks )
-                    in
-                    ( { model | loopDrag = Just { fixedTicks = fixedTicks, baseTicks = baseTicks, startClientX = clientX, curTicks = baseTicks } }, Cmd.none )
+                    ( { model | loopDrag = Just (loopHandleDrag isEnd clientX loop) }, Cmd.none )
 
                 Nothing ->
                     ( model, Cmd.none )
@@ -1790,15 +2050,7 @@ updateCore msg model =
         PressedSectionLoopHandle isEnd clientX ->
             case model.loopRange of
                 Just loop ->
-                    let
-                        ( fixedTicks, baseTicks ) =
-                            if isEnd then
-                                ( loop.startTicks, loop.endTicks )
-
-                            else
-                                ( loop.endTicks, loop.startTicks )
-                    in
-                    ( { model | sectionLoopDrag = Just { fixedTicks = fixedTicks, baseTicks = baseTicks, startClientX = clientX, curTicks = baseTicks } }, Cmd.none )
+                    ( { model | sectionLoopDrag = Just (loopHandleDrag isEnd clientX loop) }, Cmd.none )
 
                 Nothing ->
                     ( model, Cmd.none )
@@ -1951,33 +2203,69 @@ updateCore msg model =
                 ( pasteClipboard model, Cmd.none )
 
             else if (k.ctrl || k.meta) && k.shift && (k.key == "a" || k.key == "A") then
-                case model.selectedSectionId |> Maybe.andThen (\sid -> Data.Project.sectionBounds sid model.project) of
-                    Just bounds ->
-                        ( { model
-                            | selectedNoteIds =
-                                trackNotes model
-                                    |> List.filter (\n -> n.start >= bounds.startTicks && n.start < bounds.endTicks)
-                                    |> List.map .id
-                                    |> Set.fromList
-                          }
-                        , Cmd.none
-                        )
+                if model.selectedTrackId == Data.ChordTrack.trackId then
+                    case model.selectedSectionId |> Maybe.andThen (\sid -> Data.Project.sectionBounds sid model.project) of
+                        Just bounds ->
+                            let
+                                timeline =
+                                    Data.Project.timeline model.project
+                            in
+                            ( { model | selectedChordKeys = Data.ChordTrack.tokenKeysInTickRange timeline bounds.startTicks bounds.endTicks model.project.chordTrack }, Cmd.none )
 
-                    Nothing ->
-                        ( model, Cmd.none )
+                        Nothing ->
+                            ( model, Cmd.none )
+
+                else
+                    case model.selectedSectionId |> Maybe.andThen (\sid -> Data.Project.sectionBounds sid model.project) of
+                        Just bounds ->
+                            ( { model
+                                | selectedNoteIds =
+                                    trackNotes model
+                                        |> List.filter (\n -> n.start >= bounds.startTicks && n.start < bounds.endTicks)
+                                        |> List.map .id
+                                        |> Set.fromList
+                              }
+                            , Cmd.none
+                            )
+
+                        Nothing ->
+                            ( model, Cmd.none )
 
             else if (k.ctrl || k.meta) && (k.key == "a" || k.key == "A") then
-                ( { model | selectedNoteIds = Set.fromList (List.map .id (trackNotes model)) }, Cmd.none )
+                if model.selectedTrackId == Data.ChordTrack.trackId then
+                    let
+                        timeline =
+                            Data.Project.timeline model.project
+                    in
+                    ( { model | selectedChordKeys = Data.ChordTrack.tokenSpans timeline model.project.chordTrack |> List.map .key |> Set.fromList }, Cmd.none )
+
+                else
+                    ( { model | selectedNoteIds = Set.fromList (List.map .id (trackNotes model)) }, Cmd.none )
 
             else if k.key == "Delete" || k.key == "Backspace" then
-                ( deleteSelection model, Cmd.none )
+                if model.selectedTrackId == Data.ChordTrack.trackId then
+                    let
+                        timeline =
+                            Data.Project.timeline model.project
+                    in
+                    ( { model
+                        | project = Data.Project.updateChordTrack (Data.ChordTrack.removeTokens timeline model.selectedChordKeys) model.project
+                        , selectedChordKeys = Set.empty
+                      }
+                    , Cmd.none
+                    )
+
+                else
+                    ( deleteSelection model, Cmd.none )
 
             else if k.key == "Escape" then
                 ( { model
                     | selectedNoteIds = Set.empty
+                    , selectedChordKeys = Set.empty
                     , pendingSectionDelete = Nothing
                     , pendingTrackDelete = Nothing
                     , pendingScrapDelete = Nothing
+                    , pendingNewProject = False
                   }
                 , Cmd.none
                 )
@@ -2063,7 +2351,7 @@ updateCore msg model =
                     ( model, Cmd.none )
 
         SelectedTrack trackId ->
-            ( { model | selectedTrackId = trackId, selectedNoteIds = Set.empty, pendingTrackDelete = Nothing }, Cmd.none )
+            ( { model | selectedTrackId = trackId, selectedNoteIds = Set.empty, selectedChordKeys = Set.empty, pendingTrackDelete = Nothing }, Cmd.none )
 
         ClickedAddTrack ->
             let
@@ -2079,32 +2367,34 @@ updateCore msg model =
             )
 
         ClickedRemoveTrack trackId ->
-            if model.pendingTrackDelete == Just trackId then
-                let
-                    newProject =
-                        Data.Project.removeTrack trackId model.project
+            confirmTwice
+                { pending = model.pendingTrackDelete
+                , id = trackId
+                , arm = ( { model | pendingTrackDelete = Just trackId }, Cmd.none )
+                , confirm =
+                    let
+                        newProject =
+                            Data.Project.removeTrack trackId model.project
 
-                    newSelected =
-                        if model.selectedTrackId == trackId then
-                            newProject.tracks
-                                |> List.head
-                                |> Maybe.map .id
-                                |> Maybe.withDefault 0
+                        newSelected =
+                            if model.selectedTrackId == trackId then
+                                newProject.tracks
+                                    |> List.head
+                                    |> Maybe.map .id
+                                    |> Maybe.withDefault 0
 
-                        else
-                            model.selectedTrackId
-                in
-                ( { model
-                    | project = newProject
-                    , selectedTrackId = newSelected
-                    , selectedNoteIds = Set.empty
-                    , pendingTrackDelete = Nothing
-                  }
-                , Cmd.none
-                )
-
-            else
-                ( { model | pendingTrackDelete = Just trackId }, Cmd.none )
+                            else
+                                model.selectedTrackId
+                    in
+                    ( { model
+                        | project = newProject
+                        , selectedTrackId = newSelected
+                        , selectedNoteIds = Set.empty
+                        , pendingTrackDelete = Nothing
+                      }
+                    , Cmd.none
+                    )
+                }
 
         ToggledMute trackId ->
             let
@@ -2166,22 +2456,21 @@ updateCore msg model =
         GotImportContent content ->
             case Decode.decodeString ProjectJson.decoder content of
                 Ok project ->
-                    ( { model
-                        | project = project
-                        , selectedTrackId = firstTrackId project
-                        , playState = Idle
-                        , playheadTicks = 0
-                        , bpmInput = String.fromFloat project.bpm
-                        , selectedNoteIds = Set.empty
-                      }
-                    , Ports.toAudio Performance.encodeStop
-                    )
+                    resetToProject project model
 
                 Err _ ->
                     ( model, Cmd.none )
 
+        ClickedNewProject ->
+            confirmTwice
+                { pending = if model.pendingNewProject then Just () else Nothing
+                , id = ()
+                , arm = ( { model | pendingNewProject = True }, Cmd.none )
+                , confirm = resetToProject Data.Project.empty model
+                }
+
         ChangedChordText textValue ->
-            ( { model | project = Data.Project.updateChordTrack (\ct -> { ct | text = textValue }) model.project }
+            ( { model | project = Data.Project.updateChordTrack (\ct -> { ct | text = textValue }) model.project, selectedChordKeys = Set.empty }
             , Cmd.none
             )
 
@@ -2509,19 +2798,21 @@ updateCore msg model =
                     ( model, Cmd.none )
 
         ClickedRemoveVoicing index ->
-            if model.pendingVoicingDelete == Just index then
-                ( { model
-                    | project = Data.Project.removeVoicing index model.project
-                    , pendingVoicingDelete = Nothing
-                    , editingVoicingIndex = Nothing
-                    , voicingSelectedOffsets = Set.empty
-                    , voicingDragState = NoVoicingDrag
-                  }
-                , Cmd.none
-                )
-
-            else
-                ( { model | pendingVoicingDelete = Just index }, Cmd.none )
+            confirmTwice
+                { pending = model.pendingVoicingDelete
+                , id = index
+                , arm = ( { model | pendingVoicingDelete = Just index }, Cmd.none )
+                , confirm =
+                    ( { model
+                        | project = Data.Project.removeVoicing index model.project
+                        , pendingVoicingDelete = Nothing
+                        , editingVoicingIndex = Nothing
+                        , voicingSelectedOffsets = Set.empty
+                        , voicingDragState = NoVoicingDrag
+                      }
+                    , Cmd.none
+                    )
+                }
 
         ClickedCopyChordText ->
             ( { model | chordCopyFeedback = True }
@@ -2543,7 +2834,7 @@ updateCore msg model =
                     Data.ChordTrack.resolved (Data.Project.timeline project) project.chordTrack
                         |> List.concatMap
                             (\ev ->
-                                Data.Chord.toPitchesWith (effectiveVoicings model) ev.chord
+                                Data.StrumExpand.soundingPitches project.guitarFormEnabled (effectiveVoicings model) ev.chord
                                     |> List.map (\p -> ( ev.startTicks, ev.durationTicks, p ))
                             )
 
@@ -2598,22 +2889,24 @@ updateCore msg model =
             ( { model | project = Data.Project.addSection model.project }, Cmd.none )
 
         ClickedRemoveSection sectionId ->
-            if model.pendingSectionDelete == Just sectionId then
-                ( { model
-                    | project = Data.Project.removeSection sectionId model.project
-                    , selectedSectionId =
-                        if model.selectedSectionId == Just sectionId then
-                            Nothing
+            confirmTwice
+                { pending = model.pendingSectionDelete
+                , id = sectionId
+                , arm = ( { model | pendingSectionDelete = Just sectionId }, Cmd.none )
+                , confirm =
+                    ( { model
+                        | project = Data.Project.removeSection sectionId model.project
+                        , selectedSectionId =
+                            if model.selectedSectionId == Just sectionId then
+                                Nothing
 
-                        else
-                            model.selectedSectionId
-                    , pendingSectionDelete = Nothing
-                  }
-                , Cmd.none
-                )
-
-            else
-                ( { model | pendingSectionDelete = Just sectionId }, Cmd.none )
+                            else
+                                model.selectedSectionId
+                        , pendingSectionDelete = Nothing
+                      }
+                    , Cmd.none
+                    )
+                }
 
         ChangedSectionName sectionId newName ->
             ( { model | project = Data.Project.updateSection sectionId (\s -> { s | name = newName }) model.project }
@@ -2832,11 +3125,12 @@ updateCore msg model =
                     )
 
         ClickedRemoveScrap scrapId ->
-            if model.pendingScrapDelete == Just scrapId then
-                ( { model | project = Data.Project.removeScrap scrapId model.project, pendingScrapDelete = Nothing }, Cmd.none )
-
-            else
-                ( { model | pendingScrapDelete = Just scrapId }, Cmd.none )
+            confirmTwice
+                { pending = model.pendingScrapDelete
+                , id = scrapId
+                , arm = ( { model | pendingScrapDelete = Just scrapId }, Cmd.none )
+                , confirm = ( { model | project = Data.Project.removeScrap scrapId model.project, pendingScrapDelete = Nothing }, Cmd.none )
+                }
 
         ChangedScrapName scrapId newName ->
             ( { model | project = Data.Project.updateScrap scrapId (\s -> { s | name = newName }) model.project, pendingScrapDelete = Nothing }, Cmd.none )
@@ -2905,6 +3199,12 @@ updateCore msg model =
 
         ToggledChordMidiPreview ->
             ( { model | chordMidiPreview = not model.chordMidiPreview }, Cmd.none )
+
+        HoveredNote note x y ->
+            ( { model | hoveredNote = Just { note = note, x = x, y = y } }, Cmd.none )
+
+        UnhoveredNote ->
+            ( { model | hoveredNote = Nothing }, Cmd.none )
 
         TransposedSong delta ->
             let
@@ -3060,23 +3360,17 @@ updateCore msg model =
             case result of
                 Ok viewport ->
                     let
-                        anchorPx =
-                            viewport.viewport.x + w.offsetX
-
-                        anchorTicks =
-                            PianoRoll.pixelsToTicks model.pianoRollZoom anchorPx
-
                         newZoom =
                             PianoRoll.zoomStep w.deltaY model.pianoRollZoom
-
-                        newAnchorPx =
-                            PianoRoll.ticksToPixels newZoom anchorTicks
-
-                        newScrollLeft =
-                            Basics.max 0 (newAnchorPx - w.offsetX)
                     in
                     ( { model | pianoRollZoom = newZoom }
-                    , Task.attempt (\_ -> NoOp) (Browser.Dom.setViewportOf PianoRoll.pianoRollScrollId newScrollLeft 0)
+                    , zoomScrollCmd
+                        { scrollId = PianoRoll.pianoRollScrollId
+                        , offsetX = w.offsetX
+                        , viewportX = viewport.viewport.x
+                        , oldPxToTicks = PianoRoll.pixelsToTicks model.pianoRollZoom
+                        , newTicksToPx = PianoRoll.ticksToPixels newZoom
+                        }
                     )
 
                 Err _ ->
@@ -3093,29 +3387,17 @@ updateCore msg model =
             case result of
                 Ok viewport ->
                     let
-                        anchorPx =
-                            viewport.viewport.x + w.offsetX
-
-                        anchorFractionalBar =
-                            anchorPx / toFloat model.sectionBarZoom
-
-                        anchorTicks =
-                            Data.Timeline.fractionalBarToTicks anchorFractionalBar timeline
-
                         newZoom =
                             SectionBar.regionZoomStep w.deltaY model.sectionBarZoom
-
-                        newAnchorFractionalBar =
-                            Data.Timeline.ticksToFractionalBar anchorTicks timeline
-
-                        newAnchorPx =
-                            newAnchorFractionalBar * toFloat newZoom
-
-                        newScrollLeft =
-                            Basics.max 0 (newAnchorPx - w.offsetX)
                     in
                     ( { model | sectionBarZoom = newZoom }
-                    , Task.attempt (\_ -> NoOp) (Browser.Dom.setViewportOf SectionBar.sectionBarScrollId newScrollLeft 0)
+                    , zoomScrollCmd
+                        { scrollId = SectionBar.sectionBarScrollId
+                        , offsetX = w.offsetX
+                        , viewportX = viewport.viewport.x
+                        , oldPxToTicks = \px -> Data.Timeline.fractionalBarToTicks (px / toFloat model.sectionBarZoom) timeline
+                        , newTicksToPx = \ticks -> Data.Timeline.ticksToFractionalBar ticks timeline * toFloat newZoom
+                        }
                     )
 
                 Err _ ->
@@ -3359,7 +3641,21 @@ view model =
                     ]
                 , Style.divider
                 , div groupStyle
-                    [ button (Style.baseButton ++ [ onClick ClickedExport ]) [ text "JSON書出" ]
+                    [ button
+                        (Style.baseButton
+                            ++ [ onClick ClickedNewProject
+                               , Html.Attributes.title "現在の内容を破棄して新規作成（もう一度押すと確定。Ctrl/Cmd+Zで戻せます）"
+                               ]
+                        )
+                        [ text
+                            (if model.pendingNewProject then
+                                "⚠ もう一度押すと新規作成"
+
+                             else
+                                "新規"
+                            )
+                        ]
+                    , button (Style.baseButton ++ [ onClick ClickedExport ]) [ text "JSON書出" ]
                     , button (Style.baseButton ++ [ onClick ClickedImport ]) [ text "JSON読込" ]
                     , button (Style.baseButton ++ [ onClick ClickedExportMidi ]) [ text "MIDI書出" ]
                     ]
@@ -3392,13 +3688,7 @@ view model =
                 }
                 { pxPerBar = model.sectionBarZoom
                 , loopEditable = model.loopMode == LoopRange
-                , loop =
-                    case model.sectionLoopDrag of
-                        Just ld ->
-                            Just { startTicks = Basics.min ld.fixedTicks ld.curTicks, endTicks = Basics.max ld.fixedTicks ld.curTicks }
-
-                        Nothing ->
-                            currentLoop model
+                , loop = displayedLoop model.sectionLoopDrag model
                 , playheadTicks = model.playheadTicks
                 , ticksToPx = \ticks -> Data.Timeline.ticksToFractionalBar ticks timeline * toFloat model.sectionBarZoom
                 }
@@ -3532,6 +3822,8 @@ view model =
                         , pressedKey = PressedPianoKey
                         , wheelZoomedRuler = WheelZoomedRuler
                         , clickedChord = ClickedChordAt
+                        , hoveredNote = HoveredNote
+                        , unhoveredNote = UnhoveredNote
                         }
 
                     pianoRollOpts =
@@ -3552,13 +3844,7 @@ view model =
                                     )
                         , highlightedPitch = Set.union model.highlightedPitches model.heldKeyPitches
                         , scalePitchClasses = Data.Key.scalePitchClasses (Data.Timeline.keyAt (scaleReferenceTicks model) timeline)
-                        , loop =
-                            case model.loopDrag of
-                                Just ld ->
-                                    Just { startTicks = Basics.min ld.fixedTicks ld.curTicks, endTicks = Basics.max ld.fixedTicks ld.curTicks }
-
-                                Nothing ->
-                                    currentLoop model
+                        , loop = displayedLoop model.loopDrag model
                         , loopEditable = model.loopMode == LoopRange
                         , waveform =
                             if Array.isEmpty model.refPeaks then
@@ -3653,11 +3939,21 @@ view model =
                                 PianoRoll.chordTrackView pianoRollConfig
                                     pianoRollOpts
                                     (if model.chordMidiPreview then
-                                        Just (Data.ChordTrack.previewNotes (effectiveVoicings model) timeline model.project.chordTrack)
+                                        Just (Data.StrumExpand.previewNotes model.project.guitarFormEnabled (effectiveVoicings model) timeline model.project.chordTrack)
 
                                      else
                                         Nothing
                                     )
+                                    { config =
+                                        { pressedToken = PressedChordToken
+                                        , pressedLane = PressedChordLane
+                                        }
+                                    , tokenSpans = Data.ChordTrack.tokenSpans timeline model.project.chordTrack
+                                    , selectedKeys = model.selectedChordKeys
+                                    , rubberBand =
+                                        model.chordRubberBand
+                                            |> Maybe.map (\crb -> { x = Basics.min crb.originX crb.curX, w = abs (crb.curX - crb.originX) })
+                                    }
                             ]
                   in
                   if model.selectedTrackId == Data.ChordTrack.trackId then chordTrackMainView else case selectedTrackKind model of
@@ -3742,14 +4038,87 @@ view model =
 
             Nothing ->
                 text ""
+        , hoveredNoteTooltipView model timeline
         ]
+
+
+{-| ノートホバー時のツールチップ。ホバー中ノートと同じトラック（通常ピアノロールなら選択中トラック、
+コード進行トラックのMIDIプレビューならプレビューノート列）から、ホバー中ノートの開始時刻を含む区間を
+持つノートを集めてコードを自動判別する。単音（1個）の場合はコード行を出さない。
+-}
+hoveredNoteTooltipView : Model -> Timeline -> Html Msg
+hoveredNoteTooltipView model timeline =
+    case model.hoveredNote of
+        Nothing ->
+            text ""
+
+        Just h ->
+            let
+                candidateLists =
+                    [ trackNotes model
+                    , Data.StrumExpand.previewNotes model.project.guitarFormEnabled (effectiveVoicings model) timeline model.project.chordTrack
+                    ]
+
+                siblings =
+                    candidateLists
+                        |> List.filter (List.member h.note)
+                        |> List.head
+                        |> Maybe.withDefault [ h.note ]
+
+                simultaneous =
+                    siblings
+                        |> List.filter (\n -> n.start <= h.note.start && h.note.start < n.start + n.duration)
+
+                chordLabel =
+                    if List.length simultaneous >= 2 then
+                        Data.Chord.Detect.detect (List.map .pitch simultaneous)
+
+                    else
+                        Nothing
+
+                velocityPct =
+                    toFloat h.note.velocity / 127 * 100
+
+                velocityText =
+                    String.fromFloat (toFloat (round (velocityPct * 10)) / 10) ++ "%"
+            in
+            div
+                [ style "position" "fixed"
+                , style "left" (String.fromFloat (h.x + 12) ++ "px")
+                , style "top" (String.fromFloat (h.y + 12) ++ "px")
+                , style "background" "rgba(20, 20, 20, 0.9)"
+                , style "color" "#fff"
+                , style "padding" "0.35rem 0.55rem"
+                , style "border-radius" "4px"
+                , style "font-size" "0.75rem"
+                , style "pointer-events" "none"
+                , style "z-index" "1000"
+                , style "white-space" "nowrap"
+                ]
+                (div []
+                    [ text
+                        (Data.Note.pitchLabel h.note.pitch
+                            ++ ": 長さ: "
+                            ++ Data.Time.formatDuration h.note.duration
+                            ++ " | ベロシティー: "
+                            ++ velocityText
+                        )
+                    ]
+                    :: (case chordLabel of
+                            Just name ->
+                                [ div [] [ text ("コード: " ++ name) ] ]
+
+                            Nothing ->
+                                []
+                       )
+                )
 
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
         [ Ports.fromAudio (AudioMsg.decode >> GotAudio)
-        , if model.dragState /= NoDrag || model.rubberBand /= Nothing || model.loopDrag /= Nothing || model.voicingDragState /= NoVoicingDrag || model.sectionResizeDrag /= Nothing || model.sectionMoveDrag /= Nothing || model.sectionLoopDrag /= Nothing || model.paneDividerDrag /= Nothing then
+        , if model.dragState /= NoDrag || model.rubberBand /= Nothing || model.loopDrag /= Nothing || model.voicingDragState /= NoVoicingDrag || model.sectionResizeDrag /= Nothing || model.sectionMoveDrag /= Nothing || model.sectionLoopDrag /= Nothing || model.paneDividerDrag /= Nothing || model.chordDrag /= Nothing || model.chordRubberBand /= Nothing then
             Browser.Events.onMouseMove (Decode.map DraggedTo clientPosDecoder)
 
           else

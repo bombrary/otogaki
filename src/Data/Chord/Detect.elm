@@ -4,47 +4,8 @@ module Data.Chord.Detect exposing (detect)
 ピッチクラス集合の完全一致で判定し、最低音をベースとして優先する。
 -}
 
+import Data.Chord.Format as Format
 import Set exposing (Set)
-
-
-pitchName : Int -> String
-pitchName pc =
-    case modBy 12 pc of
-        0 ->
-            "C"
-
-        1 ->
-            "C#"
-
-        2 ->
-            "D"
-
-        3 ->
-            "D#"
-
-        4 ->
-            "E"
-
-        5 ->
-            "F"
-
-        6 ->
-            "F#"
-
-        7 ->
-            "G"
-
-        8 ->
-            "G#"
-
-        9 ->
-            "A"
-
-        10 ->
-            "A#"
-
-        _ ->
-            "B"
 
 
 templates : List ( String, List Int )
@@ -106,10 +67,10 @@ detect pitches =
                     Set.fromList (List.map (modBy 12) pitches)
 
                 nameFor root suffix =
-                    pitchName root
+                    Format.pitchName False root
                         ++ suffix
                         ++ (if root /= bassPc then
-                                "/" ++ pitchName bassPc
+                                "/" ++ Format.pitchName False bassPc
 
                             else
                                 ""

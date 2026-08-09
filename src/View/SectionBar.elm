@@ -25,6 +25,7 @@ import Svg.Attributes as SA
 import View.ChordStrip as ChordStrip
 import View.Palette as Palette
 import View.Style as Style
+import View.Zoom
 
 
 type alias Config msg =
@@ -91,25 +92,11 @@ maxRegionPxPerBar =
     120
 
 
-{-| セクションルーラーのホイールズームの1ステップ。`PianoRoll.zoomStep` と完全に同じロジック。
+{-| セクションルーラーのホイールズームの1ステップ。実装は `View.Zoom.step` に委譲（`PianoRoll.zoomStep` と同じ実装）。
 -}
 regionZoomStep : Float -> Int -> Int
 regionZoomStep deltaY current =
-    let
-        factor =
-            if deltaY < 0 then
-                1.2
-
-            else if deltaY > 0 then
-                1 / 1.2
-
-            else
-                1
-
-        next =
-            round (toFloat current * factor)
-    in
-    clamp minRegionPxPerBar maxRegionPxPerBar next
+    View.Zoom.step { min = minRegionPxPerBar, max = maxRegionPxPerBar } deltaY current
 
 
 {-| ブロック行の水平スクロールで Browser.Dom から参照するスクロールコンテナの id。

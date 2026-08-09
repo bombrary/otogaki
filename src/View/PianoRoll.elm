@@ -17,17 +17,19 @@ module View.PianoRoll exposing
     )
 
 import Array exposing (Array)
-import Data.ChordTrack exposing (ChordSpan)
+import Data.ChordTrack exposing (ChordSpan, TokenKey, TokenSpan)
 import Data.Note exposing (Note)
 import Data.Time
 import Html exposing (Html)
 import Html.Attributes as HA
 import Html.Events
+import View.Zoom
 import Json.Decode as Decode
 import Set exposing (Set)
 import Svg
 import Svg.Attributes as SA
 import Svg.Lazy
+import View.ChordLane
 import View.ChordStrip as ChordStrip
 import View.Palette as Palette
 import View.Style as Style
@@ -43,6 +45,8 @@ type alias Config msg =
     , pressedKey : Int -> msg
     , wheelZoomedRuler : { deltaY : Float, offsetX : Float } -> msg
     , clickedChord : Int -> msg
+    , hoveredNote : Note -> Float -> Float -> msg
+    , unhoveredNote : msg
     }
 
 
@@ -106,26 +110,12 @@ maxPxPerSixteenth =
     120
 
 
-{-| ルーラーのホイールズームの1ステップ。deltaY が負（手前に回す）ならズームイン、
-正（向こうに回す）ならズームアウト。範囲は `minPxPerSixteenth`〜`maxPxPerSixteenth` にクランプする。
+{-| ルーラーのホイールズームの1ステップ。範囲は `minPxPerSixteenth`〜`maxPxPerSixteenth` にクランプする。
+実装は `View.Zoom.step` に委譲。
 -}
 zoomStep : Float -> Int -> Int
 zoomStep deltaY current =
-    let
-        factor =
-            if deltaY < 0 then
-                1.2
-
-            else if deltaY > 0 then
-                1 / 1.2
-
-            else
-                1
-
-        next =
-            round (toFloat current * factor)
-    in
-    clamp minPxPerSixteenth maxPxPerSixteenth next
+    View.Zoom.step { min = minPxPerSixteenth, max = maxPxPerSixteenth } deltaY current
 
 
 minPitch : Int
@@ -221,13 +211,33 @@ chordStripViewWithHeight config opts stripHeight =
         opts.chordSpans
 
 
+type alias ChordLaneOpts msg =
+    { config : View.ChordLane.Config msg
+    , tokenSpans : List TokenSpan
+    , selectedKeys : Set TokenKey
+    , rubberBand : Maybe { x : Float, w : Float }
+    }
+
+
 {-| トラック一覧で「コード進行」行を選択した時のメインペイン用ビュー。通常のピアノロールと違い鍵盤列・波形・ノートグリッドは含めず、
-ルーラー（小節番号・セクション帯・レープ帯・プレイヘッド）とコード帯だけを並べて横一直線に伸ばす。
-`pianoRollScrollId` を再利用することで、通常のピアノロールと同時にマウントされない前提で、
-追従スクロール・ホイールズーム・ループ編集がそのまま動く。
+ルーラー（小節番号・セクション帯・レープ帯・プレイヘッド）と、トークン単位で選択・ドラッグできる
+`View.ChordLane` を並べて横一直線に伸ばす。`pianoRollScrollId` を再利用することで、通常のピアノロールと同時に
+マウントされない前提で、追従スクロール・ホイールズーム・ループ編集がそのまま動く。
 -}
-chordTrackView : Config msg -> ViewOpts -> Maybe (List Note) -> Html msg
-chordTrackView config opts previewNotes =
+chordTrackView : Config msg -> ViewOpts -> Maybe (List Note) -> ChordLaneOpts msg -> Html msg
+chordTrackView config opts previewNotes chordLane =
+    let
+        laneHtml height =
+            View.ChordLane.view chordLane.config
+                { ticksToX = ticksToPixels opts.pxPerSixteenth
+                , width = gridWidth opts.pxPerSixteenth opts.totalBars
+                , height = height
+                , playheadTicks = opts.playheadTicks
+                , rubberBand = chordLane.rubberBand
+                , selectedKeys = chordLane.selectedKeys
+                }
+                chordLane.tokenSpans
+    in
     case previewNotes of
         Nothing ->
             Html.div
@@ -241,7 +251,7 @@ chordTrackView config opts previewNotes =
                     , HA.attribute "aria-label" "コード進行トラック"
                     ]
                     [ rulerView config opts
-                    , chordStripViewWithHeight config opts 36
+                    , laneHtml 36
                     ]
                 ]
 
@@ -260,18 +270,18 @@ chordTrackView config opts previewNotes =
                     , HA.attribute "aria-label" "コード進行トラック"
                     ]
                     [ rulerView config opts
-                    , chordStripViewWithHeight config opts ChordStrip.height
-                    , chordTrackNoteGrid opts notes
+                    , laneHtml ChordStrip.height
+                    , chordTrackNoteGrid config opts notes
                     ]
                 ]
 
 
 {-| コード進行トラックのMIDIプレビュー用の読み取り専用ノートグリッド。通常の `gridView` と違い
-mousedown/click 系のハンドラを一切持たず、ノートの新規作成・選択・ドラッグは一切できない（`ghostNoteView` を
-流用しており、それ自体が `pointerEvents "none"` で非インタラクティブ）。
+mousedown/click 系のハンドラを一切持たず、ノートの新規作成・選択・ドラッグは一切できない（`hoverableGhostNoteView` を
+流用しており、ホバーのみ受け取る）。
 -}
-chordTrackNoteGrid : ViewOpts -> List Note -> Html msg
-chordTrackNoteGrid opts previewNotesList =
+chordTrackNoteGrid : Config msg -> ViewOpts -> List Note -> Html msg
+chordTrackNoteGrid config opts previewNotesList =
     Svg.svg
         [ SA.width (String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars))
         , SA.height (String.fromInt gridHeight)
@@ -281,7 +291,7 @@ chordTrackNoteGrid opts previewNotesList =
         (rowBackgrounds opts.pxPerSixteenth opts.totalBars
             ++ List.concat (List.indexedMap (sectionTint opts.pxPerSixteenth) opts.sections)
             ++ verticalLines opts.pxPerSixteenth opts.totalBars
-            ++ List.map (ghostNoteView opts.pxPerSixteenth 0) previewNotesList
+            ++ List.map (hoverableGhostNoteView config opts.pxPerSixteenth) previewNotesList
             ++ loopLinesView opts.pxPerSixteenth gridHeight opts.loop
             ++ [ playheadLine opts.pxPerSixteenth gridHeight opts.playheadTicks ]
         )
@@ -707,6 +717,15 @@ notePressDecoder =
         (Decode.field "shiftKey" Decode.bool)
 
 
+{-| ノートホバー時のマウス座標取得用デコーダ。ツールチップの位置決めに使う。
+-}
+noteHoverDecoder : Decode.Decoder { clientX : Float, clientY : Float }
+noteHoverDecoder =
+    Decode.map2 (\cx cy -> { clientX = cx, clientY = cy })
+        (Decode.field "clientX" Decode.float)
+        (Decode.field "clientY" Decode.float)
+
+
 rowBackgrounds : Int -> Int -> List (Svg.Svg msg)
 rowBackgrounds pxPerSixteenth totalBars =
     List.range minPitch maxPitch
@@ -808,6 +827,38 @@ ghostNoteView pxPerSixteenth idx note =
         []
 
 
+{-| ghostNoteView にホバーのみを追加した読み取り専用版。コード進行トラックのMIDIプレビュー（chordTrackNoteGrid）で使う。
+ghostNoteView と違い pointerEvents を有効にしてmouseover/mouseoutだけを受け取るが、mousedown等の編集系ハンドラーは一切付けない（編集不可）。
+-}
+hoverableGhostNoteView : Config msg -> Int -> Note -> Svg.Svg msg
+hoverableGhostNoteView config pxPerSixteenth note =
+    let
+        x =
+            ticksToPixels pxPerSixteenth note.start
+
+        y =
+            (maxPitch - note.pitch) * rowHeight
+
+        w =
+            ticksToPixels pxPerSixteenth note.duration
+    in
+    Svg.rect
+        [ SA.x (String.fromFloat x)
+        , SA.y (String.fromInt (y + 1))
+        , SA.width (String.fromFloat (Basics.max 2 (w - 1)))
+        , SA.height (String.fromInt (rowHeight - 2))
+        , SA.rx "2"
+        , SA.fill "#4a90d9"
+        , SA.fillOpacity "0.55"
+        , SA.pointerEvents "visiblePainted"
+        , HA.style "cursor" "default"
+        , Html.Events.on "mouseover"
+            (Decode.map (\pos -> config.hoveredNote note pos.clientX pos.clientY) noteHoverDecoder)
+        , Html.Events.on "mouseout" (Decode.succeed config.unhoveredNote)
+        ]
+        []
+
+
 noteView : Config msg -> Int -> Set Int -> Note -> List (Svg.Svg msg)
 noteView config pxPerSixteenth selectedIds note =
     let
@@ -853,6 +904,9 @@ noteView config pxPerSixteenth selectedIds note =
             (Decode.succeed ( config.doubleClickedNote note.id, True ))
         , Html.Events.preventDefaultOn "contextmenu"
             (Decode.succeed ( config.rightClickedNote note.id, True ))
+        , Html.Events.on "mouseover"
+            (Decode.map (\pos -> config.hoveredNote note pos.clientX pos.clientY) noteHoverDecoder)
+        , Html.Events.on "mouseout" (Decode.succeed config.unhoveredNote)
         ]
         []
     , Svg.rect

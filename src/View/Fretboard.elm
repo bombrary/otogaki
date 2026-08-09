@@ -1,5 +1,6 @@
 module View.Fretboard exposing (Config, view, viewReadOnly)
 
+import Data.Chord.Format as Format
 import Data.GuitarForm as GuitarForm
 import Html exposing (Html, div, text)
 import Html.Attributes as HA
@@ -49,18 +50,9 @@ type alias Config msg =
     }
 
 
-noteNames : List String
-noteNames =
-    [ "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" ]
-
-
 pitchName : Int -> String
 pitchName pitch =
-    let
-        name =
-            List.drop (modBy 12 pitch) noteNames |> List.head |> Maybe.withDefault "?"
-    in
-    name ++ String.fromInt (pitch // 12 - 1)
+    Format.pitchName False pitch ++ String.fromInt (pitch // 12 - 1)
 
 
 {-| ボイシングの選択中ピッチ集合をクリック可能な指板図として描画する。`View.VoicingKeyboard` と対称な
@@ -73,12 +65,12 @@ view config sel =
     viewInternal (Just config) sel
 
 
-{-| クリックハンドラも pointer カーソルもない、現在鳴っているコードの運指を見せるだけの表示。
-特定の Voicing に紐づいていないのでクリックしても何を更新すればいいかがない。
+{-| クリック不可の読み取り専用表示。config を Nothing にした viewInternal を呼ぶだけ。
+「今のコードの運指を見せるだけ」の用途（コード進行サイドバーの現在コード表示）に使う。
 -}
 viewReadOnly : { rootPitch : Int, selected : Set Int, picks : GuitarForm.StringPicks } -> Html msg
-viewReadOnly sel =
-    viewInternal Nothing sel
+viewReadOnly =
+    viewInternal Nothing
 
 
 viewInternal : Maybe (Config msg) -> { rootPitch : Int, selected : Set Int, picks : GuitarForm.StringPicks } -> Html msg

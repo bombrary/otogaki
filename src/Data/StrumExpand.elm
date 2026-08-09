@@ -1,11 +1,13 @@
-module Data.StrumExpand exposing (apply, formFor, soundingPitches)
+module Data.StrumExpand exposing (apply, formFor, previewNotes, soundingPitches)
 
 import Data.Chord
 import Data.ChordTrack
 import Data.GuitarForm as GuitarForm
+import Data.Note exposing (Note)
 import Data.Project exposing (Project)
 import Data.StrumPattern exposing (Direction(..), Pattern)
 import Data.Time
+import Data.Timeline exposing (Timeline)
 import Data.Voicing exposing (Voicing)
 
 
@@ -63,6 +65,22 @@ soundingPitches guitarFormEnabled voicings chord =
 
         Nothing ->
             Data.Chord.toPitchesWith voicings chord |> List.sort
+
+
+{-| コード進行を実際にMIDI化（「→ MIDIトラック化」）した場合に鳴るはずのノート列を計算する。
+ピアノロールのMIDIプレビュー表示で使う。soundingPitches と同じギターフォーム判定を通すので、実際の再生（Codec.Performance）と一致する。
+id はプレビュー専用の連番（実際のPianoRollのノートとは不一致する）。
+-}
+previewNotes : Bool -> List Voicing -> Timeline -> Data.ChordTrack.ChordTrack -> List Note
+previewNotes guitarFormEnabled voicings timeline track =
+    Data.ChordTrack.resolved timeline track
+        |> List.concatMap
+            (\ev ->
+                soundingPitches guitarFormEnabled voicings ev.chord
+                    |> List.map (\p -> { pitch = p, start = ev.startTicks, duration = ev.durationTicks })
+            )
+        |> List.indexedMap
+            (\i n -> { id = i, pitch = n.pitch, start = n.start, duration = n.duration, velocity = 80 })
 
 
 {-| 選択範囲内の既存ノートを置換し、コード進行に沿ったストロークを展開する。
