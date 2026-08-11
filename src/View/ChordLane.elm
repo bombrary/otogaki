@@ -1,7 +1,7 @@
 module View.ChordLane exposing (Config, view)
 
 import Data.ChordTrack exposing (TokenKey, TokenKind(..), TokenSpan)
-import Html exposing (Html)
+import Html
 import Html.Attributes as HA
 import Html.Events
 import Json.Decode as Decode
@@ -10,6 +10,7 @@ import Svg
 import Svg.Attributes as SA
 import View.Palette as Palette
 import View.Style as Style
+import View.Theme as Theme
 
 
 {-| コードトラック選択時のメインペイン用インタラクティブなコードレーン。`View.ChordStrip` と違い
@@ -19,6 +20,7 @@ import View.Style as Style
 type alias Config msg =
     { pressedToken : TokenKey -> { clientX : Float, clientY : Float, shift : Bool } -> msg
     , pressedLane : { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, seekMod : Bool } -> msg
+    , doubleClickedToken : TokenKey -> msg
     }
 
 
@@ -33,14 +35,14 @@ view :
         , selectedKeys : Set TokenKey
         }
     -> List TokenSpan
-    -> Html msg
+    -> Html.Html msg
 view config opts spans =
     Svg.svg
         [ SA.width (String.fromInt opts.width)
         , SA.height (String.fromInt opts.height)
         , HA.style "display" "block"
-        , HA.style "background" "#fbfcff"
-        , HA.style "border-bottom" "1px solid #ddd"
+        , HA.style "background" Theme.surfaceContainerLow
+        , HA.style "border-bottom" ("1px solid " ++ Theme.outlineVariant)
         , HA.style "cursor" "crosshair"
         , Html.Events.on "mousedown" (Decode.map config.pressedLane laneEmptyPressDecoder)
         ]
@@ -77,18 +79,18 @@ tokenView config opts span =
 
         ( bgFill, borderColor ) =
             if selected then
-                ( Style.colorSelection, "#9c1f52" )
+                ( Style.colorSelection, Theme.selectionDeep )
 
             else if active then
-                ( "#fff6dd", "#e6a817" )
+                ( Theme.highlightContainer, Theme.onHighlightContainer )
 
             else
                 case span.result of
                     Ok TRest ->
-                        ( "#eee", "#ccc" )
+                        ( Theme.surfaceContainerHighest, Theme.outlineVariant )
 
                     Err _ ->
-                        ( "#fdecea", "#e74c3c" )
+                        ( Theme.errorContainer, Theme.error )
 
                     _ ->
                         case span.sectionIndex of
@@ -96,11 +98,11 @@ tokenView config opts span =
                                 ( Palette.sectionTint idx, Palette.sectionColor idx )
 
                             Nothing ->
-                                ( Palette.neutral, "#ddd" )
+                                ( Palette.neutral, Theme.outlineVariant )
 
         textColor =
             if selected then
-                "#9c1f52"
+                Theme.selectionDeep
 
             else
                 case span.sectionIndex of
@@ -108,7 +110,7 @@ tokenView config opts span =
                         Palette.sectionColor idx
 
                     Nothing ->
-                        "#666"
+                        Theme.onSurfaceVariant
 
         textY =
             toFloat opts.height / 2 + 4
@@ -125,6 +127,7 @@ tokenView config opts span =
         , HA.title span.token
         , Html.Events.stopPropagationOn "mousedown"
             (Decode.map (\pos -> ( config.pressedToken span.key pos, True )) tokenPressDecoder)
+        , Html.Events.onDoubleClick (config.doubleClickedToken span.key)
         ]
         []
     , Svg.text_
@@ -150,8 +153,8 @@ rubberBandView height band =
                 , SA.y "0"
                 , SA.width (String.fromFloat r.w)
                 , SA.height (String.fromInt height)
-                , SA.fill "rgba(74, 144, 217, 0.15)"
-                , SA.stroke "#4a90d9"
+                , SA.fill (Theme.withAlpha 0.15 Theme.primary)
+                , SA.stroke Theme.primary
                 , SA.strokeDasharray "4 2"
                 , SA.pointerEvents "none"
                 ]
@@ -166,7 +169,7 @@ playheadLine ticksToX ticks height =
         , SA.y1 "0"
         , SA.x2 (String.fromFloat (ticksToX ticks))
         , SA.y2 (String.fromInt height)
-        , SA.stroke "#e74c3c"
+        , SA.stroke Theme.playhead
         , SA.strokeWidth "2"
         ]
         []

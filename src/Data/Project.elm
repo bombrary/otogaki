@@ -8,6 +8,7 @@ module Data.Project exposing
     , demo
     , empty
     , insertBars
+    , insertVoicing
     , mapAllNotes
     , mapNoteTrackNotes
     , mapNotes
@@ -28,6 +29,7 @@ module Data.Project exposing
     , updateSection
     , updateTrack
     , updateVoicing
+    , voicingIndexByName
     )
 
 import Data.ChordTrack exposing (ChordTrack)
@@ -166,7 +168,7 @@ demo =
     , memo = ""
     , voicings = []
     , voicingEnabled = True
-    , guitarFormEnabled = True
+    , guitarFormEnabled = False
     }
 
 
@@ -195,7 +197,7 @@ empty =
     , memo = ""
     , voicings = []
     , voicingEnabled = True
-    , guitarFormEnabled = True
+    , guitarFormEnabled = False
     }
 
 
@@ -207,6 +209,30 @@ updateChordTrack f project =
 addVoicing : String -> Project -> Project
 addVoicing name project =
     { project | voicings = project.voicings ++ [ Data.Voicing.empty name ] }
+
+
+{-| フォーム選択 UI から完成済みの Voicing を一括登録する。同名のボイシングがすでにあれば上書き（名前が
+呼び出し側で決定的に作られるので冪等）、なければ末尾に追加する。`addVoicing`（空のボイシングを名前だけで作る）と違い、
+こちらは offsets/stringPicks も含めた完成形を受け取る。
+-}
+insertVoicing : Voicing -> Project -> Project
+insertVoicing voicing project =
+    if List.any (\v -> v.name == voicing.name) project.voicings then
+        { project
+            | voicings =
+                List.map
+                    (\v ->
+                        if v.name == voicing.name then
+                            voicing
+
+                        else
+                            v
+                    )
+                    project.voicings
+        }
+
+    else
+        { project | voicings = project.voicings ++ [ voicing ] }
 
 
 removeVoicing : Int -> Project -> Project
@@ -228,6 +254,19 @@ updateVoicing index f project =
                 )
                 project.voicings
     }
+
+
+{-| 名前が一致するボイシングの index を返す。`insertVoicing` が同名なら置換で index を維持し、名前が
+新規なら末尾に追加する（つまり `List.length voicings` が追加後の index になる）ことと対応する、決定的な
+逆引き。FormPicker の「候補から選ぶ」で登録した直後や、手編集タブを開く対象を決めるのに使う。
+-}
+voicingIndexByName : String -> List Voicing -> Maybe Int
+voicingIndexByName name voicings =
+    voicings
+        |> List.indexedMap Tuple.pair
+        |> List.filter (\( _, v ) -> v.name == name)
+        |> List.head
+        |> Maybe.map Tuple.first
 
 
 addScrap : List Note -> Project -> Project

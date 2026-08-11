@@ -1,5 +1,6 @@
 module VoicingPresetTest exposing (suite)
 
+import Char
 import Data.Chord as Chord exposing (Quality(..))
 import Data.Voicing as Voicing
 import Data.VoicingPreset as VoicingPreset exposing (Shape(..))
@@ -60,4 +61,23 @@ suite =
                             |> List.all (\( name, shape ) -> VoicingPreset.shapeByName name == Just shape && VoicingPreset.shapeLabel shape == name)
                 in
                 Expect.equal True roundTripOk
+        , test "shapeSuffix は3値とも重複せず非空・ASCIIな文字列を返す" <|
+            \_ ->
+                let
+                    suffixes =
+                        List.map (\( _, shape ) -> VoicingPreset.shapeSuffix shape) VoicingPreset.shapes
+
+                    isAsciiString s =
+                        String.all (\c -> Char.toCode c < 128) s
+
+                    allNonEmpty =
+                        List.all (\s -> String.length s > 0) suffixes
+
+                    allAscii =
+                        List.all isAsciiString suffixes
+
+                    noDuplicates =
+                        List.length suffixes == Set.size (Set.fromList suffixes)
+                in
+                Expect.equal ( True, True, True ) ( allNonEmpty, allAscii, noDuplicates )
         ]

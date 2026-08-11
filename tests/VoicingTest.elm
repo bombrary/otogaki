@@ -116,11 +116,11 @@ suite =
                 Expect.equal
                     [ 0, 9, 16 ]
                     (Data.Voicing.shiftOffsets 2 100 (Set.singleton 7) [ 0, 7, 16 ])
-        , test "shiftOffsets は 0 未満にはクランプされる" <|
+        , test "shiftOffsets は -12 未満にはクランプされる（転回形・ハイブリッドコード対応で下限が -12 に緩和）" <|
             \_ ->
                 Expect.equal
-                    [ 0, 7 ]
-                    (Data.Voicing.shiftOffsets -5 100 (Set.singleton 0) [ 0, 7 ])
+                    [ -12, 7 ]
+                    (Data.Voicing.shiftOffsets -100 100 (Set.singleton 0) [ 0, 7 ])
         , test "shiftOffsets は maxOffset を超えないようにクランプされる" <|
             \_ ->
                 Expect.equal

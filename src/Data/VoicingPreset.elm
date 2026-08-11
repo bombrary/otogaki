@@ -1,4 +1,4 @@
-module Data.VoicingPreset exposing (Shape(..), offsetsFor, qualities, qualityByLabel, qualityLabel, shapeByName, shapeLabel, shapes)
+module Data.VoicingPreset exposing (Shape(..), offsetsFor, qualities, qualityByLabel, qualityLabel, shapeByName, shapeLabel, shapeSuffix, shapes)
 
 import Data.Chord exposing (Quality(..), qualityIntervals)
 
@@ -41,6 +41,21 @@ shapeByName name =
         |> List.filter (\( n, _ ) -> n == name)
         |> List.head
         |> Maybe.map Tuple.second
+
+
+{-| 保存名（ボイシング名）に使うサフィックス。3値とも重複せず、非空・ASCIIな短い識別子。
+-}
+shapeSuffix : Shape -> String
+shapeSuffix shape =
+    case shape of
+        Closed ->
+            "closed"
+
+        Drop2 ->
+            "drop2"
+
+        Wide ->
+            "wide"
 
 
 {-| 選択 UI 用の短い表示名。`Data.Chord.Parser.qualityTable` は多対1なので名前の出どころには使わず、

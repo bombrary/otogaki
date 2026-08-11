@@ -13,6 +13,7 @@ import Set exposing (Set)
 import Svg
 import Svg.Attributes as SA
 import View.Style as Style
+import View.Theme as Theme
 
 
 type alias Config msg =
@@ -82,39 +83,23 @@ chordTrackRow config selectedTrackId loadStates ghostTrackIds chordTrack =
         , HA.style "padding" "0.25rem 0.5rem"
         , HA.style "background"
             (if selected then
-                "#eef4fb"
+                Theme.secondaryContainer
 
              else
-                "#fff"
-            )
-        , HA.style "border"
-            (if selected then
-                "1px solid #4a90d9"
-
-             else
-                "1px solid #ddd"
+                Theme.surfaceContainerLowest
             )
         , HA.style "border-radius" "4px"
         , HA.style "margin-bottom" "2px"
         , HA.style "cursor" "pointer"
+        , HA.class "m3-btn"
         , HE.onClick row.select
         ]
-        [ span [ HA.style "width" "6rem", HA.style "font-size" "0.9rem", HA.style "font-weight" "bold" ] [ text "コード進行" ]
+        [ span (HA.style "width" "6rem" :: Theme.typeTitleSmall) [ text "コード進行" ]
         , select
             [ HE.onInput row.changeInstrument
             , stopClick row.select
             ]
-            (Data.Track.allInstruments
-                |> List.filter ((/=) Data.Track.DrumKit)
-                |> List.map
-                    (\inst ->
-                        option
-                            [ HA.value (Data.Track.instrumentToString inst)
-                            , HA.selected (inst == chordTrack.instrument)
-                            ]
-                            [ text (Data.Track.instrumentLabel inst) ]
-                    )
-            )
+            (instrumentOptionGroups ((/=) Data.Track.DrumKit) chordTrack.instrument)
         , loadBadge loadState
         , button
             (Style.toggleButton chordTrack.muted
@@ -166,21 +151,15 @@ trackRow config totalBars selectedTrackId loadStates ghostTrackIds pendingDelete
         , HA.style "padding" "0.25rem 0.5rem"
         , HA.style "background"
             (if selected then
-                "#eef4fb"
+                Theme.secondaryContainer
 
              else
-                "#fff"
-            )
-        , HA.style "border"
-            (if selected then
-                "1px solid #4a90d9"
-
-             else
-                "1px solid #ddd"
+                Theme.surfaceContainerLowest
             )
         , HA.style "border-radius" "4px"
         , HA.style "margin-bottom" "2px"
         , HA.style "cursor" "pointer"
+        , HA.class "m3-btn"
         , HE.onClick (config.selectTrack track.id)
         ]
         [ input
@@ -233,16 +212,37 @@ instrumentSelect config track =
         [ HE.onInput (config.changeInstrument track.id)
         , stopClick (config.selectTrack track.id)
         ]
-        (List.map
-            (\inst ->
-                option
-                    [ HA.value (Data.Track.instrumentToString inst)
-                    , HA.selected (inst == track.instrument)
-                    ]
-                    [ text (Data.Track.instrumentLabel inst) ]
+        (instrumentOptionGroups (always True) track.instrument)
+
+
+{-| 音色 select の中身を Data.Track.instrumentGroups から optgroup 単位で組み立てる。
+include で楽器を除外できる（コード進行行は DrumKit を除外）。除外した結果空になったグループは描画しない。
+-}
+instrumentOptionGroups : (Data.Track.Instrument -> Bool) -> Data.Track.Instrument -> List (Html msg)
+instrumentOptionGroups include selected =
+    Data.Track.instrumentGroups
+        |> List.filterMap
+            (\( groupName, insts ) ->
+                case List.filter include insts of
+                    [] ->
+                        Nothing
+
+                    filtered ->
+                        Just
+                            (Html.node "optgroup"
+                                [ HA.attribute "label" groupName ]
+                                (List.map (instrumentOption selected) filtered)
+                            )
             )
-            Data.Track.allInstruments
-        )
+
+
+instrumentOption : Data.Track.Instrument -> Data.Track.Instrument -> Html msg
+instrumentOption selected inst =
+    option
+        [ HA.value (Data.Track.instrumentToString inst)
+        , HA.selected (inst == selected)
+        ]
+        [ text (Data.Track.instrumentLabel inst) ]
 
 
 loadBadge : Maybe String -> Html msg
@@ -335,14 +335,13 @@ clipPreview totalBars track =
                 , SA.y (String.fromFloat y)
                 , SA.width (String.fromFloat w)
                 , SA.height "2"
-                , SA.fill "#4a90d9"
+                , SA.fill Theme.primary
                 ]
                 []
     in
     Svg.svg
         [ SA.width (String.fromInt width)
         , SA.height (String.fromInt height)
-        , HA.style "background" "#fafafa"
-        , HA.style "border" "1px solid #eee"
+        , HA.style "background" Theme.surfaceContainerLow
         ]
         (List.map noteRect (notesOf track.kind))

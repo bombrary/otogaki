@@ -1,5 +1,8 @@
 module View.PianoRoll exposing
     ( Config
+    , ResizeHandle(..)
+    , RulerHandlers
+    , RulerOpts
     , SectionSpan
     , chordTrackView
     , defaultPxPerSixteenth
@@ -9,9 +12,18 @@ module View.PianoRoll exposing
     , minPxPerSixteenth
     , pianoRollScrollId
     , pixelsToTicks
+    , playheadLine
     , rowHeight
+    , rulerHeight
+    , rubberBandView
+    , rulerViewWith
+    , scrollDecoder
+    , sectionTintWithHeight
     , ticksToPixels
+    , velocityLaneHeight
+    , velocityLaneViewWith
     , view
+    , visibleTickRange
     , yToPitch
     , zoomStep
     )
@@ -33,11 +45,12 @@ import View.ChordLane
 import View.ChordStrip as ChordStrip
 import View.Palette as Palette
 import View.Style as Style
+import View.Theme as Theme
 
 
 type alias Config msg =
     { pressedEmpty : { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, seekMod : Bool } -> msg
-    , pressedNote : Int -> Bool -> { clientX : Float, clientY : Float, shift : Bool } -> msg
+    , pressedNote : Int -> ResizeHandle -> { clientX : Float, clientY : Float, shift : Bool } -> msg
     , doubleClickedNote : Int -> msg
     , rightClickedNote : Int -> msg
     , pressedRuler : { offsetX : Float, clientX : Float, shift : Bool } -> msg
@@ -45,9 +58,21 @@ type alias Config msg =
     , pressedKey : Int -> msg
     , wheelZoomedRuler : { deltaY : Float, offsetX : Float } -> msg
     , clickedChord : Int -> msg
+    , doubleClickedChord : Int -> msg
     , hoveredNote : Note -> Float -> Float -> msg
     , unhoveredNote : msg
+    , scrolled : { scrollLeft : Float, clientWidth : Float } -> msg
+    , pressedVelocityBar : Int -> { clientX : Float, clientY : Float } -> msg
     }
+
+
+{-| ノート矩形のどの部分を掴んだか。NoResize = 本体（移動）、
+ResizeLeft = 左端ハンドル（開始位置変更・終了固定）、ResizeRight = 右端ハンドル（長さ変更）。
+-}
+type ResizeHandle
+    = NoResize
+    | ResizeLeft
+    | ResizeRight
 
 
 type alias SectionSpan =
@@ -71,6 +96,7 @@ type alias ViewOpts =
     , loop : Maybe { startTicks : Int, endTicks : Int }
     , loopEditable : Bool
     , pxPerSixteenth : Int
+    , gridUnit : Data.Time.GridUnit
     , chordSpans : List ChordSpan
     }
 
@@ -86,6 +112,12 @@ type alias Waveform =
 waveHeight : Int
 waveHeight =
     44
+
+
+{-| ベロシティレーンの高さ(px)。Main.elm 側のドラッグ量→velocity換算にも使う。-}
+velocityLaneHeight : Int
+velocityLaneHeight =
+    60
 
 
 rowHeight : Int
@@ -155,6 +187,24 @@ ticksToPixels pxPerSixteenth ticks =
     toFloat ticks * toFloat pxPerSixteenth / toFloat Data.Time.ticksPerSixteenth
 
 
+{-| スクロールコンテナの scroll イベントから scrollLeft と clientWidth を取り出して msg に変換するデコーダー。
+-}
+scrollDecoder : ({ scrollLeft : Float, clientWidth : Float } -> msg) -> Decode.Decoder msg
+scrollDecoder toMsg =
+    Decode.map2 (\l w -> toMsg { scrollLeft = l, clientWidth = w })
+        (Decode.at [ "target", "scrollLeft" ] Decode.float)
+        (Decode.at [ "target", "clientWidth" ] Decode.float)
+
+
+{-| 現在のスクロール位置と表示幅から、可視な ticks 範囲を求める。リージョン上の可視範囲枠の計算に使う。
+-}
+visibleTickRange : Int -> { scrollX : Float, width : Float } -> { startTicks : Int, endTicks : Int }
+visibleTickRange pxPerSixteenth vp =
+    { startTicks = pixelsToTicks pxPerSixteenth vp.scrollX
+    , endTicks = pixelsToTicks pxPerSixteenth (vp.scrollX + vp.width)
+    }
+
+
 yToPitch : Float -> Int
 yToPitch y =
     maxPitch - floor (y / toFloat rowHeight)
@@ -175,20 +225,22 @@ view config opts =
     Html.div
         [ HA.style "display" "flex"
         , HA.style "margin-top" "1rem"
-        , HA.style "border" "1px solid #ccc"
+        , HA.style "border" ("1px solid " ++ Theme.outlineVariant)
         ]
-        [ keyColumn config (opts.waveform /= Nothing) (not (List.isEmpty opts.chordSpans)) opts.highlightedPitch opts.scalePitchClasses
+        [ keyColumn config (opts.waveform /= Nothing) (not (List.isEmpty opts.chordSpans)) True opts.highlightedPitch opts.scalePitchClasses
         , Html.div
             [ HA.id pianoRollScrollId
             , HA.style "overflow-x" "auto"
             , HA.style "flex" "1"
             , HA.tabindex 0
             , HA.attribute "aria-label" "ピアノロール（矢印キーでノートを選択・移動）"
+            , Html.Events.on "scroll" (scrollDecoder config.scrolled)
             ]
             [ rulerView config opts
             , chordStripView config opts
             , waveformView opts
             , gridView config opts
+            , velocityLaneView config opts
             ]
         ]
 
@@ -202,7 +254,8 @@ chordStripView config opts =
 
 chordStripViewWithHeight : Config msg -> ViewOpts -> Int -> Html msg
 chordStripViewWithHeight config opts stripHeight =
-    ChordStrip.view config.clickedChord
+    ChordStrip.view
+        { clickedChord = config.clickedChord, doubleClickedChord = Just config.doubleClickedChord }
         { ticksToX = ticksToPixels opts.pxPerSixteenth
         , width = gridWidth opts.pxPerSixteenth opts.totalBars
         , playheadTicks = opts.playheadTicks
@@ -242,13 +295,14 @@ chordTrackView config opts previewNotes chordLane =
         Nothing ->
             Html.div
                 [ HA.style "margin-top" "1rem"
-                , HA.style "border" "1px solid #ccc"
+                , HA.style "border" ("1px solid " ++ Theme.outlineVariant)
                 ]
                 [ Html.div
                     [ HA.id pianoRollScrollId
                     , HA.style "overflow-x" "auto"
                     , HA.tabindex 0
                     , HA.attribute "aria-label" "コード進行トラック"
+                    , Html.Events.on "scroll" (scrollDecoder config.scrolled)
                     ]
                     [ rulerView config opts
                     , laneHtml 36
@@ -258,16 +312,17 @@ chordTrackView config opts previewNotes chordLane =
         Just notes ->
             Html.div
                 [ HA.style "margin-top" "1rem"
-                , HA.style "border" "1px solid #ccc"
+                , HA.style "border" ("1px solid " ++ Theme.outlineVariant)
                 , HA.style "display" "flex"
                 ]
-                [ keyColumn config False True opts.highlightedPitch opts.scalePitchClasses
+                [ keyColumn config False True False opts.highlightedPitch opts.scalePitchClasses
                 , Html.div
                     [ HA.id pianoRollScrollId
                     , HA.style "overflow-x" "auto"
                     , HA.style "flex" "1"
                     , HA.tabindex 0
                     , HA.attribute "aria-label" "コード進行トラック"
+                    , Html.Events.on "scroll" (scrollDecoder config.scrolled)
                     ]
                     [ rulerView config opts
                     , laneHtml ChordStrip.height
@@ -290,7 +345,7 @@ chordTrackNoteGrid config opts previewNotesList =
         ]
         (rowBackgrounds opts.pxPerSixteenth opts.totalBars
             ++ List.concat (List.indexedMap (sectionTint opts.pxPerSixteenth) opts.sections)
-            ++ verticalLines opts.pxPerSixteenth opts.totalBars
+            ++ verticalLines opts.gridUnit opts.pxPerSixteenth opts.totalBars
             ++ List.map (hoverableGhostNoteView config opts.pxPerSixteenth) previewNotesList
             ++ loopLinesView opts.pxPerSixteenth gridHeight opts.loop
             ++ [ playheadLine opts.pxPerSixteenth gridHeight opts.playheadTicks ]
@@ -356,7 +411,7 @@ waveStrip peaks peakDt secsPerTick offsetMs totalBars pxPerSixteenth =
                             , SA.y1 "0"
                             , SA.x2 (String.fromInt (i * barWidth pxPerSixteenth))
                             , SA.y2 (String.fromInt waveHeight)
-                            , SA.stroke "#ccc"
+                            , SA.stroke Theme.outlineVariant
                             ]
                             []
                     )
@@ -366,16 +421,16 @@ waveStrip peaks peakDt secsPerTick offsetMs totalBars pxPerSixteenth =
         , SA.height (String.fromInt waveHeight)
         , SA.viewBox ("0 0 " ++ String.fromInt width ++ " " ++ String.fromInt waveHeight)
         , HA.style "display" "block"
-        , HA.style "background" "#fbfcff"
-        , HA.style "border-bottom" "1px solid #ddd"
+        , HA.style "background" Theme.surfaceContainerLow
+        , HA.style "border-bottom" ("1px solid " ++ Theme.outlineVariant)
         ]
         (barLines
-            ++ [ Svg.path [ SA.d d, SA.stroke "#8fb8dd", SA.strokeWidth "2" ] [] ]
+            ++ [ Svg.path [ SA.d d, SA.stroke (Theme.withAlpha 0.55 Theme.primary), SA.strokeWidth "2" ] [] ]
         )
 
 
-keyColumn : Config msg -> Bool -> Bool -> Set Int -> Set Int -> Html msg
-keyColumn config hasWave hasChords highlightedPitch scalePitchClasses =
+keyColumn : Config msg -> Bool -> Bool -> Bool -> Set Int -> Set Int -> Html msg
+keyColumn config hasWave hasChords hasVelocityLane highlightedPitch scalePitchClasses =
     let
         spacerHeight =
             rulerHeight
@@ -394,12 +449,29 @@ keyColumn config hasWave hasChords highlightedPitch scalePitchClasses =
     in
     Html.div
         [ HA.style "flex" "0 0 44px"
-        , HA.style "border-right" "1px solid #bbb"
+        , HA.style "border-right" ("1px solid " ++ Theme.outline)
         ]
-        (Html.div [ HA.style "height" (String.fromInt spacerHeight ++ "px"), HA.style "box-sizing" "border-box", HA.style "border-bottom" "1px solid #ddd" ] []
+        ((Html.div [ HA.style "height" (String.fromInt spacerHeight ++ "px"), HA.style "box-sizing" "border-box", HA.style "border-bottom" ("1px solid " ++ Theme.outlineVariant) ] []
             :: (List.range minPitch maxPitch
                     |> List.reverse
                     |> List.map (keyRow config highlightedPitch scalePitchClasses)
+               )
+         )
+            ++ (if hasVelocityLane then
+                    [ Html.div
+                        [ HA.style "height" (String.fromInt velocityLaneHeight ++ "px")
+                        , HA.style "box-sizing" "border-box"
+                        , HA.style "border-top" ("1px solid " ++ Theme.outlineVariant)
+                        , HA.style "font-size" "9px"
+                        , HA.style "color" Theme.onSurfaceVariant
+                        , HA.style "padding" "2px 3px"
+                        , HA.style "text-align" "right"
+                        ]
+                        [ Html.text "Vel" ]
+                    ]
+
+                else
+                    []
                )
         )
 
@@ -432,22 +504,22 @@ keyRow config highlightedPitch scalePitchClasses pitch =
                 Style.colorHighlight
 
              else if isBlack then
-                "#444"
+                Theme.onSurface
 
              else
-                "#fff"
+                Theme.surfaceContainerLowest
             )
         , HA.style "color"
             (if isHighlighted then
-                "#333"
+                Theme.onSurface
 
              else if isBlack then
-                "#eee"
+                Theme.surfaceContainerHighest
 
              else
-                "#555"
+                Theme.onSurface
             )
-        , HA.style "border-bottom" "1px solid #ddd"
+        , HA.style "border-bottom" ("1px solid " ++ Theme.outlineVariant)
         , HA.style "font-size" "9px"
         , HA.style "line-height" (String.fromInt (rowHeight - 1) ++ "px")
         , HA.style "text-align" "right"
@@ -466,7 +538,7 @@ keyRow config highlightedPitch scalePitchClasses pitch =
                         , HA.style "width" "6px"
                         , HA.style "height" "6px"
                         , HA.style "border-radius" "50%"
-                        , HA.style "background" "#4a90d9"
+                        , HA.style "background" Theme.primary
                         , HA.style "pointer-events" "none"
                         ]
                         []
@@ -478,8 +550,28 @@ keyRow config highlightedPitch scalePitchClasses pitch =
         )
 
 
-rulerView : Config msg -> ViewOpts -> Html msg
-rulerView config opts =
+type alias RulerHandlers msg =
+    { pressedRuler : { offsetX : Float, clientX : Float, shift : Bool } -> msg
+    , pressedLoopHandle : Bool -> Float -> msg
+    , wheelZoomedRuler : { deltaY : Float, offsetX : Float } -> msg
+    }
+
+
+type alias RulerOpts =
+    { pxPerSixteenth : Int
+    , totalBars : Int
+    , sections : List SectionSpan
+    , loop : Maybe { startTicks : Int, endTicks : Int }
+    , loopEditable : Bool
+    , playheadTicks : Int
+    }
+
+
+{-| ルーラー（小節番号・セクション帯・ループ帯・プレイヘッド）を描画する。PianoRoll の Config 全体ではなく、
+ルーラーが実際に使うハンドラだけに narrow 化してあるので、DrumEditor 等他モジュールからも直接呼べる。
+-}
+rulerViewWith : RulerHandlers msg -> RulerOpts -> Html msg
+rulerViewWith handlers opts =
     Svg.svg
         [ SA.width (String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars))
         , SA.height (String.fromInt rulerHeight)
@@ -487,22 +579,38 @@ rulerView config opts =
         , HA.style "display" "block"
         , HA.style "cursor" "pointer"
         , HA.title "クリックで再生位置を移動。shift + ドラッグでループ区間を作成。マウスホイールでズーム"
-        , Html.Events.on "mousedown" (Decode.map config.pressedRuler rulerPressDecoder)
-        , Html.Events.preventDefaultOn "wheel" (Decode.map (\w -> ( config.wheelZoomedRuler w, True )) wheelDecoder)
+        , Html.Events.on "mousedown" (Decode.map handlers.pressedRuler rulerPressDecoder)
+        , Html.Events.preventDefaultOn "wheel" (Decode.map (\w -> ( handlers.wheelZoomedRuler w, True )) wheelDecoder)
         ]
         (Svg.rect
             [ SA.x "0"
             , SA.y "0"
             , SA.width (String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars))
             , SA.height (String.fromInt rulerHeight)
-            , SA.fill "#f8f8f8"
+            , SA.fill Theme.surfaceContainer
             ]
             []
             :: List.concat (List.indexedMap (sectionBand opts.pxPerSixteenth) opts.sections)
             ++ barNumbers opts.pxPerSixteenth opts.totalBars
-            ++ loopBandView config opts.pxPerSixteenth opts.loopEditable opts.loop
+            ++ loopBandView handlers.pressedLoopHandle opts.pxPerSixteenth opts.loopEditable opts.loop
             ++ [ playheadLine opts.pxPerSixteenth rulerHeight opts.playheadTicks ]
         )
+
+
+rulerView : Config msg -> ViewOpts -> Html msg
+rulerView config opts =
+    rulerViewWith
+        { pressedRuler = config.pressedRuler
+        , pressedLoopHandle = config.pressedLoopHandle
+        , wheelZoomedRuler = config.wheelZoomedRuler
+        }
+        { pxPerSixteenth = opts.pxPerSixteenth
+        , totalBars = opts.totalBars
+        , sections = opts.sections
+        , loop = opts.loop
+        , loopEditable = opts.loopEditable
+        , playheadTicks = opts.playheadTicks
+        }
 
 
 rulerPressDecoder : Decode.Decoder { offsetX : Float, clientX : Float, shift : Bool }
@@ -522,8 +630,8 @@ wheelDecoder =
 
 {-| ルーラー上にループ区間を琥珀色の帯で示す。editable が真なら左右端につまむハンドルを追加で描く（「範囲」モードのループのみ）。
 -}
-loopBandView : Config msg -> Int -> Bool -> Maybe { startTicks : Int, endTicks : Int } -> List (Svg.Svg msg)
-loopBandView config pxPerSixteenth editable loop =
+loopBandView : (Bool -> Float -> msg) -> Int -> Bool -> Maybe { startTicks : Int, endTicks : Int } -> List (Svg.Svg msg)
+loopBandView pressedLoopHandle pxPerSixteenth editable loop =
     case loop of
         Nothing ->
             []
@@ -549,8 +657,8 @@ loopBandView config pxPerSixteenth editable loop =
             in
             band
                 :: (if editable then
-                        [ loopHandle config False x0
-                        , loopHandle config True x1
+                        [ loopHandle pressedLoopHandle False x0
+                        , loopHandle pressedLoopHandle True x1
                         ]
 
                     else
@@ -560,8 +668,8 @@ loopBandView config pxPerSixteenth editable loop =
 
 {-| ループ帯の端をつまんで伸縮するためのハンドル。バンド本体（6pxx6px）より少し大きめにしてつかみやすくする。
 -}
-loopHandle : Config msg -> Bool -> Float -> Svg.Svg msg
-loopHandle config isEnd x =
+loopHandle : (Bool -> Float -> msg) -> Bool -> Float -> Svg.Svg msg
+loopHandle pressedLoopHandle isEnd x =
     Svg.rect
         [ SA.x (String.fromFloat (x - 6))
         , SA.y "10"
@@ -570,7 +678,7 @@ loopHandle config isEnd x =
         , SA.fill Style.colorLoopHandle
         , SA.cursor "ew-resize"
         , Html.Events.stopPropagationOn "mousedown"
-            (Decode.map (\cx -> ( config.pressedLoopHandle isEnd cx, True )) (Decode.field "clientX" Decode.float))
+            (Decode.map (\cx -> ( pressedLoopHandle isEnd cx, True )) (Decode.field "clientX" Decode.float))
         ]
         []
 
@@ -590,7 +698,7 @@ sectionBand pxPerSixteenth idx span =
         [ SA.x (String.fromInt (span.startBar * barWidth pxPerSixteenth + 4))
         , SA.y "12"
         , SA.fontSize "10"
-        , SA.fill "#fff"
+        , SA.fill Theme.surfaceContainerLowest
         , SA.pointerEvents "none"
         ]
         [ Svg.text span.name ]
@@ -607,14 +715,14 @@ barNumbers pxPerSixteenth totalBars =
                     , SA.y1 "16"
                     , SA.x2 (String.fromInt (i * barWidth pxPerSixteenth))
                     , SA.y2 (String.fromInt rulerHeight)
-                    , SA.stroke "#ccc"
+                    , SA.stroke Theme.outlineVariant
                     ]
                     []
                 , Svg.text_
                     [ SA.x (String.fromInt (i * barWidth pxPerSixteenth + 4))
                     , SA.y "30"
                     , SA.fontSize "10"
-                    , SA.fill "#888"
+                    , SA.fill Theme.onSurfaceVariant
                     , SA.pointerEvents "none"
                     ]
                     [ Svg.text (String.fromInt (i + 1)) ]
@@ -634,13 +742,109 @@ gridView config opts =
         ]
         (rowBackgrounds opts.pxPerSixteenth opts.totalBars
             ++ List.concat (List.indexedMap (sectionTint opts.pxPerSixteenth) opts.sections)
-            ++ verticalLines opts.pxPerSixteenth opts.totalBars
+            ++ verticalLines opts.gridUnit opts.pxPerSixteenth opts.totalBars
             ++ List.concat (List.indexedMap (\idx notes -> List.map (ghostNoteView opts.pxPerSixteenth idx) notes) opts.ghostNoteGroups)
             ++ List.concatMap (noteView config opts.pxPerSixteenth opts.selectedIds) opts.notes
             ++ rubberBandView opts.rubberBand
             ++ loopLinesView opts.pxPerSixteenth gridHeight opts.loop
             ++ [ playheadLine opts.pxPerSixteenth gridHeight opts.playheadTicks ]
         )
+
+
+{-| 各ノートの velocity を縦バーで表示・編集するレーン。gridView と同じ横座標系
+(ticksToPixels / gridWidth)を共有するのでスクロール同期は自動。Config 全体ではなく
+pressedVelocityBar ハンドラだけに narrow 化してあるので、DrumEditor 等他モジュールからも直接呼べる。
+-}
+velocityLaneViewWith :
+    { pressedVelocityBar : Int -> { clientX : Float, clientY : Float } -> msg }
+    ->
+        { pxPerSixteenth : Int
+        , totalBars : Int
+        , notes : List Note
+        , selectedIds : Set Int
+        , playheadTicks : Int
+        }
+    -> Html msg
+velocityLaneViewWith handlers opts =
+    let
+        width =
+            gridWidth opts.pxPerSixteenth opts.totalBars
+
+        -- 選択中バーを上のレイヤーに描く(重なった時につかめるように)
+        ( selectedNotes, unselectedNotes ) =
+            List.partition (\n -> Set.member n.id opts.selectedIds) opts.notes
+    in
+    Svg.svg
+        [ SA.width (String.fromInt width)
+        , SA.height (String.fromInt velocityLaneHeight)
+        , SA.viewBox ("0 0 " ++ String.fromInt width ++ " " ++ String.fromInt velocityLaneHeight)
+        , HA.style "display" "block"
+        , HA.style "background" Theme.surfaceContainerLow
+        , HA.style "border-top" ("1px solid " ++ Theme.outlineVariant)
+        ]
+        (List.map (velocityBarView handlers opts.pxPerSixteenth opts.selectedIds) (unselectedNotes ++ selectedNotes)
+            ++ [ playheadLine opts.pxPerSixteenth velocityLaneHeight opts.playheadTicks ]
+        )
+
+
+velocityLaneView : Config msg -> ViewOpts -> Html msg
+velocityLaneView config opts =
+    velocityLaneViewWith
+        { pressedVelocityBar = config.pressedVelocityBar }
+        { pxPerSixteenth = opts.pxPerSixteenth
+        , totalBars = opts.totalBars
+        , notes = opts.notes
+        , selectedIds = opts.selectedIds
+        , playheadTicks = opts.playheadTicks
+        }
+
+
+velocityBarView : { pressedVelocityBar : Int -> { clientX : Float, clientY : Float } -> msg } -> Int -> Set Int -> Note -> Svg.Svg msg
+velocityBarView handlers pxPerSixteenth selectedIds note =
+    let
+        x =
+            ticksToPixels pxPerSixteenth note.start
+
+        barW =
+            toFloat (clamp 3 9 (pxPerSixteenth // 2))
+
+        h =
+            Basics.max 2 (toFloat note.velocity / 127 * toFloat (velocityLaneHeight - 2))
+
+        selected =
+            Set.member note.id selectedIds
+    in
+    Svg.rect
+        [ SA.x (String.fromFloat x)
+        , SA.y (String.fromFloat (toFloat velocityLaneHeight - h))
+        , SA.width (String.fromFloat barW)
+        , SA.height (String.fromFloat h)
+        , SA.fill
+            (if selected then
+                Style.colorSelection
+
+             else
+                Theme.primary
+            )
+        , SA.stroke
+            (if selected then
+                Theme.selectionDeep
+
+             else
+                "none"
+            )
+        , HA.style "cursor" "ns-resize"
+        , Html.Events.stopPropagationOn "mousedown"
+            (Decode.map (\pos -> ( handlers.pressedVelocityBar note.id pos, True )) velocityPressDecoder)
+        ]
+        []
+
+
+velocityPressDecoder : Decode.Decoder { clientX : Float, clientY : Float }
+velocityPressDecoder =
+    Decode.map2 (\cx cy -> { clientX = cx, clientY = cy })
+        (Decode.field "clientX" Decode.float)
+        (Decode.field "clientY" Decode.float)
 
 
 {-| グリッド上にループ区間の開始・終了を縦の破線で示す。面を塗るとスケールガイドや sectionTint と層が重なって見づらくなるので線のみにする。
@@ -664,7 +868,7 @@ loopLine height x =
         , SA.y1 "0"
         , SA.x2 (String.fromFloat x)
         , SA.y2 (String.fromInt height)
-        , SA.stroke "#f1c40f"
+        , SA.stroke Theme.highlight
         , SA.strokeWidth "2"
         , SA.strokeDasharray "4 2"
         , SA.pointerEvents "none"
@@ -672,19 +876,26 @@ loopLine height x =
         []
 
 
-sectionTint : Int -> Int -> SectionSpan -> List (Svg.Svg msg)
-sectionTint pxPerSixteenth idx span =
+{-| セクションごとの淡い背景色。height を引数化してあるので、ピアノロール以外（ドラムグリッド等）の高さにも合わせられる。
+-}
+sectionTintWithHeight : Int -> Int -> Int -> SectionSpan -> List (Svg.Svg msg)
+sectionTintWithHeight height pxPerSixteenth idx span =
     [ Svg.rect
         [ SA.x (String.fromInt (span.startBar * barWidth pxPerSixteenth))
         , SA.y "0"
         , SA.width (String.fromInt (span.lengthBars * barWidth pxPerSixteenth))
-        , SA.height (String.fromInt gridHeight)
+        , SA.height (String.fromInt height)
         , SA.fill (Palette.sectionColor idx)
         , SA.fillOpacity "0.05"
         , SA.pointerEvents "none"
         ]
         []
     ]
+
+
+sectionTint : Int -> Int -> SectionSpan -> List (Svg.Svg msg)
+sectionTint pxPerSixteenth idx span =
+    sectionTintWithHeight gridHeight pxPerSixteenth idx span
 
 
 emptyPressDecoder : Decode.Decoder { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, seekMod : Bool }
@@ -745,47 +956,57 @@ rowBackgrounds pxPerSixteenth totalBars =
                     , SA.height (String.fromInt rowHeight)
                     , SA.fill
                         (if isBlack then
-                            "#f0f0f0"
+                            Theme.surfaceContainerHigh
 
                          else
-                            "#ffffff"
+                            Theme.surfaceContainerLowest
                         )
-                    , SA.stroke "#e8e8e8"
+                    , SA.stroke Theme.surfaceContainerHighest
                     , SA.strokeWidth "0.5"
                     ]
                     []
             )
 
 
-verticalLines : Int -> Int -> List (Svg.Svg msg)
-verticalLines pxPerSixteenth totalBars =
-    List.range 0 (totalBars * 16)
+verticalLines : Data.Time.GridUnit -> Int -> Int -> List (Svg.Svg msg)
+verticalLines gridUnit pxPerSixteenth totalBars =
+    let
+        grid =
+            Data.Time.gridTicks gridUnit
+
+        linesPerBar =
+            Data.Time.ticksPerBar // grid
+    in
+    List.range 0 (totalBars * linesPerBar)
         |> List.map
             (\i ->
                 let
+                    t =
+                        i * grid
+
                     x =
-                        i * pxPerSixteenth
+                        ticksToPixels pxPerSixteenth t
 
                     isBar =
-                        modBy 16 i == 0
+                        modBy Data.Time.ticksPerBar t == 0
 
                     isBeat =
-                        modBy 4 i == 0
+                        modBy Data.Time.ppq t == 0
                 in
                 Svg.line
-                    [ SA.x1 (String.fromInt x)
+                    [ SA.x1 (String.fromFloat x)
                     , SA.y1 "0"
-                    , SA.x2 (String.fromInt x)
+                    , SA.x2 (String.fromFloat x)
                     , SA.y2 (String.fromInt gridHeight)
                     , SA.stroke
                         (if isBar then
-                            "#999"
+                            Theme.outline
 
                          else if isBeat then
-                            "#ccc"
+                            Theme.outlineVariant
 
                          else
-                            "#eee"
+                            Theme.surfaceContainerHighest
                         )
                     , SA.strokeWidth
                         (if isBar then
@@ -848,7 +1069,7 @@ hoverableGhostNoteView config pxPerSixteenth note =
         , SA.width (String.fromFloat (Basics.max 2 (w - 1)))
         , SA.height (String.fromInt (rowHeight - 2))
         , SA.rx "2"
-        , SA.fill "#4a90d9"
+        , SA.fill Theme.primary
         , SA.fillOpacity "0.55"
         , SA.pointerEvents "visiblePainted"
         , HA.style "cursor" "default"
@@ -888,18 +1109,18 @@ noteView config pxPerSixteenth selectedIds note =
                 Style.colorSelection
 
              else
-                "#4a90d9"
+                Theme.primary
             )
         , SA.stroke
             (if selected then
-                "#9c1f52"
+                Theme.selectionDeep
 
              else
                 "none"
             )
         , HA.style "cursor" "move"
         , Html.Events.stopPropagationOn "mousedown"
-            (Decode.map (\pos -> ( config.pressedNote note.id False pos, True )) notePressDecoder)
+            (Decode.map (\pos -> ( config.pressedNote note.id NoResize pos, True )) notePressDecoder)
         , Html.Events.stopPropagationOn "dblclick"
             (Decode.succeed ( config.doubleClickedNote note.id, True ))
         , Html.Events.preventDefaultOn "contextmenu"
@@ -916,19 +1137,44 @@ noteView config pxPerSixteenth selectedIds note =
         , SA.height (String.fromInt (rowHeight - 2))
         , SA.fill
             (if selected then
-                "#9c1f52"
+                Theme.selectionDeep
 
              else
-                "#2a70b9"
+                Theme.primary
             )
         , HA.style "cursor" "ew-resize"
         , Html.Events.stopPropagationOn "mousedown"
-            (Decode.map (\pos -> ( config.pressedNote note.id True pos, True )) notePressDecoder)
+            (Decode.map (\pos -> ( config.pressedNote note.id ResizeRight pos, True )) notePressDecoder)
         , Html.Events.preventDefaultOn "contextmenu"
             (Decode.succeed ( config.rightClickedNote note.id, True ))
         ]
         []
     ]
+        ++ (if w >= 3 * handleWidth then
+                [ Svg.rect
+                    [ SA.x (String.fromFloat x)
+                    , SA.y (String.fromInt (y + 1))
+                    , SA.width (String.fromFloat handleWidth)
+                    , SA.height (String.fromInt (rowHeight - 2))
+                    , SA.fill
+                        (if selected then
+                            Theme.selectionDeep
+
+                         else
+                            Theme.primary
+                        )
+                    , HA.style "cursor" "ew-resize"
+                    , Html.Events.stopPropagationOn "mousedown"
+                        (Decode.map (\pos -> ( config.pressedNote note.id ResizeLeft pos, True )) notePressDecoder)
+                    , Html.Events.preventDefaultOn "contextmenu"
+                        (Decode.succeed ( config.rightClickedNote note.id, True ))
+                    ]
+                    []
+                ]
+
+            else
+                []
+           )
 
 
 rubberBandView : Maybe { x : Float, y : Float, w : Float, h : Float } -> List (Svg.Svg msg)
@@ -943,8 +1189,8 @@ rubberBandView band =
                 , SA.y (String.fromFloat r.y)
                 , SA.width (String.fromFloat r.w)
                 , SA.height (String.fromFloat r.h)
-                , SA.fill "rgba(74, 144, 217, 0.15)"
-                , SA.stroke "#4a90d9"
+                , SA.fill (Theme.withAlpha 0.15 Theme.primary)
+                , SA.stroke Theme.primary
                 , SA.strokeDasharray "4 2"
                 , SA.pointerEvents "none"
                 ]
@@ -959,7 +1205,7 @@ playheadLine pxPerSixteenth height ticks =
         , SA.y1 "0"
         , SA.x2 (String.fromFloat (ticksToPixels pxPerSixteenth ticks))
         , SA.y2 (String.fromInt height)
-        , SA.stroke "#e74c3c"
+        , SA.stroke Theme.playhead
         , SA.strokeWidth "2"
         ]
         []

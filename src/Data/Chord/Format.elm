@@ -1,4 +1,4 @@
-module Data.Chord.Format exposing (format, formatPlain, pitchName, qualitySuffix)
+module Data.Chord.Format exposing (degreeLabel, degreeLabelExtended, format, formatPlain, pitchName, qualitySuffix)
 
 import Data.Chord exposing (Alteration(..), Chord, Extension(..), Quality(..))
 
@@ -156,3 +156,149 @@ pitchName preferFlat pitchClass =
     List.drop (modBy 12 pitchClass) names
         |> List.head
         |> Maybe.withDefault "C"
+
+
+{-| ルートからの半音間隔（interval）を度数表記に変換する。`modBy 12` で正規化してからマッチするため、
+負の値や12以上の値もオクターブを畳んで扱える（例: 12 -> "R", 16 -> "3"）。異名同音の解釈が分かれる箇所は
+Extension の命名（`FlatNine` 等）と揃えた: 1半音は b9、2半音は 9、5半音は 11、9半音は 6。
+-}
+degreeLabel : Int -> String
+degreeLabel interval =
+    case modBy 12 interval of
+        0 ->
+            "R"
+
+        1 ->
+            "b9"
+
+        2 ->
+            "9"
+
+        3 ->
+            "b3"
+
+        4 ->
+            "3"
+
+        5 ->
+            "11"
+
+        6 ->
+            "b5"
+
+        7 ->
+            "5"
+
+        8 ->
+            "#5"
+
+        9 ->
+            "6"
+
+        10 ->
+            "b7"
+
+        11 ->
+            "7"
+
+        _ ->
+            ""
+
+
+{-| `degreeLabel` の拡張版。オクターブ0（ルートから11半音以内、コードトーン域）と
+それ以外（1オクターブ以上離れたテンション域）で別のテーブルを引く。このアプリが採用する
+ピアノロール表記（b3/3/4/b5/5/#5/b7/7/9/#9/11/#11/13/b13など）はこちらで表現する。
+`modBy 12` はElmの仕様上、負のoffsetでも常に0〜11の非負値を返す（例: `modBy 12 -1 == 11`）。
+そのため `octave = (offset - semitone) // 12` は負のoffsetでも安全に整数のオクターブ数
+（0, ±1, ±2...）になる。
+-}
+degreeLabelExtended : Int -> String
+degreeLabelExtended offset =
+    let
+        semitone =
+            modBy 12 offset
+
+        octave =
+            (offset - semitone) // 12
+    in
+    if octave == 0 then
+        case semitone of
+            0 ->
+                "R"
+
+            1 ->
+                "b9"
+
+            2 ->
+                "9"
+
+            3 ->
+                "b3"
+
+            4 ->
+                "3"
+
+            5 ->
+                "4"
+
+            6 ->
+                "b5"
+
+            7 ->
+                "5"
+
+            8 ->
+                "#5"
+
+            9 ->
+                "6"
+
+            10 ->
+                "b7"
+
+            11 ->
+                "7"
+
+            _ ->
+                ""
+
+    else
+        case semitone of
+            0 ->
+                "R"
+
+            1 ->
+                "b9"
+
+            2 ->
+                "9"
+
+            3 ->
+                "b3"
+
+            4 ->
+                "3"
+
+            5 ->
+                "11"
+
+            6 ->
+                "#11"
+
+            7 ->
+                "5"
+
+            8 ->
+                "b13"
+
+            9 ->
+                "13"
+
+            10 ->
+                "b7"
+
+            11 ->
+                "7"
+
+            _ ->
+                ""

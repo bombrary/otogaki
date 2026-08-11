@@ -2,6 +2,7 @@ module View.SectionBar exposing
     ( BlockExtras
     , Config
     , RulerData
+    , WaveformData
     , defaultRegionPxPerBar
     , maxRegionPxPerBar
     , minRegionPxPerBar
@@ -10,8 +11,10 @@ module View.SectionBar exposing
     , sectionDragTargetIndex
     , sectionStartBars
     , view
+    , xToSeconds
     )
 
+import Array exposing (Array)
 import Data.ChordTrack exposing (ChordSpan)
 import Data.Key
 import Data.Meter
@@ -22,9 +25,11 @@ import Html.Events as HE
 import Json.Decode as Decode
 import Svg
 import Svg.Attributes as SA
+import Svg.Lazy
 import View.ChordStrip as ChordStrip
 import View.Palette as Palette
 import View.Style as Style
+import View.Theme as Theme
 import View.Zoom
 
 
@@ -39,9 +44,6 @@ type alias Config msg =
     , changeMode : Int -> String -> msg
     , changeMeter : Int -> String -> msg
     , move : Int -> Int -> msg
-    , changedInsertCount : String -> msg
-    , insertBefore : Int -> msg
-    , removeFromStart : Int -> msg
     , seekToStart : Int -> msg
     , transpose : Int -> Int -> msg
     , pressedBlock : Int -> Float -> msg
@@ -50,6 +52,7 @@ type alias Config msg =
     , pressedRuler : { offsetX : Float, clientX : Float, shift : Bool } -> msg
     , pressedLoopHandle : Bool -> Float -> msg
     , clickedChord : Int -> msg
+    , doubleClickedChord : Int -> msg
     }
 
 
@@ -63,6 +66,7 @@ type alias RulerData =
     , loop : Maybe { startTicks : Int, endTicks : Int }
     , playheadTicks : Int
     , ticksToPx : Int -> Float
+    , viewRange : Maybe { startTicks : Int, endTicks : Int }
     }
 
 
@@ -111,6 +115,144 @@ regionRulerHeight =
     16
 
 
+{-| 参考オーディオの波形をセクションバーに重ねるためのデータ。`View.PianoRoll.Waveform` と構造同一（構造的型付けなので
+呼び出し側は同じレコード値を両方に渡せる）。
+-}
+type alias WaveformData =
+    { peaks : Array Float
+    , peakDt : Float
+    , secsPerTick : Float
+    , offsetMs : Int
+    }
+
+
+waveHeight : Int
+waveHeight =
+    24
+
+
+{-| セクション列を先頭から歩いて、x 座標（px）に対応する秒を求める。`Data.Timeline` を知らない設計を維持するため、
+`Data.Timeline.fractionalBarToTicks` と同値の変換を sections の fold で直接行う（セクション内は等長小節なので一致する）。
+範囲外（総小節数を超える）は総 ticks で clampする。
+-}
+xToSeconds : { pxPerBar : Int, secsPerTick : Float, offsetMs : Int } -> List Section -> Float -> Float
+xToSeconds cfg sections x =
+    let
+        fractionalBar =
+            x / toFloat cfg.pxPerBar
+
+        ticks =
+            fractionalBarToTicks sections fractionalBar
+    in
+    toFloat ticks * cfg.secsPerTick + toFloat cfg.offsetMs / 1000
+
+
+fractionalBarToTicks : List Section -> Float -> Int
+fractionalBarToTicks sections fractionalBar =
+    let
+        step section ( accBar, accTicks, resultMaybe ) =
+            case resultMaybe of
+                Just _ ->
+                    ( accBar, accTicks, resultMaybe )
+
+                Nothing ->
+                    let
+                        barTicks =
+                            Data.Meter.ticksPerBar section.meter
+
+                        sectionEndBar =
+                            accBar + toFloat section.lengthBars
+                    in
+                    if fractionalBar < sectionEndBar then
+                        let
+                            withinBar =
+                                fractionalBar - accBar
+                        in
+                        ( accBar, accTicks, Just (accTicks + round (withinBar * toFloat barTicks)) )
+
+                    else
+                        ( sectionEndBar, accTicks + section.lengthBars * barTicks, Nothing )
+
+        ( _, finalAccTicks, result ) =
+            List.foldl step ( 0, 0, Nothing ) sections
+    in
+    Maybe.withDefault finalAccTicks result
+
+
+{-| 参考オーディオの波形帯。`View.PianoRoll.waveStrip` のミラーだが、小節線の代わりにセクション境界線だけを描く
+（小節目盛りはルーラーに既にあるため二重にしない）。
+-}
+waveStrip : Array Float -> Float -> Float -> Int -> Int -> List Section -> Svg.Svg msg
+waveStrip peaks peakDt secsPerTick offsetMs pxPerBar sections =
+    let
+        totalBars =
+            List.sum (List.map .lengthBars sections)
+
+        width =
+            totalBars * pxPerBar
+
+        colStep =
+            3
+
+        mid =
+            toFloat waveHeight / 2
+
+        ampAt x =
+            let
+                sec =
+                    xToSeconds { pxPerBar = pxPerBar, secsPerTick = secsPerTick, offsetMs = offsetMs } sections (toFloat x)
+            in
+            if sec < 0 then
+                0
+
+            else
+                Array.get (floor (sec / peakDt)) peaks |> Maybe.withDefault 0
+
+        seg i =
+            let
+                x =
+                    i * colStep
+
+                h =
+                    Basics.max 0.5 (ampAt x * (mid - 2))
+            in
+            "M" ++ String.fromInt x ++ " " ++ String.fromFloat (mid - h) ++ "L" ++ String.fromInt x ++ " " ++ String.fromFloat (mid + h)
+
+        d =
+            List.range 0 (width // colStep)
+                |> List.map seg
+                |> String.join ""
+
+        boundaries =
+            sectionStartBars sections ++ [ totalBars ]
+
+        boundaryLines =
+            List.map
+                (\bar ->
+                    Svg.line
+                        [ SA.x1 (String.fromInt (bar * pxPerBar))
+                        , SA.y1 "0"
+                        , SA.x2 (String.fromInt (bar * pxPerBar))
+                        , SA.y2 (String.fromInt waveHeight)
+                        , SA.stroke Theme.outlineVariant
+                        ]
+                        []
+                )
+                boundaries
+    in
+    Svg.svg
+        [ SA.width (String.fromInt width)
+        , SA.height (String.fromInt waveHeight)
+        , SA.viewBox ("0 0 " ++ String.fromInt width ++ " " ++ String.fromInt waveHeight)
+        , HA.style "display" "block"
+        , HA.style "background" Theme.surfaceContainerLow
+        , HA.style "border-bottom" ("1px solid " ++ Theme.outlineVariant)
+        ]
+        (boundaryLines
+            ++ [ Svg.path [ SA.d d, SA.stroke (Theme.withAlpha 0.55 Theme.primary), SA.strokeWidth "2" ] [] ]
+        )
+
+
 {-| 各セクションの開始小節（0-based）を、リストの先頭からの累積で求める。ルーラーの目盛り位置計算で使う。
 -}
 sectionStartBars : List Section -> List Int
@@ -156,8 +298,8 @@ sectionDragTargetIndex pxPerBar sections currentIndex accumDx =
                     Nothing
 
 
-view : Config msg -> RulerData -> List ChordSpan -> BlockExtras -> Maybe Int -> String -> List Section -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> Html msg
-view config rulerData chordSpans extras selectedId insertCountInput sections pendingDeleteId resizePreview =
+view : Config msg -> RulerData -> List ChordSpan -> Maybe WaveformData -> BlockExtras -> Maybe Int -> List Section -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> Html msg
+view config rulerData chordSpans waveform extras selectedId sections pendingDeleteId resizePreview =
     let
         totalBars =
             List.sum (List.map .lengthBars sections)
@@ -167,8 +309,15 @@ view config rulerData chordSpans extras selectedId insertCountInput sections pen
             [ HA.id sectionBarScrollId
             , HA.style "overflow-x" "auto"
             ]
-            [ regionRulerView config rulerData.pxPerBar rulerData.loopEditable rulerData.loop rulerData.ticksToPx rulerData.playheadTicks sections
-            , ChordStrip.view config.clickedChord
+            [ regionRulerView config rulerData.pxPerBar rulerData.loopEditable rulerData.loop rulerData.ticksToPx rulerData.playheadTicks rulerData.viewRange sections
+            , case waveform of
+                Nothing ->
+                    text ""
+
+                Just w ->
+                    Svg.Lazy.lazy6 waveStrip w.peaks w.peakDt w.secsPerTick w.offsetMs rulerData.pxPerBar sections
+            , ChordStrip.view
+                { clickedChord = config.clickedChord, doubleClickedChord = Just config.doubleClickedChord }
                 { ticksToX = rulerData.ticksToPx
                 , width = totalBars * rulerData.pxPerBar
                 , playheadTicks = rulerData.playheadTicks
@@ -186,7 +335,7 @@ view config rulerData chordSpans extras selectedId insertCountInput sections pen
             ]
         , case selectedId |> Maybe.andThen (\sid -> sections |> List.filter (\s -> s.id == sid) |> List.head) of
             Just section ->
-                editPanel config insertCountInput section pendingDeleteId
+                editPanel config section pendingDeleteId
 
             Nothing ->
                 text ""
@@ -197,8 +346,8 @@ view config rulerData chordSpans extras selectedId insertCountInput sections pen
 表示を全て担う対話型ルーラー。`PianoRoll.elm` の `rulerView`/`loopBandView`/`loopHandle`/`playheadLine` と同じ形を
 このスケール（`pxPerBar`）向けにミラーしている。
 -}
-regionRulerView : Config msg -> Int -> Bool -> Maybe { startTicks : Int, endTicks : Int } -> (Int -> Float) -> Int -> List Section -> Html msg
-regionRulerView config pxPerBar loopEditable loop ticksToPx playheadTicks sections =
+regionRulerView : Config msg -> Int -> Bool -> Maybe { startTicks : Int, endTicks : Int } -> (Int -> Float) -> Int -> Maybe { startTicks : Int, endTicks : Int } -> List Section -> Html msg
+regionRulerView config pxPerBar loopEditable loop ticksToPx playheadTicks viewRange sections =
     let
         totalBars =
             List.sum (List.map .lengthBars sections)
@@ -217,10 +366,10 @@ regionRulerView config pxPerBar loopEditable loop ticksToPx playheadTicks sectio
                 , SA.y2 (String.fromInt regionRulerHeight)
                 , SA.stroke
                     (if List.member bar boundaries then
-                        "#888"
+                        Theme.outline
 
                      else
-                        "#ddd"
+                        Theme.outlineVariant
                     )
                 , SA.strokeWidth
                     (if List.member bar boundaries then
@@ -237,7 +386,7 @@ regionRulerView config pxPerBar loopEditable loop ticksToPx playheadTicks sectio
                 [ SA.x (String.fromInt (bar * pxPerBar + 3))
                 , SA.y "12"
                 , SA.fontSize "10"
-                , SA.fill "#888"
+                , SA.fill Theme.onSurfaceVariant
                 ]
                 [ Svg.text (String.fromInt (bar + 1)) ]
 
@@ -281,10 +430,36 @@ regionRulerView config pxPerBar loopEditable loop ticksToPx playheadTicks sectio
                 , SA.y1 "0"
                 , SA.x2 (String.fromFloat (ticksToPx playheadTicks))
                 , SA.y2 (String.fromInt regionRulerHeight)
-                , SA.stroke "#e74c3c"
+                , SA.stroke Theme.playhead
                 , SA.strokeWidth "2"
                 ]
                 []
+
+        viewRangeRect =
+            case viewRange of
+                Nothing ->
+                    []
+
+                Just r ->
+                    let
+                        x0 =
+                            ticksToPx r.startTicks
+
+                        x1 =
+                            ticksToPx r.endTicks
+                    in
+                    [ Svg.rect
+                        [ SA.x (String.fromFloat x0)
+                        , SA.y "1"
+                        , SA.width (String.fromFloat (Basics.max 0 (x1 - x0)))
+                        , SA.height (String.fromInt (regionRulerHeight - 2))
+                        , SA.fill "none"
+                        , SA.stroke Style.colorViewRange
+                        , SA.strokeWidth "1.5"
+                        , SA.pointerEvents "none"
+                        ]
+                        []
+                    ]
     in
     Svg.svg
         [ SA.width (String.fromInt width)
@@ -298,6 +473,7 @@ regionRulerView config pxPerBar loopEditable loop ticksToPx playheadTicks sectio
         (List.map tick (List.range 0 totalBars)
             ++ List.map label boundaries
             ++ loopBand
+            ++ viewRangeRect
             ++ [ playhead ]
         )
 
@@ -372,22 +548,14 @@ blockView config pxPerBar selectedId resizePreview extras idx section =
         , HA.style "box-sizing" "border-box"
         , HA.style "text-align" "center"
         , HA.style "border"
-            ((if selected then
-                "2px solid "
-
-              else
-                "1px solid "
-             )
-                ++ Palette.sectionColor idx
-            )
-        , HA.style "border-radius" "4px"
-        , HA.style "background"
             (if selected then
-                Palette.sectionTint idx
+                "2px solid " ++ Palette.sectionColor idx
 
              else
-                Palette.neutral
+                "1px solid transparent"
             )
+        , HA.style "border-radius" "4px"
+        , HA.style "background" (Palette.sectionTint idx)
         , HA.style "box-shadow"
             (if playing then
                 "0 0 8px " ++ Palette.sectionColor idx
@@ -416,7 +584,7 @@ blockView config pxPerBar selectedId resizePreview extras idx section =
             , HA.style "bottom" "0"
             , HA.style "width" "6px"
             , HA.style "cursor" "ew-resize"
-            , HA.style "background" Style.colorPrimary
+            , HA.style "background" (Palette.sectionColor idx)
             , HA.style "border-radius" "0 3px 3px 0"
             , HE.stopPropagationOn "mousedown"
                 (Decode.map (\cx -> ( config.pressedResizeHandle section.id cx, True )) (Decode.field "clientX" Decode.float))
@@ -425,14 +593,13 @@ blockView config pxPerBar selectedId resizePreview extras idx section =
         ]
 
 
-editPanel : Config msg -> String -> Section -> Maybe Int -> Html msg
-editPanel config insertCountInput section pendingDeleteId =
+editPanel : Config msg -> Section -> Maybe Int -> Html msg
+editPanel config section pendingDeleteId =
     div
         [ HA.style "margin-top" "0.4rem"
         , HA.style "padding" "0.5rem"
-        , HA.style "border" "1px solid #4a90d9"
         , HA.style "border-radius" "4px"
-        , HA.style "background" "#f6faff"
+        , HA.style "background" Theme.secondaryContainer
         ]
         [ div [ HA.style "display" "flex", HA.style "gap" "0.5rem", HA.style "align-items" "center" ]
             [ input
@@ -502,31 +669,6 @@ editPanel config insertCountInput section pendingDeleteId =
             , button (Style.baseButton ++ [ HE.onClick (config.transpose section.id -1), HA.title "このセクションを半音下げる" ]) [ text "-1" ]
             , button (Style.baseButton ++ [ HE.onClick (config.transpose section.id 1), HA.title "このセクションを半音上げる" ]) [ text "+1" ]
             , button (Style.baseButton ++ [ HE.onClick (config.transpose section.id 12), HA.title "このセクションを1オクターブ上げる" ]) [ text "+12" ]
-            ]
-        , div [ HA.style "display" "flex", HA.style "gap" "0.5rem", HA.style "align-items" "center", HA.style "margin-top" "0.3rem" ]
-            [ span [ HA.style "font-size" "0.85rem" ] [ text "小節挿入/削除:" ]
-            , input
-                [ HA.type_ "number"
-                , HA.value insertCountInput
-                , HE.onInput config.changedInsertCount
-                , HA.style "width" "3.5rem"
-                ]
-                []
-            , button
-                (Style.baseButton
-                    ++ [ HE.onClick (config.insertBefore section.id)
-                       , HA.title "このセクションの前に無音を指定小節数挿入する（コード進行の改行は崩れることがあります）"
-                       ]
-                )
-                [ text "+ 挿入" ]
-            , button
-                (Style.dangerButton
-                    ++ [ HE.onClick (config.removeFromStart section.id)
-                       , HA.title "このセクションの先頭から指定小節数を削除する（コード進行の改行は崩れることがあります）"
-                       , HA.attribute "aria-label" "先頭から小節を削除"
-                       ]
-                )
-                [ text "✂ 小節削除" ]
             ]
         , textarea
             [ HA.value section.memo

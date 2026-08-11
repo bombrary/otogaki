@@ -15,11 +15,12 @@ import Set exposing (Set)
 import View.Fretboard as Fretboard
 import View.Palette as Palette
 import View.Style as Style
+import View.Theme as Theme
 import View.VoicingKeyboard as VoicingKeyboard
 
 
 type alias Config msg =
-    { changedText : String -> msg
+    { changedChordSheetText : String -> msg
     , toggledChordProgressionModal : msg
     , convertToTrack : msg
     , toggledVoicingEnabled : msg
@@ -30,6 +31,7 @@ type alias Config msg =
     , changedVoicingName : Int -> String -> msg
     , pressedVoicingOffset : Int -> Int -> { clientX : Float, clientY : Float, shift : Bool } -> msg
     , doubleClickedVoicingOffset : Int -> Int -> msg
+    , pressedVoicingKeyboardKey : Int -> msg
     , pressedFretboardCell : Int -> Int -> Int -> msg
     , doubleClickedFretboardCell : Int -> Int -> Int -> msg
     , clickedPlayVoicing : Int -> msg
@@ -38,6 +40,9 @@ type alias Config msg =
     , changedVoicingPresetQuality : String -> msg
     , changedVoicingPresetShape : String -> msg
     , appliedVoicingPreset : Int -> msg
+    , clickedResetVoicing : Int -> msg
+    , hoveredFretCell : { pitch : Int, interval : Int, x : Float, y : Float } -> msg
+    , unhoveredFretCell : msg
     }
 
 
@@ -51,14 +56,16 @@ type alias VoicingState =
     , previewRootPc : Int
     , presetQualityName : String
     , presetShapeName : String
+    , selectedOffsets : Set Int
     }
 
 
 {-| 再生位置（playheadTicks）に鳴っているコードを、指板の運指と一緒に表示する。ボイスリーディング
 （直前コードとの比較・保持弦/移動弦の色分け）はしない。単一コードの運指のみ。
+`hover` は Fretboard のホバー（常時有効）をそのまま中継するだけ。
 -}
-currentChordView : Timeline -> Int -> VoicingState -> ChordTrack -> Html msg
-currentChordView timeline playheadTicks voicingState track =
+currentChordView : Timeline -> Int -> VoicingState -> ChordTrack -> Fretboard.HoverConfig msg -> Html msg
+currentChordView timeline playheadTicks voicingState track hover =
     let
         activeChord =
             Data.ChordTrack.resolved timeline track
@@ -82,27 +89,16 @@ currentChordView timeline playheadTicks voicingState track =
                 [ div Style.headingText [ text ("\u{1F3B8} " ++ Format.format { preferFlat = False } chord) ]
                 , case Data.StrumExpand.formFor voicingState.guitarFormEnabled effectiveVoicings chord of
                     Just form ->
-                        Fretboard.viewReadOnly (formToFretboardData chord form)
+                        Fretboard.viewReadOnly hover (formToFretboardData chord form)
 
                     Nothing ->
-                        div [ HA.style "font-size" "0.75rem", HA.style "color" "#999" ] [ text "（運指を決められません）" ]
+                        div [ HA.style "font-size" "0.75rem", HA.style "color" Theme.onSurfaceVariant ] [ text "（運指を決められません）" ]
                 ]
 
 
 formToFretboardData : Chord -> GuitarForm.Form -> { rootPitch : Int, selected : Set Int, picks : GuitarForm.StringPicks }
 formToFretboardData chord form =
-    let
-        rootPitch =
-            anchorPitch + modBy 12 chord.root
-    in
-    { rootPitch = rootPitch
-    , selected = Set.fromList (GuitarForm.toPitches form)
-    , picks =
-        List.map2 Tuple.pair GuitarForm.openStrings form.frets
-            |> List.indexedMap (\i ( openPitch, maybeFret ) -> Maybe.map (\fret -> ( openPitch + fret - rootPitch, i )) maybeFret)
-            |> List.filterMap identity
-            |> Set.fromList
-    }
+    Fretboard.formData (anchorPitch + modBy 12 chord.root) form
 
 
 view : Config msg -> Timeline -> Int -> VoicingState -> ChordTrack -> Html msg
@@ -111,7 +107,7 @@ view config timeline playheadTicks voicingState track =
         [ HA.attribute "open" ""
         , HA.style "margin-top" "1rem"
         , HA.style "padding" "0.5rem"
-        , HA.style "border" "1px solid #ddd"
+        , HA.style "border" ("1px solid " ++ Theme.outlineVariant)
         , HA.style "border-radius" "4px"
         ]
         [ Html.summary (HA.style "cursor" "pointer" :: Style.headingText) [ text "コード進行" ]
@@ -167,7 +163,7 @@ view config timeline playheadTicks voicingState track =
                 )
                 [ text "✎ コード進行を編集" ]
             ]
-        , currentChordView timeline playheadTicks voicingState track
+        , currentChordView timeline playheadTicks voicingState track { hoveredFret = config.hoveredFretCell, unhoveredFret = config.unhoveredFretCell }
         , voicingsSection config voicingState (Data.ChordTrack.cells timeline track)
         ]
 
@@ -175,16 +171,16 @@ view config timeline playheadTicks voicingState track =
 {-| コード進行のテキストエリア。380px のサイドバーには打ちづらいという声を受け、
 Main.elm 側で `View.Modal` に載せて広い画面で表示する想定。
 -}
-progressionEditorView : Config msg -> ChordTrack -> Html msg
-progressionEditorView config track =
+progressionEditorView : Config msg -> String -> Html msg
+progressionEditorView config sheetText =
     div []
         [ div Style.headingText [ text "コード進行を編集" ]
-        , span [ HA.style "font-size" "0.75rem", HA.style "color" "#888", HA.style "display" "block", HA.style "margin-top" "0.3rem" ]
-            [ text "| で小節区切り（改行は無視されるので自由に使ってOK）、空白で小節内分割。% = 直前のコードを繰返し、_ = 休符、= = 直前のコードを伸ばす、// 以降は行末までコメント。コードをクリックすると再生位置がそこへ移動" ]
+        , span [ HA.style "font-size" "0.75rem", HA.style "color" Theme.onSurfaceVariant, HA.style "display" "block", HA.style "margin-top" "0.3rem" ]
+            [ text "空行でセクションを区切り、ブロック先頭の縦棒を含まない行がセクション名になります。縦棒で小節区切り、空白で小節内分割。% = 直前のコードを繰返し、_ = 休符、= = 直前のコードを伸ばす、// 以降は行末までコメント。入力するたびに自動反映されます（形式が崩れている間は反映されません）。コードをクリックすると再生位置がそこへ移動" ]
         , textarea
-            [ HA.value track.text
-            , HE.onInput config.changedText
-            , HA.placeholder "例:\nC | G/B | Am7 | F  // イントロ\nC | G7b5 | % | =  // Aメロ"
+            [ HA.value sheetText
+            , HE.onInput config.changedChordSheetText
+            , HA.placeholder "例:\nAメロ\nC | G/B | Am7 | F |\n\nサビ\nC | G7b5 | % | = |"
             , HA.style "width" "100%"
             , HA.style "font-size" "1rem"
             , HA.style "margin-top" "0.4rem"
@@ -241,15 +237,15 @@ voicingsSection config voicingState cells =
     Html.details
         [ HA.style "margin-top" "0.5rem"
         , HA.style "padding" "0.4rem"
-        , HA.style "border" "1px solid #eee"
+        , HA.style "border" ("1px solid " ++ Theme.surfaceContainerHighest)
         , HA.style "border-radius" "4px"
         ]
-        (Html.summary [ HA.style "cursor" "pointer", HA.style "font-size" "0.85rem", HA.style "color" "#666" ] [ text "ボイシング辞書" ]
+        (Html.summary [ HA.style "cursor" "pointer", HA.style "font-size" "0.85rem", HA.style "color" Theme.onSurfaceVariant ] [ text "ボイシング辞書" ]
             :: (if List.isEmpty missing then
                     []
 
                 else
-                    [ div [ HA.style "font-size" "0.75rem", HA.style "color" "#e6a817", HA.style "margin-top" "0.3rem" ]
+                    [ div [ HA.style "font-size" "0.75rem", HA.style "color" Theme.onHighlightContainer, HA.style "margin-top" "0.3rem" ]
                         (text "未登録: "
                             :: List.map
                                 (\name ->
@@ -339,7 +335,7 @@ voicingEditorView config voicingState index voicing =
             , HA.style "flex-wrap" "wrap"
             , HA.style "margin-top" "0.5rem"
             , HA.style "font-size" "0.75rem"
-            , HA.style "color" "#666"
+            , HA.style "color" Theme.onSurfaceVariant
             ]
             [ text "試聴キー:"
             , previewRootSelect config voicingState.previewRootPc
@@ -354,17 +350,29 @@ voicingEditorView config voicingState index voicing =
                        ]
                 )
                 [ text "プリセットを適用" ]
+            , button (Style.dangerButton ++ [ HE.onClick (config.clickedResetVoicing index), HA.title "offsetsと弦選択を空にして最初からやり直す" ]) [ text "初期化" ]
+            , Style.divider
+            , button
+                (Style.baseButton ++ [ HE.onClick (config.clickedPlayVoicing index), HA.title "このボイシングを和音で確かめる（試聴キーに従う）" ])
+                [ text "▶　全部同時発音" ]
             ]
         , div [ HA.style "display" "flex", HA.style "gap" "0.6rem", HA.style "align-items" "flex-start", HA.style "overflow-x" "auto", HA.style "margin-top" "0.6rem" ]
             [ VoicingKeyboard.view
                 { pressedOffset = config.pressedVoicingOffset index
                 , doubleClickedOffset = config.doubleClickedVoicingOffset index
+                , pressedKey = config.pressedVoicingKeyboardKey
                 }
-                { rootPitch = rootPitch, displayRootPitch = displayRootPitch, selected = selected }
+                { hoveredKey = config.hoveredFretCell, unhoveredKey = config.unhoveredFretCell }
+                { rootPitch = rootPitch
+                , displayRootPitch = displayRootPitch
+                , placed = selected
+                , selectedPitches = Set.map ((+) rootPitch) voicingState.selectedOffsets
+                }
             , Fretboard.view
                 { pressedFret = config.pressedFretboardCell index
                 , doubleClickedFret = config.doubleClickedFretboardCell index
                 }
+                { hoveredFret = config.hoveredFretCell, unhoveredFret = config.unhoveredFretCell }
                 { rootPitch = rootPitch, selected = selected, picks = voicing.stringPicks }
             ]
         ]
@@ -407,5 +415,3 @@ shapeSelect config presetShapeName =
                     option [ HA.value name, HA.selected (name == presetShapeName) ] [ text name ]
                 )
         )
-
-

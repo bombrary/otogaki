@@ -1,14 +1,15 @@
-module Data.StrumExpand exposing (apply, formFor, previewNotes, soundingPitches)
+module Data.StrumExpand exposing (apply, formFor, previewNotes, soundingPitches, voicingFromForm)
 
 import Data.Chord
 import Data.ChordTrack
 import Data.GuitarForm as GuitarForm
 import Data.Note exposing (Note)
 import Data.Project exposing (Project)
-import Data.StrumPattern exposing (Direction(..), Pattern)
+import Data.StrumPattern exposing (Direction(..), Pattern, Pick(..))
 import Data.Time
 import Data.Timeline exposing (Timeline)
 import Data.Voicing exposing (Voicing)
+import Set
 
 
 {-| 弦ごとのストロークタイミングのずれ幅（1弦あたり）。PPQ=480 なら 1/60 拍程度。
@@ -53,6 +54,30 @@ formFor guitarFormEnabled voicings chord =
                 Nothing
 
 
+{-| Form を Voicing に変換する。全弦の (offset, 弦インデックス) を stringPicks に入れるので、
+`formFor` の `formFromPicks` 経路（coversAll 成立）で選んだフォームを弦単位で完全に再現できる。
+`rootPitch` は呼び出し側が `Data.Voicing.anchorPitch + modBy 12 chord.root` で求める。
+`View.ChordEditor.formToFretboardData` の picks 計算と同じロジック。
+-}
+voicingFromForm : Int -> GuitarForm.Form -> String -> Voicing
+voicingFromForm rootPitch form name =
+    let
+        picks =
+            List.map2 Tuple.pair GuitarForm.openStrings form.frets
+                |> List.indexedMap (\i ( openPitch, maybeFret ) -> Maybe.map (\fret -> ( openPitch + fret - rootPitch, i )) maybeFret)
+                |> List.filterMap identity
+                |> Set.fromList
+
+        offsets =
+            picks
+                |> Set.toList
+                |> List.map Tuple.first
+                |> List.foldl (\o acc -> if List.member o acc then acc else o :: acc) []
+                |> List.reverse
+    in
+    { name = name, offsets = offsets, stringPicks = picks }
+
+
 {-| コードの発音候補を「弦順（低音から高音）のピッチ列」として取り出す。
 Form が引ければ実際の弦・フレットから、引けなければ toPitchesWith の理論値をそのまま昇順に並べたものを
 「擬似弦」として使う。
@@ -61,10 +86,38 @@ soundingPitches : Bool -> List Voicing -> Data.Chord.Chord -> List Int
 soundingPitches guitarFormEnabled voicings chord =
     case formFor guitarFormEnabled voicings chord of
         Just form ->
-            GuitarForm.toPitches form
+            withSlashBass chord.bass (GuitarForm.toPitches form)
 
         Nothing ->
             Data.Chord.toPitchesWith voicings chord |> List.sort
+
+
+{-| フォーム由来のピッチ列にスラッシュコードのベース音を反映する。
+GuitarForm.forChord / 登録ボイシングの弦割当は root と quality だけで決まり、on-chord のベース指定 (`chord.bass`) を無視するため、
+ここで別途ベース音を最低音として先頭に足す。フォームの最低音が既に同じピッチクラスならそのまま返す（例: C/C）。
+-}
+withSlashBass : Maybe Int -> List Int -> List Int
+withSlashBass maybeBass pitches =
+    case ( maybeBass, List.minimum pitches ) of
+        ( Just bass, Just lowest ) ->
+            let
+                bassPc =
+                    modBy 12 bass
+
+                candidate =
+                    Data.Voicing.anchorPitch + bassPc
+            in
+            if modBy 12 lowest == bassPc then
+                pitches
+
+            else if candidate < lowest then
+                candidate :: pitches
+
+            else
+                (candidate - 12) :: pitches
+
+        _ ->
+            pitches
 
 
 {-| コード進行を実際にMIDI化（「→ MIDIトラック化」）した場合に鳴るはずのノート列を計算する。
@@ -137,12 +190,22 @@ apply cfg guitarFormEnabled voicings pattern project =
                             soundingPitches guitarFormEnabled voicings rc.chord
 
                         ordered =
-                            case s.direction of
-                                Down ->
-                                    pitches
+                            case s.pick of
+                                AllStrings ->
+                                    case s.direction of
+                                        Down ->
+                                            pitches
 
-                                Up ->
-                                    List.reverse pitches |> List.drop 2
+                                        Up ->
+                                            pitches |> List.drop 2 |> List.reverse
+
+                                StringIndex i ->
+                                    case List.length pitches of
+                                        0 ->
+                                            []
+
+                                        n ->
+                                            pitches |> List.drop (modBy n i) |> List.take 1
 
                         dur =
                             Basics.max 1 (eventEnd index start - start)

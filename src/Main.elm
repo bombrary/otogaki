@@ -9,6 +9,9 @@ import Codec.Performance as Performance
 import Codec.ProjectJson as ProjectJson
 import Data.Chord
 import Data.Chord.Detect
+import Data.Chord.Format as ChordFormat
+import Data.Chord.Parser as ChordParser
+import Data.ChordSheet
 import Data.StrumExpand
 import Data.StrumPattern
 import Data.GuitarForm
@@ -36,6 +39,7 @@ import Midi.Encode
 import Ports
 import Set exposing (Set)
 import View.Style as Style
+import View.Theme as Theme
 import View.VoicingKeyboard as VoicingKeyboard
 import Process
 import Task
@@ -43,6 +47,7 @@ import View.Arrange as Arrange
 import View.ChordBlocks as ChordBlocks
 import View.ChordEditor as ChordEditor
 import View.DrumEditor as DrumEditor
+import View.FormPicker as FormPicker
 import View.Keyboard as Keyboard
 import View.Modal as Modal
 import View.PianoRoll as PianoRoll
@@ -58,6 +63,7 @@ type PlayState
 
 type DragMode
     = MoveNote
+    | ResizeLeft
     | ResizeRight
 
 
@@ -111,8 +117,16 @@ type VoicingDragState
         }
 
 
+{-| ベロシティレーンのバードラッグ中の状態。origVelocities はドラッグ開始時の
+(noteId, velocity) スナップショットで、每 move でここから再計算する（累積誤差を防ぐ）。-}
+type alias VelocityDrag =
+    { startClientY : Float
+    , origVelocities : Dict Int Int
+    }
+
+
 type alias ClientPos =
-    { clientX : Float, clientY : Float }
+    { clientX : Float, clientY : Float, alt : Bool }
 
 
 type alias KeyEvent =
@@ -145,7 +159,6 @@ type alias Model =
     , refPeakDt : Float
     , drumViewRoll : Bool
     , chordBlockView : Bool
-    , chordMidiPreview : Bool
     , loopMode : LoopMode
     , undoStack : List Project
     , redoStack : List Project
@@ -166,12 +179,16 @@ type alias Model =
     , editingVoicingIndex : Maybe Int
     , pendingVoicingDelete : Maybe Int
     , chordCopyFeedback : Bool
+    , chordSheetDraft : Maybe String
     , voicingPreviewRoot : Int
     , voicingPresetQuality : String
     , voicingPresetShape : String
     , voicingSelectedOffsets : Set Int
     , voicingDragState : VoicingDragState
     , pianoRollZoom : Int
+    , gridUnit : Data.Time.GridUnit
+    , pianoRollScrollX : Float
+    , pianoRollViewportWidth : Maybe Float
     , sectionResizeDrag : Maybe { sectionId : Int, startClientX : Float, origLengthBars : Int, curLengthBars : Int }
     , sectionMoveDrag : Maybe { sectionId : Int, lastClientX : Float, accumDx : Float, moved : Bool, wasSelected : Bool }
     , sectionBarZoom : Int
@@ -180,9 +197,12 @@ type alias Model =
     , paneDividerDrag : Maybe { startClientX : Float, origWidth : Int }
     , chordProgressionModalOpen : Bool
     , hoveredNote : Maybe { note : Data.Note.Note, x : Float, y : Float }
+    , hoveredFretCell : Maybe { pitch : Int, interval : Int, x : Float, y : Float }
     , selectedChordKeys : Set ( Int, Int )
     , chordDrag : Maybe ChordDrag
     , chordRubberBand : Maybe RubberBand
+    , formPicker : Maybe { key : Data.ChordTrack.TokenKey, draft : String, tab : FormPicker.Tab }
+    , velocityDrag : Maybe VelocityDrag
     }
 
 
@@ -212,7 +232,7 @@ type Msg
     | BlurredBpm
     | GotAudio AudioEvent
     | PressedEmptyCell { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, seekMod : Bool }
-    | PressedNote Int Bool { clientX : Float, clientY : Float, shift : Bool }
+    | PressedNote Int PianoRoll.ResizeHandle { clientX : Float, clientY : Float, shift : Bool }
     | PressedChordToken ( Int, Int ) { clientX : Float, clientY : Float, shift : Bool }
     | PressedChordLane { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, seekMod : Bool }
     | DoubleClickedNote Int
@@ -221,10 +241,14 @@ type Msg
     | ReleasedDrag
     | PressedRuler { offsetX : Float, clientX : Float, shift : Bool }
     | PressedPianoKey Int
+    | PressedVoicingKeyboardKey Int
     | GotKey KeyEvent
     | ReleasedKey String
     | SelectedTrack Int
     | ClickedAddTrack
+    | ScrolledPianoRoll { scrollLeft : Float, clientWidth : Float }
+    | GotPianoRollViewportMeasured (Result Browser.Dom.Error Browser.Dom.Viewport)
+    | ResizedWindow
     | ClickedRemoveTrack Int
     | ToggledMute Int
     | ChangedInstrument Int String
@@ -234,7 +258,7 @@ type Msg
     | ClickedImport
     | GotImportFile File.File
     | GotImportContent String
-    | ChangedChordText String
+    | ChangedChordSheetText String
     | ChangedChordInstrument String
     | ToggledChordMute
     | ToggledVoicingEnabled
@@ -248,6 +272,7 @@ type Msg
     | ChangedVoicingPresetQuality String
     | ChangedVoicingPresetShape String
     | AppliedVoicingPreset Int
+    | ClickedResetVoicing Int
     | PressedVoicingOffset Int Int { clientX : Float, clientY : Float, shift : Bool }
     | DoubleClickedVoicingOffset Int Int
     | PressedFretboardCell Int Int Int
@@ -262,7 +287,9 @@ type Msg
     | ChangedSectionBars Int String
     | ChangedSectionMemo Int String
     | MovedSection Int Int
-    | ToggledDrumCell Int Int
+    | PressedDrumCell { pitch : Int, tick : Int, offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool }
+    | RightClickedDrumCell { pitch : Int, tick : Int }
+    | DoubleClickedDrumCell { pitch : Int, tick : Int }
     | AppliedDrumPreset String
     | AppliedStrumPattern String
     | ChangedDrumFillBars String
@@ -279,9 +306,10 @@ type Msg
     | ToggledRefMute
     | ToggledDrumView
     | ToggledChordBlockView
-    | ToggledChordMidiPreview
     | HoveredNote Data.Note.Note Float Float
     | UnhoveredNote
+    | HoveredFretCell { pitch : Int, interval : Int, x : Float, y : Float }
+    | UnhoveredFretCell
     | ChangedMemo String
     | ChangedSectionKey Int String
     | ChangedSectionMode Int String
@@ -289,8 +317,8 @@ type Msg
     | TransposedSong Int
     | TransposedSection Int Int
     | ChangedInsertCount String
-    | InsertedBarsBeforeSection Int
-    | RemovedBarsFromSection Int
+    | InsertedBarsAtPlayhead
+    | RemovedBarsAtPlayhead
     | SeekTo Int
     | SeekPrevSection
     | SeekNextSection
@@ -298,6 +326,7 @@ type Msg
     | ClickedSeekSectionStart Int
     | ToggledGhostTrack Int
     | ChangedDefaultDuration String
+    | ChangedGridUnit String
     | ToggledFollowPlayhead
     | GotPianoRollViewport Int (Result Browser.Dom.Error Browser.Dom.Viewport)
     | PressedLoopHandle Bool Float
@@ -311,6 +340,16 @@ type Msg
     | PressedSectionLoopHandle Bool Float
     | PressedPaneDivider Float
     | ToggledChordProgressionModal
+    | DoubleClickedChordToken Data.ChordTrack.TokenKey
+    | DoubleClickedChordStripAt Int
+    | ClosedFormPicker
+    | ChoseChordForm Data.ChordTrack.TokenKey Data.GuitarForm.Candidate
+    | ChoseVoicingShape Data.ChordTrack.TokenKey Data.VoicingPreset.Shape
+    | ClearedChordVoicing Data.ChordTrack.TokenKey
+    | ChangedFormPickerDraft String
+    | SubmittedFormPickerDraft
+    | SelectedFormPickerTab FormPicker.Tab
+    | PressedVelocityBar Int { clientX : Float, clientY : Float }
     | NoOp
 
 
@@ -341,7 +380,6 @@ init flags =
       , refPeakDt = 0.02
       , drumViewRoll = False
       , chordBlockView = False
-      , chordMidiPreview = False
       , loopMode = NoLoop
       , undoStack = []
       , redoStack = []
@@ -362,12 +400,16 @@ init flags =
       , editingVoicingIndex = Nothing
       , pendingVoicingDelete = Nothing
       , chordCopyFeedback = False
+      , chordSheetDraft = Nothing
       , voicingPreviewRoot = 0
       , voicingPresetQuality = "maj7"
       , voicingPresetShape = "クローズド"
       , voicingSelectedOffsets = Set.empty
       , voicingDragState = NoVoicingDrag
       , pianoRollZoom = PianoRoll.defaultPxPerSixteenth
+      , gridUnit = Data.Time.Sixteenth
+      , pianoRollScrollX = 0
+      , pianoRollViewportWidth = Nothing
       , sectionResizeDrag = Nothing
       , sectionMoveDrag = Nothing
       , sectionBarZoom = SectionBar.defaultRegionPxPerBar
@@ -376,22 +418,29 @@ init flags =
       , paneDividerDrag = Nothing
       , chordProgressionModalOpen = False
       , hoveredNote = Nothing
+      , hoveredFretCell = Nothing
       , selectedChordKeys = Set.empty
       , chordDrag = Nothing
       , chordRubberBand = Nothing
+      , formPicker = Nothing
+      , velocityDrag = Nothing
       }
     , Cmd.none
     )
 
 
-snapRound : Int -> Int
-snapRound ticks =
-    Basics.round (toFloat ticks / toFloat Data.Time.ticksPerSixteenth) * Data.Time.ticksPerSixteenth
+{-| model.gridUnit に追従した四捨五入スナップ。Data.Time.snapRound のグリッド単位を model から自動で引く。
+-}
+snapRound : Model -> Int -> Int
+snapRound model ticks =
+    Data.Time.snapRound (Data.Time.gridTicks model.gridUnit) ticks
 
 
-snapFloor : Int -> Int
-snapFloor ticks =
-    (ticks // Data.Time.ticksPerSixteenth) * Data.Time.ticksPerSixteenth
+{-| model.gridUnit に追従した切り下げスナップ。Data.Time.snapFloor のグリッド単位を model から自動で引く。
+-}
+snapFloor : Model -> Int -> Int
+snapFloor model ticks =
+    Data.Time.snapFloor (Data.Time.gridTicks model.gridUnit) ticks
 
 
 notesOf : Data.Track.TrackKind -> List Data.Note.Note
@@ -470,6 +519,36 @@ findNote model noteId =
     trackNotes model
         |> List.filter (\n -> n.id == noteId)
         |> List.head
+
+
+{-| ドラムグリッドのセル（pitch, グリッドにスナップした tick）に履ているノートを探す。
+-}
+findDrumNoteAt : { pitch : Int, tick : Int } -> Model -> Maybe Data.Note.Note
+findDrumNoteAt { pitch, tick } model =
+    let
+        grid =
+            Data.Time.gridTicks model.gridUnit
+    in
+    trackNotes model
+        |> List.filter (\n -> n.pitch == pitch && n.start >= tick && n.start < tick + grid)
+        |> List.head
+
+
+{-| ドラムセル上のノートを削除し、選択からも除く。右クリック/ダブルクリック両方から共通で呼ばれる。
+-}
+removeDrumNoteAt : { pitch : Int, tick : Int } -> Model -> ( Model, Cmd Msg )
+removeDrumNoteAt target model =
+    case findDrumNoteAt target model of
+        Just note ->
+            ( { model
+                | project = Data.Project.removeNote model.selectedTrackId note.id model.project
+                , selectedNoteIds = Set.remove note.id model.selectedNoteIds
+              }
+            , Cmd.none
+            )
+
+        Nothing ->
+            ( model, Cmd.none )
 
 
 selectedInstrumentName : Model -> String
@@ -567,7 +646,7 @@ isReleasedDrag msg =
 isCoalescing : Msg -> Bool
 isCoalescing msg =
     case msg of
-        ChangedChordText _ ->
+        ChangedChordSheetText _ ->
             True
 
         ChangedBpm _ ->
@@ -645,6 +724,7 @@ restoreProject project model =
         , refOffsetInput = String.fromInt project.referenceAudio.offsetMs
         , dragState = NoDrag
         , rubberBand = Nothing
+        , velocityDrag = Nothing
     }
 
 
@@ -712,6 +792,12 @@ describeMsg msg =
         TransposedSection _ _ ->
             "セクション移調"
 
+        InsertedBarsAtPlayhead ->
+            "小節挿入"
+
+        RemovedBarsAtPlayhead ->
+            "小節削除"
+
         _ ->
             "編集"
 
@@ -755,6 +841,22 @@ chordDragMove pos cd model =
         )
 
 
+{-| ラバーバンドのドラッグ原点/現在点から矩形（x, y, w, h）へ変換する共通ヘルパー。
+PianoRoll用・Drum用の両方で使う。
+-}
+rubberBandRect : Maybe RubberBand -> Maybe { x : Float, y : Float, w : Float, h : Float }
+rubberBandRect band =
+    band
+        |> Maybe.map
+            (\rb ->
+                { x = Basics.min rb.originX rb.curX
+                , y = Basics.min rb.originY rb.curY
+                , w = abs (rb.curX - rb.originX)
+                , h = abs (rb.curY - rb.originY)
+                }
+            )
+
+
 {-| ノートの矩形選択・ドラッグ移動の mousemove 処理。DraggedTo カスケードの末端（他のドラッグ状態がすべて Nothing）で呼ばれる。
 -}
 draggedToNoteOrRubberBand : ClientPos -> Model -> ( Model, Cmd Msg )
@@ -782,6 +884,8 @@ draggedToNoteOrRubberBand pos model =
 
 
 {-| ノートの矩形選択・ドラッグ移動の mouseup 処理。ReleasedDrag カスケードの末端で呼ばれる。
+ドラムトラックが選択中の場合はY軸判定に `DrumEditor.pitchesInYRange` を使い、X軸判定はグリッドに
+スナップした `cellStart` を基準にする（`activeCell` の描画基準と一致させるため）。
 -}
 releasedDragNoteOrRubberBand : Model -> ( Model, Cmd Msg )
 releasedDragNoteOrRubberBand model =
@@ -806,23 +910,48 @@ releasedDragNoteOrRubberBand model =
                 t1 =
                     PianoRoll.pixelsToTicks model.pianoRollZoom x1
 
-                pLow =
-                    PianoRoll.yToPitch y1
-
-                pHigh =
-                    PianoRoll.yToPitch y0
-
                 sel =
-                    trackNotes model
-                        |> List.filter
-                            (\n ->
-                                (n.start < t1)
-                                    && (n.start + n.duration > t0)
-                                    && (n.pitch >= pLow)
-                                    && (n.pitch <= pHigh)
-                            )
-                        |> List.map .id
-                        |> Set.fromList
+                    case selectedTrackKind model of
+                        Just (DrumTrack _) ->
+                            let
+                                grid =
+                                    Data.Time.gridTicks model.gridUnit
+
+                                pitches =
+                                    DrumEditor.pitchesInYRange y0 y1
+                            in
+                            trackNotes model
+                                |> List.filter
+                                    (\n ->
+                                        let
+                                            cellStart =
+                                                n.start // grid * grid
+                                        in
+                                        (cellStart < t1)
+                                            && (cellStart + grid > t0)
+                                            && Set.member n.pitch pitches
+                                    )
+                                |> List.map .id
+                                |> Set.fromList
+
+                        _ ->
+                            let
+                                pLow =
+                                    PianoRoll.yToPitch y1
+
+                                pHigh =
+                                    PianoRoll.yToPitch y0
+                            in
+                            trackNotes model
+                                |> List.filter
+                                    (\n ->
+                                        (n.start < t1)
+                                            && (n.start + n.duration > t0)
+                                            && (n.pitch >= pLow)
+                                            && (n.pitch <= pHigh)
+                                    )
+                                |> List.map .id
+                                |> Set.fromList
             in
             ( { model | rubberBand = Nothing, dragState = NoDrag, selectedNoteIds = sel }, Cmd.none )
 
@@ -862,7 +991,7 @@ update msg model =
                 { coreModel | editBurst = False }
 
         stillDragging =
-            newModel.dragState /= NoDrag || newModel.chordDrag /= Nothing || newModel.chordRubberBand /= Nothing
+            newModel.dragState /= NoDrag || newModel.chordDrag /= Nothing || newModel.chordRubberBand /= Nothing || newModel.velocityDrag /= Nothing
 
         saveCmds =
             if projectChanged then
@@ -950,6 +1079,14 @@ resizeSectionBars sectionId newLenRaw model =
 parseInsertCount : String -> Int
 parseInsertCount raw =
     String.toInt raw |> Maybe.withDefault 1 |> clamp 1 64
+
+
+{-| プレイヘッドのある 0-based 小節番号。小節挿入・削除の基準点に使う。
+ticksToBarBeat は末尾を超えた tick も最後の小節にクランプするので、常に実在する小節番号を返す。
+-}
+playheadBar : Model -> Int
+playheadBar model =
+    (Data.Timeline.ticksToBarBeat model.playheadTicks (Data.Project.timeline model.project)).bar - 1
 
 
 {-| セクションブロックのドラッグ終了時の共通ロジック。実際に並べ替えが起きていなければ
@@ -1095,6 +1232,32 @@ zoomScrollCmd cfg =
     Task.attempt (\_ -> NoOp) (Browser.Dom.setViewportOf cfg.scrollId newScrollLeft 0)
 
 
+{-| ピアノロールのスクロールコンテナ（`PianoRoll.pianoRollScrollId`）が現在の選択状態で実際にマウントされているか。
+コード進行トラックをブロック表示中の時だけ非マウント（リージョン上の可視範囲枠もこの時は非表示になる）。
+-}
+pianoRollScrollMounted : Model -> Bool
+pianoRollScrollMounted model =
+    not (model.selectedTrackId == Data.ChordTrack.trackId && model.chordBlockView)
+
+
+{-| トラック切替等で `PianoRoll.pianoRollScrollId` の DOM が作り直された場合に備え、`model.pianoRollScrollX`
+の位置を明示的に復元し、その後再計測する。同種トラック同士の切替でDOMが再利用されるケースでも
+同値を再設定するだけで無害。`Process.sleep 0` で一拍待つのは、update 直後のCmd実行がDOM再描画より先行して旧ノード相手に
+`setViewportOf` してしまうのを避けるため。マウントされていないときはCmd.none。
+-}
+restorePianoRollScrollCmd : Model -> Cmd Msg
+restorePianoRollScrollCmd model =
+    if pianoRollScrollMounted model then
+        Process.sleep 0
+            |> Task.mapError never
+            |> Task.andThen (\_ -> Browser.Dom.setViewportOf PianoRoll.pianoRollScrollId model.pianoRollScrollX 0)
+            |> Task.andThen (\_ -> Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId)
+            |> Task.attempt GotPianoRollViewportMeasured
+
+    else
+        Cmd.none
+
+
 {-| 削除ボタンの2度押し確認。pending が今回の id と一致していれば confirm（実削除）を、
 そうでなければ arm（アーム状態にするだけ）を返す。
 -}
@@ -1111,25 +1274,31 @@ confirmTwice cfg =
 -}
 resetToProject : Data.Project.Project -> Model -> ( Model, Cmd Msg )
 resetToProject project model =
-    ( { model
-        | project = project
-        , selectedTrackId = firstTrackId project
-        , playState = Idle
-        , playheadTicks = 0
-        , bpmInput = String.fromFloat project.bpm
-        , selectedNoteIds = Set.empty
-        , selectedSectionId = Nothing
-        , loopRange = Nothing
-        , refOffsetInput = String.fromInt project.referenceAudio.offsetMs
-        , refLoaded = False
-        , refPeaks = Array.empty
-        , pendingNewProject = False
-        , hoveredNote = Nothing
-        , selectedChordKeys = Set.empty
-        , chordDrag = Nothing
-        , chordRubberBand = Nothing
-      }
-    , Ports.toAudio Performance.encodeStop
+    let
+        newModel =
+            { model
+                | project = project
+                , selectedTrackId = firstTrackId project
+                , playState = Idle
+                , playheadTicks = 0
+                , bpmInput = String.fromFloat project.bpm
+                , selectedNoteIds = Set.empty
+                , selectedSectionId = Nothing
+                , loopRange = Nothing
+                , refOffsetInput = String.fromInt project.referenceAudio.offsetMs
+                , refLoaded = False
+                , refPeaks = Array.empty
+                , pendingNewProject = False
+                , hoveredNote = Nothing
+                , hoveredFretCell = Nothing
+                , selectedChordKeys = Set.empty
+                , chordDrag = Nothing
+                , chordRubberBand = Nothing
+                , pianoRollScrollX = 0
+            }
+    in
+    ( newModel
+    , Cmd.batch [ Ports.toAudio Performance.encodeStop, restorePianoRollScrollCmd newModel ]
     )
 
 
@@ -1247,7 +1416,7 @@ pasteClipboard model =
     else
         let
             base =
-                Basics.max 0 (snapFloor model.playheadTicks)
+                Basics.max 0 (snapFloor model model.playheadTicks)
 
             project =
                 model.project
@@ -1280,7 +1449,34 @@ deleteSelection model =
                 (List.filter (\n -> not (Set.member n.id model.selectedNoteIds)))
                 model.project
         , selectedNoteIds = Set.empty
+        , hoveredNote =
+            case model.hoveredNote of
+                Just h ->
+                    if Set.member h.note.id model.selectedNoteIds then
+                        Nothing
+
+                    else
+                        model.hoveredNote
+
+                Nothing ->
+                    Nothing
     }
+
+
+{-| 削除した noteId が現在の hoveredNote と一致すればツールチップを消す。一致しなければ他のノートへのホバーは保つ。
+-}
+clearHoveredNote : Int -> Maybe { note : Data.Note.Note, x : Float, y : Float } -> Maybe { note : Data.Note.Note, x : Float, y : Float }
+clearHoveredNote noteId hovered =
+    case hovered of
+        Just h ->
+            if h.note.id == noteId then
+                Nothing
+
+            else
+                hovered
+
+        Nothing ->
+            Nothing
 
 
 transposeSelection : KeyEvent -> Model -> ( Model, Cmd Msg )
@@ -1513,6 +1709,267 @@ keyToPitch key =
             Nothing
 
 
+{-| tick 位置から TokenKey を逆引きした後にも、トークンをダブルクリックしたときも、最終的にはこの関数に集約する。
+対象トークンが `TChord` としてパースできている場合だけ FormPicker を開き、draft の初期値は現在のトークン文字列
+（`TokenSpan.token`）をそのまま使う。
+-}
+openFormPickerFor : Model -> Data.ChordTrack.TokenKey -> ( Model, Cmd Msg )
+openFormPickerFor model key =
+    let
+        timeline =
+            Data.Project.timeline model.project
+
+        span =
+            Data.ChordTrack.tokenSpans timeline model.project.chordTrack
+                |> List.filter (\s -> s.key == key)
+                |> List.head
+    in
+    case span of
+        Just s ->
+            case s.result of
+                Ok (Data.ChordTrack.TChord _) ->
+                    ( { model | formPicker = Just { key = key, draft = s.token, tab = FormPicker.CandidatesTab } }, Cmd.none )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        Nothing ->
+            ( model, Cmd.none )
+
+
+{-| FormPicker の draft をトラックへ確定する。`ChordParser.parse` に成功したときだけ `updateToken` で
+対象トークンのテキストを draft の生テキストに書き換える。失敗している間（パース不能）は何もしない（モーダルを
+閉じたときの黙殺破棄と、ChoseChordForm/ClearedChordVoicing が未確定の draft を安全に無視できることの
+両方をこれで兼ねる）。
+-}
+commitFormPickerDraft : Model -> Model
+commitFormPickerDraft model =
+    case model.formPicker of
+        Nothing ->
+            model
+
+        Just fp ->
+            let
+                timeline =
+                    Data.Project.timeline model.project
+            in
+            case ChordParser.parse fp.draft of
+                Ok _ ->
+                    { model
+                        | project =
+                            Data.Project.updateChordTrack
+                                (Data.ChordTrack.updateToken timeline fp.key (\_ -> fp.draft))
+                                model.project
+                    }
+
+                Err _ ->
+                    model
+
+
+{-| formPicker.key の現在のトークン文字列を tokenSpans から引き直して draft に反映する。`@NAME` が付いたり
+消えたりした後に draft を追従させるために使う（古い draft のまま適用すると @NAME を剥がす事故を防ぐ）。
+formPicker が Nothing なら何もしない。対象トークンが見つからなければ（理論上起こらないが）draft は変えない。
+-}
+refreshFormPickerDraft : Model -> Model
+refreshFormPickerDraft model =
+    case model.formPicker of
+        Nothing ->
+            model
+
+        Just fp ->
+            let
+                timeline =
+                    Data.Project.timeline model.project
+
+                newDraft =
+                    Data.ChordTrack.tokenSpans timeline model.project.chordTrack
+                        |> List.filter (\s -> s.key == fp.key)
+                        |> List.head
+                        |> Maybe.map .token
+            in
+            case newDraft of
+                Just token ->
+                    { model | formPicker = Just { fp | draft = token } }
+
+                Nothing ->
+                    model
+
+
+{-| ボイシングキーボードを、対象行（displayRoot）が中央付近に来る位置へスクロールさせる Cmd。元々
+`ClickedVoicingRow` がタブを開く際に計算していたものを抽出。FormPicker の「手で編集」タブへの自動遷移でも同じスクロールを起こす。
+-}
+voicingKeyboardScrollCmd : Model -> Int -> Cmd Msg
+voicingKeyboardScrollCmd model index =
+    let
+        rootPitch =
+            Data.Voicing.anchorPitch + model.voicingPreviewRoot
+
+        voicingOffsets =
+            List.drop index model.project.voicings |> List.head |> Maybe.map .offsets |> Maybe.withDefault []
+
+        displayRootPitch =
+            Data.Voicing.displayRoot rootPitch voicingOffsets
+
+        rowIndexFromTop =
+            VoicingKeyboard.maxPitch - displayRootPitch
+
+        y =
+            toFloat (rowIndexFromTop * VoicingKeyboard.rowHeight)
+
+        target =
+            Basics.max 0 (y - toFloat VoicingKeyboard.containerHeight / 2 + toFloat VoicingKeyboard.rowHeight / 2)
+    in
+    Task.attempt (\_ -> NoOp) (Browser.Dom.setViewportOf VoicingKeyboard.scrollId 0 target)
+
+
+{-| FormPicker の「手で編集」タブへ切り替える。編集対象 index は `editingVoicingIndex` のみが持つ（formPicker
+側には複製しない）。選択/ドラッグ/削除確認の状態を全てリセットし、既存のボイシング編集ロジック（矢印キー、
+Delete、ドラッグ）をそのまま流用できる状態にする。
+-}
+openEditTab : Int -> Model -> ( Model, Cmd Msg )
+openEditTab index model =
+    ( { model
+        | formPicker = Maybe.map (\fp -> { fp | tab = FormPicker.EditTab }) model.formPicker
+        , editingVoicingIndex = Just index
+        , voicingSelectedOffsets = Set.empty
+        , voicingDragState = NoVoicingDrag
+        , pendingVoicingDelete = Nothing
+      }
+    , voicingKeyboardScrollCmd model index
+    )
+
+
+{-| key のトークンに voicing を登録する（辞書へ insert + トークンの @NAME を更新）。
+`registerCandidateForToken` と、手編集タブの自動登録（空 Voicing 作成）の両方がこれを共有する。
+-}
+insertVoicingForToken : Data.ChordTrack.TokenKey -> Data.Voicing.Voicing -> Model -> Model
+insertVoicingForToken key voicing model =
+    let
+        timeline =
+            Data.Project.timeline model.project
+    in
+    { model
+        | project =
+            model.project
+                |> Data.Project.insertVoicing voicing
+                |> Data.Project.updateChordTrack (Data.ChordTrack.updateToken timeline key (Data.ChordTrack.withVoicingName voicing.name))
+    }
+
+
+{-| 登録後の共通後処理：draft を新しいトークン文字列に追従させ、登録した名前で index を逆引きして
+手編集タブを開く。ChoseChordForm と自動登録フローの両方がこの尾処理を共有する。
+-}
+finishRegistrationAndOpenEditTab : String -> Model -> ( Model, Cmd Msg )
+finishRegistrationAndOpenEditTab name registeredModel =
+    let
+        refreshedModel =
+            refreshFormPickerDraft registeredModel
+    in
+    case Data.Project.voicingIndexByName name refreshedModel.project.voicings of
+        Just index ->
+            openEditTab index refreshedModel
+
+        Nothing ->
+            ( refreshedModel, Cmd.none )
+
+
+{-| key のトークンから、パース済みのコードを逆引きする。トークンが `TChord` としてパースできない、
+または該当スパンが無い場合は `Nothing`。
+-}
+chordForToken : Data.ChordTrack.TokenKey -> Model -> Maybe Data.Chord.Chord
+chordForToken key model =
+    let
+        timeline =
+            Data.Project.timeline model.project
+    in
+    Data.ChordTrack.tokenSpans timeline model.project.chordTrack
+        |> List.filter (\s -> s.key == key)
+        |> List.head
+        |> Maybe.andThen
+            (\s ->
+                case s.result of
+                    Ok (Data.ChordTrack.TChord chord) ->
+                        Just chord
+
+                    _ ->
+                        Nothing
+            )
+
+
+{-| ボイシング名の共通プレフィックス（root + quality + extensions + bass）。GuitarForm 候補・
+VoicingPreset シェイプいずれのサフィックスも、このベース名の後ろに `_` 区切りで付ける。
+-}
+baseVoicingName : Data.Chord.Chord -> String
+baseVoicingName chord =
+    ChordFormat.pitchName False chord.root
+        ++ ChordFormat.qualitySuffix chord.quality
+        ++ Data.GuitarForm.extensionsSuffix chord.extensions
+        ++ Data.GuitarForm.bassSuffix chord.bass
+
+
+{-| 候補カードを選んだときの登録ロジック。元々 `ChoseChordForm` ハンドラ本体にあったものを抽出。
+token が `TChord` としてパースできない場合は `Nothing`。
+-}
+registerCandidateForToken : Data.ChordTrack.TokenKey -> Data.GuitarForm.Candidate -> Model -> Maybe ( Model, String )
+registerCandidateForToken key candidate model =
+    chordForToken key model
+        |> Maybe.map
+            (\chord ->
+                let
+                    rootPitch =
+                        Data.Voicing.anchorPitch + modBy 12 chord.root
+
+                    name =
+                        baseVoicingName chord ++ "_" ++ Data.GuitarForm.candidateSuffix candidate
+
+                    voicing =
+                        Data.StrumExpand.voicingFromForm rootPitch candidate.form name
+                in
+                ( insertVoicingForToken key voicing model, name )
+            )
+
+
+{-| VoicingPreset のシェイプ（Closed/Drop2/Wide）を選んだときの登録ロジック。`registerCandidateForToken` と
+同型（`ChoseVoicingShape` ハンドラから呼ぶ）。token が `TChord` としてパースできない場合は `Nothing`。
+-}
+registerShapeForToken : Data.ChordTrack.TokenKey -> Data.VoicingPreset.Shape -> Model -> Maybe ( Model, String )
+registerShapeForToken key shape model =
+    chordForToken key model
+        |> Maybe.map
+            (\chord ->
+                let
+                    name =
+                        baseVoicingName chord ++ "_" ++ Data.VoicingPreset.shapeSuffix shape
+
+                    voicing =
+                        { name = name
+                        , offsets = Data.VoicingPreset.offsetsFor chord.quality shape
+                        , stringPicks = Set.empty
+                        }
+                in
+                ( insertVoicingForToken key voicing model, name )
+            )
+
+
+{-| 「手で編集」タブを未登録コードで直接開いたときの自動登録。運指の弾きやすさに関わらず常に
+VoicingPreset.Closed（シンプルな音の積み重ね）で登録する（手引きやすさを優先し、高ポジションの
+GuitarForm 先頭候補を自動登録しない方針）。GuitarForm 候補は「候補から選ぶ」タブ側でのみ提示する。
+-}
+autoRegisterAndOpenEditTab : Data.ChordTrack.TokenKey -> Data.Chord.Chord -> Model -> ( Model, Cmd Msg )
+autoRegisterAndOpenEditTab key chord model =
+    let
+        name =
+            baseVoicingName chord ++ "_" ++ Data.VoicingPreset.shapeSuffix Data.VoicingPreset.Closed
+
+        voicing =
+            { name = name
+            , offsets = Data.VoicingPreset.offsetsFor chord.quality Data.VoicingPreset.Closed
+            , stringPicks = Set.empty
+            }
+    in
+    finishRegistrationAndOpenEditTab name (insertVoicingForToken key voicing model)
+
+
 updateCore : Msg -> Model -> ( Model, Cmd Msg )
 updateCore msg model =
     case msg of
@@ -1642,7 +2099,7 @@ updateCore msg model =
 
         PressedEmptyCell pos ->
             if pos.seekMod then
-                seekTo (snapFloor (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX)) model
+                seekTo (snapFloor model (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX)) model
 
             else if pos.shift then
                 ( { model
@@ -1662,7 +2119,7 @@ updateCore msg model =
             else
                 let
                     start =
-                        Basics.max 0 (snapFloor (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX))
+                        Basics.max 0 (snapFloor model (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX))
 
                     pitch =
                         clamp PianoRoll.minPitch PianoRoll.maxPitch (PianoRoll.yToPitch pos.offsetY)
@@ -1692,7 +2149,7 @@ updateCore msg model =
                 , Ports.toAudio (Performance.encodePreviewNote (selectedInstrumentName model) note.pitch)
                 )
 
-        PressedNote noteId isResize pos ->
+        PressedNote noteId handle pos ->
             case findNote model noteId of
                 Just note ->
                     if pos.shift then
@@ -1728,11 +2185,15 @@ updateCore msg model =
                                 Dragging
                                     { anchorId = noteId
                                     , mode =
-                                        if isResize then
-                                            ResizeRight
+                                        case handle of
+                                            PianoRoll.NoResize ->
+                                                MoveNote
 
-                                        else
-                                            MoveNote
+                                            PianoRoll.ResizeLeft ->
+                                                ResizeLeft
+
+                                            PianoRoll.ResizeRight ->
+                                                ResizeRight
                                     , startClientX = pos.clientX
                                     , startClientY = pos.clientY
                                     , origNotes = origs
@@ -1744,6 +2205,28 @@ updateCore msg model =
 
                 Nothing ->
                     ( model, Cmd.none )
+
+        PressedVelocityBar noteId pos ->
+            let
+                targetIds =
+                    if Set.member noteId model.selectedNoteIds then
+                        model.selectedNoteIds
+
+                    else
+                        Set.singleton noteId
+
+                origs =
+                    trackNotes model
+                        |> List.filter (\n -> Set.member n.id targetIds)
+                        |> List.map (\n -> ( n.id, n.velocity ))
+                        |> Dict.fromList
+            in
+            ( { model
+                | selectedNoteIds = targetIds
+                , velocityDrag = Just { startClientY = pos.clientY, origVelocities = origs }
+              }
+            , Cmd.none
+            )
 
         PressedChordToken key pos ->
             if pos.shift then
@@ -1795,7 +2278,7 @@ updateCore msg model =
 
         PressedChordLane pos ->
             if pos.seekMod then
-                seekTo (snapFloor (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX)) model
+                seekTo (snapFloor model (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX)) model
 
             else
                 ( { model
@@ -1818,6 +2301,7 @@ updateCore msg model =
                 | project = Data.Project.removeNote model.selectedTrackId noteId model.project
                 , selectedNoteIds = Set.remove noteId model.selectedNoteIds
                 , dragState = NoDrag
+                , hoveredNote = clearHoveredNote noteId model.hoveredNote
               }
             , Cmd.none
             )
@@ -1826,6 +2310,7 @@ updateCore msg model =
             ( { model
                 | project = Data.Project.removeNote model.selectedTrackId noteId model.project
                 , selectedNoteIds = Set.remove noteId model.selectedNoteIds
+                , hoveredNote = clearHoveredNote noteId model.hoveredNote
               }
             , Cmd.none
             )
@@ -1836,21 +2321,41 @@ updateCore msg model =
                     ( { model | leftPaneWidth = clamp 260 640 (d.origWidth + round (pos.clientX - d.startClientX)) }, Cmd.none )
 
                 Nothing ->
-                    case model.sectionLoopDrag of
-                        Just ld ->
+                    case model.velocityDrag of
+                        Just vd ->
                             let
-                                timeline =
-                                    Data.Project.timeline model.project
-        
-                                baseFractionalBar =
-                                    Data.Timeline.ticksToFractionalBar ld.baseTicks timeline
-        
-                                curFractionalBar =
-                                    baseFractionalBar + (pos.clientX - ld.startClientX) / toFloat model.sectionBarZoom
+                                dv =
+                                    round ((vd.startClientY - pos.clientY) * 127 / toFloat PianoRoll.velocityLaneHeight)
+
+                                apply =
+                                    List.map
+                                        (\n ->
+                                            case Dict.get n.id vd.origVelocities of
+                                                Just v0 ->
+                                                    { n | velocity = clamp 0 127 (v0 + dv) }
+
+                                                Nothing ->
+                                                    n
+                                        )
                             in
-                            ( { model | sectionLoopDrag = Just { ld | curTicks = Basics.max 0 (Data.Timeline.fractionalBarToTicks curFractionalBar timeline) } }, Cmd.none )
-        
+                            ( { model | project = Data.Project.mapNotes model.selectedTrackId apply model.project }, Cmd.none )
+
                         Nothing ->
+                            case model.sectionLoopDrag of
+                                Just ld ->
+                                    let
+                                        timeline =
+                                            Data.Project.timeline model.project
+        
+                                        baseFractionalBar =
+                                            Data.Timeline.ticksToFractionalBar ld.baseTicks timeline
+        
+                                        curFractionalBar =
+                                            baseFractionalBar + (pos.clientX - ld.startClientX) / toFloat model.sectionBarZoom
+                                    in
+                                    ( { model | sectionLoopDrag = Just { ld | curTicks = Basics.max 0 (Data.Timeline.fractionalBarToTicks curFractionalBar timeline) } }, Cmd.none )
+        
+                                Nothing ->
                                     case model.sectionResizeDrag of
                                         Just d ->
                                             let
@@ -1903,7 +2408,7 @@ updateCore msg model =
                                                                     Data.Voicing.shiftOffsets dpitch maxOffset d.origSelected d.origOffsets
                         
                                                                 newSelected =
-                                                                    Set.map (\o -> clamp 0 maxOffset (o + dpitch)) d.origSelected
+                                                                    Set.map (\o -> clamp -12 maxOffset (o + dpitch)) d.origSelected
                                                                         |> Set.filter (\o -> List.member o newOffsets)
                         
                                                                 newPicks =
@@ -1924,7 +2429,7 @@ updateCore msg model =
                                                                             Just
                                                                                 { ld
                                                                                     | curTicks =
-                                                                                        Basics.max 0 (ld.baseTicks + snapRound (PianoRoll.pixelsToTicks model.pianoRollZoom (pos.clientX - ld.startClientX)))
+                                                                                        Basics.max 0 (ld.baseTicks + snapRound model (PianoRoll.pixelsToTicks model.pianoRollZoom (pos.clientX - ld.startClientX)))
                                                                                 }
                                                                       }
                                                                     , Cmd.none
@@ -1949,15 +2454,20 @@ updateCore msg model =
                     ( { model | paneDividerDrag = Nothing }, Cmd.none )
 
                 Nothing ->
-                    case model.sectionLoopDrag of
-                        Just ld ->
-                            let
-                                ( committedModel, cmd ) =
-                                    commitLoopDrag { fixedTicks = ld.fixedTicks, curTicks = ld.curTicks } model
-                            in
-                            ( { committedModel | sectionLoopDrag = Nothing }, cmd )
-        
+                    case model.velocityDrag of
+                        Just _ ->
+                            ( { model | velocityDrag = Nothing }, Cmd.none )
+
                         Nothing ->
+                            case model.sectionLoopDrag of
+                                Just ld ->
+                                    let
+                                        ( committedModel, cmd ) =
+                                            commitLoopDrag { fixedTicks = ld.fixedTicks, curTicks = ld.curTicks } model
+                                    in
+                                    ( { committedModel | sectionLoopDrag = Nothing }, cmd )
+        
+                                Nothing ->
                                     case model.sectionResizeDrag of
                                         Just d ->
                                             ( resizeSectionBars d.sectionId d.curLengthBars { model | sectionResizeDrag = Nothing }, Cmd.none )
@@ -2014,12 +2524,12 @@ updateCore msg model =
             if pos.shift then
                 let
                     anchor =
-                        snapRound (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX)
+                        snapRound model (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX)
                 in
                 ( { model | loopDrag = Just { fixedTicks = anchor, baseTicks = anchor, startClientX = pos.clientX, curTicks = anchor } }, Cmd.none )
 
             else
-                seekTo (snapFloor (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX)) model
+                seekTo (snapFloor model (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX)) model
 
         PressedLoopHandle isEnd clientX ->
             case model.loopRange of
@@ -2059,7 +2569,148 @@ updateCore msg model =
             ( { model | paneDividerDrag = Just { startClientX = clientX, origWidth = model.leftPaneWidth } }, Cmd.none )
 
         ToggledChordProgressionModal ->
-            ( { model | chordProgressionModalOpen = not model.chordProgressionModalOpen }, Cmd.none )
+            if model.chordProgressionModalOpen then
+                ( { model | chordProgressionModalOpen = False, chordSheetDraft = Nothing }, Cmd.none )
+
+            else
+                ( { model
+                    | chordProgressionModalOpen = True
+                    , chordSheetDraft = Just (Data.ChordSheet.toSheetText model.project.sections model.project.chordTrack)
+                  }
+                , Cmd.none
+                )
+
+        DoubleClickedChordToken key ->
+            openFormPickerFor model key
+
+        DoubleClickedChordStripAt ticks ->
+            let
+                timeline =
+                    Data.Project.timeline model.project
+            in
+            case Data.ChordTrack.tokenKeyAtTicks timeline ticks model.project.chordTrack of
+                Just key ->
+                    openFormPickerFor model key
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        ClosedFormPicker ->
+            let
+                committedModel =
+                    commitFormPickerDraft model
+            in
+            ( { committedModel
+                | formPicker = Nothing
+                , hoveredFretCell = Nothing
+                , editingVoicingIndex = Nothing
+                , voicingSelectedOffsets = Set.empty
+                , voicingDragState = NoVoicingDrag
+                , pendingVoicingDelete = Nothing
+              }
+            , Cmd.none
+            )
+
+        ChoseChordForm key candidate ->
+            let
+                committedModel =
+                    commitFormPickerDraft model
+            in
+            case registerCandidateForToken key candidate committedModel of
+                Just ( registeredModel, name ) ->
+                    finishRegistrationAndOpenEditTab name registeredModel
+
+                Nothing ->
+                    ( { committedModel | formPicker = Nothing }, Cmd.none )
+
+        ChoseVoicingShape key shape ->
+            let
+                committedModel =
+                    commitFormPickerDraft model
+            in
+            case registerShapeForToken key shape committedModel of
+                Just ( registeredModel, name ) ->
+                    finishRegistrationAndOpenEditTab name registeredModel
+
+                Nothing ->
+                    ( { committedModel | formPicker = Nothing }, Cmd.none )
+
+        ClearedChordVoicing key ->
+            let
+                committedModel =
+                    commitFormPickerDraft model
+
+                timeline =
+                    Data.Project.timeline committedModel.project
+
+                clearedModel =
+                    { committedModel
+                        | project = Data.Project.updateChordTrack (Data.ChordTrack.updateToken timeline key Data.ChordTrack.withoutVoicingName) committedModel.project
+                      }
+                        |> refreshFormPickerDraft
+
+                wasEditTab =
+                    case clearedModel.formPicker of
+                        Just fp ->
+                            fp.tab == FormPicker.EditTab
+
+                        Nothing ->
+                            False
+            in
+            if wasEditTab then
+                ( { clearedModel
+                    | formPicker = Maybe.map (\fp -> { fp | tab = FormPicker.CandidatesTab }) clearedModel.formPicker
+                    , editingVoicingIndex = Nothing
+                    , voicingSelectedOffsets = Set.empty
+                    , voicingDragState = NoVoicingDrag
+                    , pendingVoicingDelete = Nothing
+                  }
+                , Cmd.none
+                )
+
+            else
+                ( clearedModel, Cmd.none )
+
+        ChangedFormPickerDraft str ->
+            ( { model | formPicker = Maybe.map (\fp -> { fp | draft = str }) model.formPicker }, Cmd.none )
+
+        SubmittedFormPickerDraft ->
+            ( commitFormPickerDraft model, Cmd.none )
+
+        SelectedFormPickerTab tab ->
+            let
+                committedModel =
+                    commitFormPickerDraft model
+            in
+            case tab of
+                FormPicker.CandidatesTab ->
+                    ( { committedModel
+                        | formPicker = Maybe.map (\fp -> { fp | tab = FormPicker.CandidatesTab }) committedModel.formPicker
+                        , editingVoicingIndex = Nothing
+                        , voicingSelectedOffsets = Set.empty
+                        , voicingDragState = NoVoicingDrag
+                        , pendingVoicingDelete = Nothing
+                      }
+                    , Cmd.none
+                    )
+
+                FormPicker.EditTab ->
+                    case committedModel.formPicker of
+                        Nothing ->
+                            ( committedModel, Cmd.none )
+
+                        Just fp ->
+                            case ChordParser.parse fp.draft of
+                                Err _ ->
+                                    ( committedModel, Cmd.none )
+
+                                Ok chord ->
+                                    case chord.voicing |> Maybe.andThen (\name -> Data.Project.voicingIndexByName name committedModel.project.voicings) of
+                                        Just index ->
+                                            openEditTab index committedModel
+
+                                        Nothing ->
+                                            autoRegisterAndOpenEditTab fp.key chord committedModel
 
         PressedSectionResizeHandle sectionId clientX ->
             let
@@ -2088,6 +2739,11 @@ updateCore msg model =
         PressedPianoKey pitch ->
             ( { model | highlightedPitches = Set.singleton pitch }
             , Ports.toAudio (Performance.encodePreviewNote (selectedInstrumentName model) pitch)
+            )
+
+        PressedVoicingKeyboardKey pitch ->
+            ( model
+            , Ports.toAudio (Performance.encodePreviewNote (Data.Track.instrumentToString model.project.chordTrack.instrument) pitch)
             )
 
         GotKey k ->
@@ -2131,7 +2787,7 @@ updateCore msg model =
                                         (currentVoicing |> Maybe.map .offsets |> Maybe.withDefault [])
 
                                 newSelected =
-                                    Set.map (\o -> clamp 0 maxOffset (o + delta)) model.voicingSelectedOffsets
+                                    Set.map (\o -> clamp -12 maxOffset (o + delta)) model.voicingSelectedOffsets
                                         |> Set.filter (\o -> List.member o newOffsets)
 
                                 newPicks =
@@ -2285,7 +2941,7 @@ updateCore msg model =
             else if k.key == "n" && not model.showKeyboard then
                 let
                     start =
-                        Basics.max 0 (snapFloor model.playheadTicks)
+                        Basics.max 0 (snapFloor model model.playheadTicks)
 
                     pitch =
                         model.highlightedPitches |> Set.toList |> List.head |> Maybe.withDefault 60
@@ -2351,20 +3007,25 @@ updateCore msg model =
                     ( model, Cmd.none )
 
         SelectedTrack trackId ->
-            ( { model | selectedTrackId = trackId, selectedNoteIds = Set.empty, selectedChordKeys = Set.empty, pendingTrackDelete = Nothing }, Cmd.none )
+            let
+                newModel =
+                    { model | selectedTrackId = trackId, selectedNoteIds = Set.empty, selectedChordKeys = Set.empty, pendingTrackDelete = Nothing }
+            in
+            ( newModel, restorePianoRollScrollCmd newModel )
 
         ClickedAddTrack ->
             let
                 newTrackId =
                     model.project.nextId
+
+                newModel =
+                    { model
+                        | project = Data.Project.addTrack model.project
+                        , selectedTrackId = newTrackId
+                        , selectedNoteIds = Set.empty
+                    }
             in
-            ( { model
-                | project = Data.Project.addTrack model.project
-                , selectedTrackId = newTrackId
-                , selectedNoteIds = Set.empty
-              }
-            , Cmd.none
-            )
+            ( newModel, restorePianoRollScrollCmd newModel )
 
         ClickedRemoveTrack trackId ->
             confirmTwice
@@ -2461,6 +3122,20 @@ updateCore msg model =
                 Err _ ->
                     ( model, Cmd.none )
 
+        ChangedChordSheetText textValue ->
+            let
+                newProject =
+                    case Data.ChordSheet.parse textValue of
+                        Ok blocks ->
+                            Data.ChordSheet.applyToProjectPreservingIds blocks model.project
+
+                        Err _ ->
+                            model.project
+            in
+            ( { model | chordSheetDraft = Just textValue, project = newProject, selectedChordKeys = Set.empty }
+            , Cmd.none
+            )
+
         ClickedNewProject ->
             confirmTwice
                 { pending = if model.pendingNewProject then Just () else Nothing
@@ -2468,11 +3143,6 @@ updateCore msg model =
                 , arm = ( { model | pendingNewProject = True }, Cmd.none )
                 , confirm = resetToProject Data.Project.empty model
                 }
-
-        ChangedChordText textValue ->
-            ( { model | project = Data.Project.updateChordTrack (\ct -> { ct | text = textValue }) model.project, selectedChordKeys = Set.empty }
-            , Cmd.none
-            )
 
         ChangedChordInstrument raw ->
             case Data.Track.instrumentFromString raw of
@@ -2528,27 +3198,9 @@ updateCore msg model =
                 opening =
                     model.editingVoicingIndex /= Just index
 
-                rootPitch =
-                    Data.Voicing.anchorPitch + model.voicingPreviewRoot
-
-                voicingOffsets =
-                    List.drop index model.project.voicings |> List.head |> Maybe.map .offsets |> Maybe.withDefault []
-
-                displayRootPitch =
-                    Data.Voicing.displayRoot rootPitch voicingOffsets
-
-                rowIndexFromTop =
-                    VoicingKeyboard.maxPitch - displayRootPitch
-
-                y =
-                    toFloat (rowIndexFromTop * VoicingKeyboard.rowHeight)
-
-                target =
-                    Basics.max 0 (y - toFloat VoicingKeyboard.containerHeight / 2 + toFloat VoicingKeyboard.rowHeight / 2)
-
                 scrollCmd =
                     if opening then
-                        Task.attempt (\_ -> NoOp) (Browser.Dom.setViewportOf VoicingKeyboard.scrollId 0 target)
+                        voicingKeyboardScrollCmd model index
 
                     else
                         Cmd.none
@@ -2797,6 +3449,15 @@ updateCore msg model =
                 _ ->
                     ( model, Cmd.none )
 
+        ClickedResetVoicing index ->
+            ( { model
+                | project = Data.Project.updateVoicing index (\v -> { v | offsets = [], stringPicks = Set.empty }) model.project
+                , voicingSelectedOffsets = Set.empty
+                , voicingDragState = NoVoicingDrag
+              }
+            , Cmd.none
+            )
+
         ClickedRemoveVoicing index ->
             confirmTwice
                 { pending = model.pendingVoicingDelete
@@ -2976,32 +3637,63 @@ updateCore msg model =
         MovedSection sectionId delta ->
             ( { model | project = Data.Project.moveSection sectionId delta model.project }, Cmd.none )
 
-        ToggledDrumCell pitch tick ->
-            let
-                existing =
-                    trackNotes model
-                        |> List.filter (\n -> n.pitch == pitch && n.start == tick)
-                        |> List.head
-            in
-            case existing of
-                Just note ->
-                    ( { model | project = Data.Project.removeNote model.selectedTrackId note.id model.project }
+        PressedDrumCell { pitch, tick, offsetX, offsetY, clientX, clientY, shift } ->
+            case ( findDrumNoteAt { pitch = pitch, tick = tick } model, shift ) of
+                ( Just note, True ) ->
+                    ( { model
+                        | selectedNoteIds =
+                            if Set.member note.id model.selectedNoteIds then
+                                Set.remove note.id model.selectedNoteIds
+
+                            else
+                                Set.insert note.id model.selectedNoteIds
+                      }
                     , Cmd.none
                     )
 
-                Nothing ->
+                ( Nothing, True ) ->
+                    ( { model
+                        | rubberBand =
+                            Just
+                                { originX = offsetX
+                                , originY = offsetY
+                                , startClientX = clientX
+                                , startClientY = clientY
+                                , curX = offsetX
+                                , curY = offsetY
+                                }
+                      }
+                    , Cmd.none
+                    )
+
+                ( Just note, False ) ->
+                    ( { model | selectedNoteIds = Set.singleton note.id }, Cmd.none )
+
+                ( Nothing, False ) ->
                     let
+                        grid =
+                            Data.Time.gridTicks model.gridUnit
+
                         note =
                             { id = model.project.nextId
                             , pitch = pitch
                             , start = tick
-                            , duration = Data.Time.ticksPerSixteenth
+                            , duration = grid
                             , velocity = 100
                             }
                     in
-                    ( { model | project = Data.Project.addNote model.selectedTrackId note model.project }
+                    ( { model
+                        | project = Data.Project.addNote model.selectedTrackId note model.project
+                        , selectedNoteIds = Set.singleton note.id
+                      }
                     , Ports.toAudio (Performance.encodePreviewNote "drumKit" pitch)
                     )
+
+        RightClickedDrumCell target ->
+            removeDrumNoteAt target model
+
+        DoubleClickedDrumCell target ->
+            removeDrumNoteAt target model
 
         AppliedDrumPreset presetName ->
             case Data.DrumPattern.byName presetName of
@@ -3099,7 +3791,7 @@ updateCore msg model =
                 Just scrap ->
                     let
                         base =
-                            Basics.max 0 (snapFloor model.playheadTicks)
+                            Basics.max 0 (snapFloor model model.playheadTicks)
 
                         project =
                             model.project
@@ -3192,19 +3884,30 @@ updateCore msg model =
             )
 
         ToggledDrumView ->
-            ( { model | drumViewRoll = not model.drumViewRoll, selectedNoteIds = Set.empty }, Cmd.none )
+            let
+                newModel =
+                    { model | drumViewRoll = not model.drumViewRoll, selectedNoteIds = Set.empty }
+            in
+            ( newModel, restorePianoRollScrollCmd newModel )
 
         ToggledChordBlockView ->
-            ( { model | chordBlockView = not model.chordBlockView }, Cmd.none )
-
-        ToggledChordMidiPreview ->
-            ( { model | chordMidiPreview = not model.chordMidiPreview }, Cmd.none )
+            let
+                newModel =
+                    { model | chordBlockView = not model.chordBlockView }
+            in
+            ( newModel, restorePianoRollScrollCmd newModel )
 
         HoveredNote note x y ->
             ( { model | hoveredNote = Just { note = note, x = x, y = y } }, Cmd.none )
 
         UnhoveredNote ->
             ( { model | hoveredNote = Nothing }, Cmd.none )
+
+        HoveredFretCell h ->
+            ( { model | hoveredFretCell = Just h }, Cmd.none )
+
+        UnhoveredFretCell ->
+            ( { model | hoveredFretCell = Nothing }, Cmd.none )
 
         TransposedSong delta ->
             let
@@ -3268,25 +3971,15 @@ updateCore msg model =
         ChangedInsertCount raw ->
             ( { model | insertCountInput = raw }, Cmd.none )
 
-        InsertedBarsBeforeSection sectionId ->
-            case sectionStartBar sectionId model.project of
-                Just beforeBar ->
-                    ( { model | project = Data.Project.insertBars { beforeBar = beforeBar, count = parseInsertCount model.insertCountInput } model.project }
-                    , Cmd.none
-                    )
+        InsertedBarsAtPlayhead ->
+            ( { model | project = Data.Project.insertBars { beforeBar = playheadBar model, count = parseInsertCount model.insertCountInput } model.project }
+            , Cmd.none
+            )
 
-                Nothing ->
-                    ( model, Cmd.none )
-
-        RemovedBarsFromSection sectionId ->
-            case sectionStartBar sectionId model.project of
-                Just fromBar ->
-                    ( { model | project = Data.Project.removeBars { fromBar = fromBar, count = parseInsertCount model.insertCountInput } model.project }
-                    , Cmd.none
-                    )
-
-                Nothing ->
-                    ( model, Cmd.none )
+        RemovedBarsAtPlayhead ->
+            ( { model | project = Data.Project.removeBars { fromBar = playheadBar model, count = parseInsertCount model.insertCountInput } model.project }
+            , Cmd.none
+            )
 
         SeekTo ticks ->
             seekTo ticks model
@@ -3324,6 +4017,14 @@ updateCore msg model =
             case String.toInt raw of
                 Just duration ->
                     ( { model | defaultNoteDuration = duration }, Cmd.none )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        ChangedGridUnit raw ->
+            case Data.Time.gridUnitFromString raw of
+                Just unit ->
+                    ( { model | gridUnit = unit }, Cmd.none )
 
                 Nothing ->
                     ( model, Cmd.none )
@@ -3403,6 +4104,24 @@ updateCore msg model =
                 Err _ ->
                     ( { model | sectionBarZoom = SectionBar.regionZoomStep w.deltaY model.sectionBarZoom }, Cmd.none )
 
+        ScrolledPianoRoll v ->
+            ( { model | pianoRollScrollX = v.scrollLeft, pianoRollViewportWidth = Just v.clientWidth }, Cmd.none )
+
+        GotPianoRollViewportMeasured result ->
+            case result of
+                Ok viewport ->
+                    ( { model | pianoRollScrollX = viewport.viewport.x, pianoRollViewportWidth = Just viewport.viewport.width }, Cmd.none )
+
+                Err _ ->
+                    ( model, Cmd.none )
+
+        ResizedWindow ->
+            if pianoRollScrollMounted model then
+                ( model, Task.attempt GotPianoRollViewportMeasured (Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId) )
+
+            else
+                ( model, Cmd.none )
+
         NoOp ->
             ( model, Cmd.none )
 
@@ -3410,8 +4129,22 @@ updateCore msg model =
 dragMove : ClientPos -> DragInfo -> Model -> ( Model, Cmd Msg )
 dragMove pos d model =
     let
-        dticks =
-            snapRound (PianoRoll.pixelsToTicks model.pianoRollZoom (pos.clientX - d.startClientX))
+        rawDticks =
+            PianoRoll.pixelsToTicks model.pianoRollZoom (pos.clientX - d.startClientX)
+
+        snapIfNotAlt ticks =
+            if pos.alt then
+                ticks
+
+            else
+                snapRound model ticks
+
+        minDuration =
+            if pos.alt then
+                1
+
+            else
+                Data.Time.gridTicks model.gridUnit
     in
     case d.mode of
         MoveNote ->
@@ -3426,7 +4159,7 @@ dragMove pos d model =
                                 orig.id
                                 (\n ->
                                     { n
-                                        | start = Basics.max 0 (orig.start + dticks)
+                                        | start = Basics.max 0 (snapIfNotAlt (orig.start + rawDticks))
                                         , pitch = clamp PianoRoll.minPitch PianoRoll.maxPitch (orig.pitch + dpitch)
                                     }
                                 )
@@ -3454,6 +4187,30 @@ dragMove pos d model =
                 Cmd.none
             )
 
+        ResizeLeft ->
+            let
+                project2 =
+                    List.foldl
+                        (\orig proj ->
+                            Data.Project.updateNote model.selectedTrackId
+                                orig.id
+                                (\n ->
+                                    let
+                                        endTicks =
+                                            orig.start + orig.duration
+
+                                        newStart =
+                                            clamp 0 (endTicks - minDuration) (snapIfNotAlt (orig.start + rawDticks))
+                                    in
+                                    { n | start = newStart, duration = endTicks - newStart }
+                                )
+                                proj
+                        )
+                        model.project
+                        d.origNotes
+            in
+            ( { model | project = project2 }, Cmd.none )
+
         ResizeRight ->
             let
                 project2 =
@@ -3461,7 +4218,7 @@ dragMove pos d model =
                         (\orig proj ->
                             Data.Project.updateNote model.selectedTrackId
                                 orig.id
-                                (\n -> { n | duration = Basics.max Data.Time.ticksPerSixteenth (orig.duration + dticks) })
+                                (\n -> { n | duration = Basics.max minDuration (snapIfNotAlt (orig.duration + rawDticks)) })
                                 proj
                         )
                         model.project
@@ -3521,7 +4278,7 @@ view model =
             [ style "display" "flex", style "align-items" "center", style "gap" "0.3rem" ]
 
         chordEditorConfig =
-            { changedText = ChangedChordText
+            { changedChordSheetText = ChangedChordSheetText
             , toggledChordProgressionModal = ToggledChordProgressionModal
             , convertToTrack = ClickedConvertChords
             , toggledVoicingEnabled = ToggledVoicingEnabled
@@ -3532,6 +4289,7 @@ view model =
             , changedVoicingName = ChangedVoicingName
             , pressedVoicingOffset = PressedVoicingOffset
             , doubleClickedVoicingOffset = DoubleClickedVoicingOffset
+            , pressedVoicingKeyboardKey = PressedVoicingKeyboardKey
             , pressedFretboardCell = PressedFretboardCell
             , doubleClickedFretboardCell = DoubleClickedFretboardCell
             , clickedPlayVoicing = ClickedPlayVoicing
@@ -3540,6 +4298,9 @@ view model =
             , changedVoicingPresetQuality = ChangedVoicingPresetQuality
             , changedVoicingPresetShape = ChangedVoicingPresetShape
             , appliedVoicingPreset = AppliedVoicingPreset
+            , clickedResetVoicing = ClickedResetVoicing
+            , hoveredFretCell = HoveredFretCell
+            , unhoveredFretCell = UnhoveredFretCell
             }
 
         voicingState =
@@ -3552,10 +4313,23 @@ view model =
             , previewRootPc = model.voicingPreviewRoot
             , presetQualityName = model.voicingPresetQuality
             , presetShapeName = model.voicingPresetShape
+            , selectedOffsets = model.voicingSelectedOffsets
             }
 
         chordSpans =
             Data.ChordTrack.namedSpans timeline model.project.chordTrack
+
+        refWaveform =
+            if Array.isEmpty model.refPeaks then
+                Nothing
+
+            else
+                Just
+                    { peaks = model.refPeaks
+                    , peakDt = model.refPeakDt
+                    , secsPerTick = 60 / (model.project.bpm * toFloat Data.Time.ppq)
+                    , offsetMs = model.project.referenceAudio.offsetMs
+                    }
     in
     div [ style "display" "flex", style "flex-direction" "column", style "height" "100vh", style "font-family" "sans-serif" ]
         [ Style.focusCss
@@ -3641,15 +4415,51 @@ view model =
                     ]
                 , Style.divider
                 , div groupStyle
+                    [ label []
+                        [ text "小節: "
+                        , input
+                            [ type_ "number"
+                            , value model.insertCountInput
+                            , onInput ChangedInsertCount
+                            , style "width" "3.5rem"
+                            ]
+                            []
+                        ]
+                    , button
+                        (Style.baseButton
+                            ++ [ onClick InsertedBarsAtPlayhead
+                               , Html.Attributes.title "再生位置のある小節の前に指定数の小節を挿入する（コード進行の改行は崩れることがあります）"
+                               ]
+                        )
+                        [ text "+ 挿入" ]
+                    , button
+                        (Style.dangerButton
+                            ++ [ onClick RemovedBarsAtPlayhead
+                               , Html.Attributes.title "再生位置のある小節から指定数の小節を削除する（Ctrl/Cmd+Zで戻せます）"
+                               , Html.Attributes.attribute "aria-label" "再生位置から小節を削除"
+                               ]
+                        )
+                        [ text "✂ 小節削除" ]
+                    ]
+                , Style.divider
+                , div groupStyle
                     [ button
                         (Style.baseButton
                             ++ [ onClick ClickedNewProject
                                , Html.Attributes.title "現在の内容を破棄して新規作成（もう一度押すと確定。Ctrl/Cmd+Zで戻せます）"
+                               , Html.Attributes.style "min-width" "6.5rem"
+                               , Html.Attributes.style "text-align" "center"
                                ]
+                            ++ (if model.pendingNewProject then
+                                    [ Html.Attributes.attribute "aria-label" "もう一度押すと新規作成を確定" ]
+
+                                else
+                                    []
+                               )
                         )
                         [ text
                             (if model.pendingNewProject then
-                                "⚠ もう一度押すと新規作成"
+                                "本当に新規？"
 
                              else
                                 "新規"
@@ -3674,9 +4484,6 @@ view model =
                 , changeMode = ChangedSectionMode
                 , changeMeter = ChangedSectionMeter
                 , move = MovedSection
-                , changedInsertCount = ChangedInsertCount
-                , insertBefore = InsertedBarsBeforeSection
-                , removeFromStart = RemovedBarsFromSection
                 , seekToStart = ClickedSeekSectionStart
                 , transpose = TransposedSection
                 , pressedBlock = PressedSectionBlock
@@ -3685,18 +4492,26 @@ view model =
                 , pressedRuler = PressedSectionRuler
                 , pressedLoopHandle = PressedSectionLoopHandle
                 , clickedChord = ClickedChordAt
+                , doubleClickedChord = DoubleClickedChordStripAt
                 }
                 { pxPerBar = model.sectionBarZoom
                 , loopEditable = model.loopMode == LoopRange
                 , loop = displayedLoop model.sectionLoopDrag model
                 , playheadTicks = model.playheadTicks
                 , ticksToPx = \ticks -> Data.Timeline.ticksToFractionalBar ticks timeline * toFloat model.sectionBarZoom
+                , viewRange =
+                    if pianoRollScrollMounted model then
+                        model.pianoRollViewportWidth
+                            |> Maybe.map (\w -> PianoRoll.visibleTickRange model.pianoRollZoom { scrollX = model.pianoRollScrollX, width = w })
+
+                    else
+                        Nothing
                 }
                 chordSpans
+                refWaveform
                 { playingIndex = sectionAtTicks model.playheadTicks model.project
                 }
                 model.selectedSectionId
-                model.insertCountInput
                 model.project.sections
                 model.pendingSectionDelete
                 (model.sectionResizeDrag |> Maybe.map (\d -> { sectionId = d.sectionId, lengthBars = d.curLengthBars }))
@@ -3769,14 +4584,14 @@ view model =
                     (Set.size model.selectedNoteIds)
                     model.project.scraps
                     model.pendingScrapDelete
-                , div [ style "font-size" "0.75rem", style "color" "#888", style "margin-top" "0.6rem" ]
+                , div [ style "font-size" "0.75rem", style "color" Theme.onSurfaceVariant, style "margin-top" "0.6rem" ]
                     [ text "Space: 再生/停止（ボタンのEnterは別） ・ Ctrl/Cmd+Z: 元に戻す（Shiftでやり直し） ・ ルーラーか Ctrl/Cmd+クリック・コードをクリック: 再生位置移動 ・ Home/End: 曲頭/曲末へシーク ・ ⏮⏪⏩ かセクション編集欄の「先頭へ」: セクション/曲頭へ移動 ・ Shift+ドラッグ: 矩形選択 ・ Ctrl/Cmd+Shift+A: 選択中セクション内のノートを全選択 ・ ルーラーをshift+ドラッグ: ループ範囲を作成、ハンドルをドラッグで伸縮、[/]: ループの開始/終了を再生位置に設定 ・ ↑↓: 半音移動（Shiftでオクターブ） ・ ←→: 隣のノートを選択（Ctrl/Cmdで横移動、+Shiftで1小節） ・ n: 再生位置にノートを追加（鍵盤表示中は無効） ・ Ctrl/Cmd+C・X・V: コピー・カット・貼付 ・ Delete: 削除 ・ ダブルクリック/右クリック: ノート削除 ・ Escape: 選択解除（削除確認待ちも解除）" ]
                 ]
             , div
                 [ style "width" "6px"
                 , style "flex" "0 0 auto"
                 , style "cursor" "col-resize"
-                , style "background" "#ddd"
+                , style "background" Theme.outlineVariant
                 , Html.Events.on "mousedown" (Decode.map PressedPaneDivider (Decode.field "clientX" Decode.float))
                 ]
                 []
@@ -3802,13 +4617,32 @@ view model =
                                             ]
                                             [ text label_ ]
                                     )
-                                    [ ( Data.Time.ticksPerSixteenth, "16分音符" )
+                                    [ ( Data.Time.gridTicks Data.Time.SixteenthTriplet, "三連 16分音符" )
+                                    , ( Data.Time.ticksPerSixteenth, "16分音符" )
+                                    , ( Data.Time.gridTicks Data.Time.EighthTriplet, "三連 8分音符" )
                                     , ( Data.Time.ticksPerSixteenth * 2, "8分音符" )
+                                    , ( Data.Time.ppq * 2 // 3, "三連 4分音符" )
                                     , ( Data.Time.ticksPerSixteenth * 3, "付点8分音符" )
                                     , ( Data.Time.ticksPerSixteenth * 4, "4分音符" )
                                     , ( Data.Time.ticksPerSixteenth * 8, "2分音符" )
                                     , ( Data.Time.ticksPerSixteenth * 16, "全音符" )
                                     ]
+                                )
+                            ]
+
+                    gridSelect =
+                        div [ style "margin-top" "0.3rem", style "display" "flex", style "align-items" "center", style "gap" "0.4rem" ]
+                            [ span [ style "font-size" "0.85rem" ] [ text "グリッド: " ]
+                            , Html.select [ onInput ChangedGridUnit ]
+                                (List.map
+                                    (\unit ->
+                                        Html.option
+                                            [ value (Data.Time.gridUnitToString unit)
+                                            , Html.Attributes.selected (unit == model.gridUnit)
+                                            ]
+                                            [ text (Data.Time.gridLabel unit) ]
+                                    )
+                                    [ Data.Time.Sixteenth, Data.Time.EighthTriplet, Data.Time.SixteenthTriplet ]
                                 )
                             ]
 
@@ -3822,8 +4656,11 @@ view model =
                         , pressedKey = PressedPianoKey
                         , wheelZoomedRuler = WheelZoomedRuler
                         , clickedChord = ClickedChordAt
+                        , doubleClickedChord = DoubleClickedChordStripAt
                         , hoveredNote = HoveredNote
                         , unhoveredNote = UnhoveredNote
+                        , scrolled = ScrolledPianoRoll
+                        , pressedVelocityBar = PressedVelocityBar
                         }
 
                     pianoRollOpts =
@@ -3832,38 +4669,20 @@ view model =
                         , playheadTicks = model.playheadTicks
                         , sections = sectionSpans model.project
                         , totalBars = totalBarsFor model.project
-                        , rubberBand =
-                            model.rubberBand
-                                |> Maybe.map
-                                    (\rb ->
-                                        { x = Basics.min rb.originX rb.curX
-                                        , y = Basics.min rb.originY rb.curY
-                                        , w = abs (rb.curX - rb.originX)
-                                        , h = abs (rb.curY - rb.originY)
-                                        }
-                                    )
+                        , rubberBand = rubberBandRect model.rubberBand
                         , highlightedPitch = Set.union model.highlightedPitches model.heldKeyPitches
                         , scalePitchClasses = Data.Key.scalePitchClasses (Data.Timeline.keyAt (scaleReferenceTicks model) timeline)
                         , loop = displayedLoop model.loopDrag model
                         , loopEditable = model.loopMode == LoopRange
-                        , waveform =
-                            if Array.isEmpty model.refPeaks then
-                                Nothing
-
-                            else
-                                Just
-                                    { peaks = model.refPeaks
-                                    , peakDt = model.refPeakDt
-                                    , secsPerTick = 60 / (model.project.bpm * toFloat Data.Time.ppq)
-                                    , offsetMs = model.project.referenceAudio.offsetMs
-                                    }
+                        , waveform = refWaveform
                         , ghostNoteGroups = ghostNoteGroups model timeline
                         , pxPerSixteenth = model.pianoRollZoom
+                        , gridUnit = model.gridUnit
                         , chordSpans = chordSpans
                         }
 
                     pianoRollView =
-                        div [] [ durationSelect, PianoRoll.view pianoRollConfig pianoRollOpts ]
+                        div [] [ durationSelect, gridSelect, PianoRoll.view pianoRollConfig pianoRollOpts ]
 
                     chordParseErrors =
                         Data.ChordTrack.cells timeline model.project.chordTrack
@@ -3906,47 +4725,28 @@ view model =
                                             "📦 ブロック表示に切替"
                                         )
                                     ]
-                                , if model.chordBlockView then
-                                    text ""
-
-                                  else
-                                    button
-                                        (Style.baseButton
-                                            ++ [ onClick ToggledChordMidiPreview
-                                               , style "margin-left" "0.4rem"
-                                               , Html.Attributes.title "MIDI化した場合のノートを重ねて表示（編集不可）"
-                                               ]
-                                        )
-                                        [ text
-                                            (if model.chordMidiPreview then
-                                                "🎹 MIDIプレビュー: ON"
-
-                                             else
-                                                "🎹 MIDIプレビュー: OFF"
-                                            )
-                                        ]
                                 ]
                             , if List.isEmpty chordParseErrors then
                                 text ""
 
                               else
-                                div [ style "margin-top" "0.4rem", style "font-size" "0.75rem", style "color" "#c0392b" ]
+                                div [ style "margin-top" "0.4rem", style "font-size" "0.75rem", style "color" Theme.error ]
                                     (List.map (\msg -> div [] [ text msg ]) chordParseErrors)
                             , if model.chordBlockView then
-                                ChordBlocks.view pianoRollConfig.clickedChord timeline model.playheadTicks model.project.chordTrack
+                                ChordBlocks.view
+                                    { clickedChord = pianoRollConfig.clickedChord, doubleClickedToken = DoubleClickedChordToken }
+                                    timeline
+                                    model.playheadTicks
+                                    model.project.chordTrack
 
                               else
                                 PianoRoll.chordTrackView pianoRollConfig
                                     pianoRollOpts
-                                    (if model.chordMidiPreview then
-                                        Just (Data.StrumExpand.previewNotes model.project.guitarFormEnabled (effectiveVoicings model) timeline model.project.chordTrack)
-
-                                     else
-                                        Nothing
-                                    )
+                                    (Just (Data.StrumExpand.previewNotes model.project.guitarFormEnabled (effectiveVoicings model) timeline model.project.chordTrack))
                                     { config =
                                         { pressedToken = PressedChordToken
                                         , pressedLane = PressedChordLane
+                                        , doubleClickedToken = DoubleClickedChordToken
                                         }
                                     , tokenSpans = Data.ChordTrack.tokenSpans timeline model.project.chordTrack
                                     , selectedKeys = model.selectedChordKeys
@@ -3972,16 +4772,33 @@ view model =
                                 pianoRollView
 
                               else
-                                DrumEditor.view
-                                    { toggledCell = ToggledDrumCell
-                                    , appliedPreset = AppliedDrumPreset
-                                    , changedFillBars = ChangedDrumFillBars
-                                    }
-                                    timeline
-                                    (totalBarsFor model.project)
-                                    model.drumFillBars
-                                    (trackNotes model)
-                                    model.playheadTicks
+                                div []
+                                    [ gridSelect
+                                    , DrumEditor.view
+                                        { pressedCell = PressedDrumCell
+                                        , rightClickedCell = RightClickedDrumCell
+                                        , doubleClickedCell = DoubleClickedDrumCell
+                                        , pressedVelocityBar = PressedVelocityBar
+                                        , appliedPreset = AppliedDrumPreset
+                                        , changedFillBars = ChangedDrumFillBars
+                                        , pressedRuler = PressedRuler
+                                        , pressedLoopHandle = PressedLoopHandle
+                                        , wheelZoomedRuler = WheelZoomedRuler
+                                        , scrolled = ScrolledPianoRoll
+                                        }
+                                        { sections = sectionSpans model.project
+                                        , totalBars = totalBarsFor model.project
+                                        , fillBars = model.drumFillBars
+                                        , notes = trackNotes model
+                                        , selectedIds = model.selectedNoteIds
+                                        , playheadTicks = model.playheadTicks
+                                        , pxPerSixteenth = model.pianoRollZoom
+                                        , gridUnit = model.gridUnit
+                                        , loop = displayedLoop model.loopDrag model
+                                        , loopEditable = model.loopMode == LoopRange
+                                        , rubberBand = rubberBandRect model.rubberBand
+                                        }
+                                    ]
                             ]
 
                     _ ->
@@ -3994,7 +4811,7 @@ view model =
                                     , style "flex-wrap" "wrap"
                                     , style "align-items" "center"
                                     ]
-                                    (span [ style "font-size" "0.75rem", style "color" "#888" ] [ text "ストローク生成:" ]
+                                    (span [ style "font-size" "0.75rem", style "color" Theme.onSurfaceVariant ] [ text "ストローク生成:" ]
                                         :: List.map
                                             (\p ->
                                                 button
@@ -4022,12 +4839,12 @@ view model =
             ]
         , if model.chordProgressionModalOpen then
             Modal.view ToggledChordProgressionModal
-                [ ChordEditor.progressionEditorView chordEditorConfig model.project.chordTrack ]
+                [ ChordEditor.progressionEditorView chordEditorConfig (Maybe.withDefault "" model.chordSheetDraft) ]
 
           else
             text ""
-        , case model.editingVoicingIndex of
-            Just index ->
+        , case ( model.formPicker, model.editingVoicingIndex ) of
+            ( Nothing, Just index ) ->
                 case List.drop index model.project.voicings |> List.head of
                     Just voicing ->
                         Modal.view (ClickedVoicingRow index)
@@ -4036,9 +4853,53 @@ view model =
                     Nothing ->
                         text ""
 
+            _ ->
+                text ""
+        , case model.formPicker of
+            Just fp ->
+                let
+                    maybeChord =
+                        Data.ChordTrack.tokenSpans timeline model.project.chordTrack
+                            |> List.filter (\s -> s.key == fp.key)
+                            |> List.head
+                            |> Maybe.andThen
+                                (\s ->
+                                    case s.result of
+                                        Ok (Data.ChordTrack.TChord chord) ->
+                                            Just chord
+
+                                        _ ->
+                                            Nothing
+                                )
+
+                    editorHtml =
+                        model.editingVoicingIndex
+                            |> Maybe.andThen (\index -> List.drop index model.project.voicings |> List.head |> Maybe.map (\voicing -> ( index, voicing )))
+                            |> Maybe.map (\( index, voicing ) -> ChordEditor.voicingEditorView chordEditorConfig voicingState index voicing)
+                in
+                case maybeChord of
+                    Just _ ->
+                        Modal.view ClosedFormPicker
+                            [ FormPicker.view
+                                { chose = ChoseChordForm fp.key
+                                , choseShape = ChoseVoicingShape fp.key
+                                , cleared = ClearedChordVoicing fp.key
+                                , hoveredFret = HoveredFretCell
+                                , unhoveredFret = UnhoveredFretCell
+                                , changedDraft = ChangedFormPickerDraft
+                                , submittedDraft = SubmittedFormPickerDraft
+                                , selectedTab = SelectedFormPickerTab
+                                }
+                                { draft = fp.draft, tab = fp.tab, editor = editorHtml }
+                            ]
+
+                    Nothing ->
+                        text ""
+
             Nothing ->
                 text ""
         , hoveredNoteTooltipView model timeline
+        , hoveredFretCellTooltipView model
         ]
 
 
@@ -4086,10 +4947,10 @@ hoveredNoteTooltipView model timeline =
                 [ style "position" "fixed"
                 , style "left" (String.fromFloat (h.x + 12) ++ "px")
                 , style "top" (String.fromFloat (h.y + 12) ++ "px")
-                , style "background" "rgba(20, 20, 20, 0.9)"
-                , style "color" "#fff"
+                , style "background" Theme.inverseSurface
+                , style "color" Theme.inverseOnSurface
                 , style "padding" "0.35rem 0.55rem"
-                , style "border-radius" "4px"
+                , style "border-radius" Theme.shapeXS
                 , style "font-size" "0.75rem"
                 , style "pointer-events" "none"
                 , style "z-index" "1000"
@@ -4114,11 +4975,45 @@ hoveredNoteTooltipView model timeline =
                 )
 
 
+{-| 指板セルホバー時のツールチップ。音名（`Data.Note.pitchLabel`）・度数（`ChordFormat.degreeLabel`）・半音数を並べて表示する（例：「E 4 ・ 3 (+4)」）。
+ノートホバーツールチップと同じ位置規則（`h.x + 12` / `h.y + 12`、position: fixed）。
+-}
+hoveredFretCellTooltipView : Model -> Html Msg
+hoveredFretCellTooltipView model =
+    case model.hoveredFretCell of
+        Nothing ->
+            text ""
+
+        Just h ->
+            div
+                [ style "position" "fixed"
+                , style "left" (String.fromFloat (h.x + 12) ++ "px")
+                , style "top" (String.fromFloat (h.y + 12) ++ "px")
+                , style "background" Theme.inverseSurface
+                , style "color" Theme.inverseOnSurface
+                , style "padding" "0.35rem 0.55rem"
+                , style "border-radius" Theme.shapeXS
+                , style "font-size" "0.75rem"
+                , style "pointer-events" "none"
+                , style "z-index" "1000"
+                , style "white-space" "nowrap"
+                ]
+                [ text
+                    (Data.Note.pitchLabel h.pitch
+                        ++ " ・ "
+                        ++ ChordFormat.degreeLabel h.interval
+                        ++ " (+"
+                        ++ String.fromInt h.interval
+                        ++ ")"
+                    )
+                ]
+
+
 subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
         [ Ports.fromAudio (AudioMsg.decode >> GotAudio)
-        , if model.dragState /= NoDrag || model.rubberBand /= Nothing || model.loopDrag /= Nothing || model.voicingDragState /= NoVoicingDrag || model.sectionResizeDrag /= Nothing || model.sectionMoveDrag /= Nothing || model.sectionLoopDrag /= Nothing || model.paneDividerDrag /= Nothing || model.chordDrag /= Nothing || model.chordRubberBand /= Nothing then
+        , if model.dragState /= NoDrag || model.rubberBand /= Nothing || model.loopDrag /= Nothing || model.voicingDragState /= NoVoicingDrag || model.sectionResizeDrag /= Nothing || model.sectionMoveDrag /= Nothing || model.sectionLoopDrag /= Nothing || model.paneDividerDrag /= Nothing || model.chordDrag /= Nothing || model.chordRubberBand /= Nothing || model.velocityDrag /= Nothing then
             Browser.Events.onMouseMove (Decode.map DraggedTo clientPosDecoder)
 
           else
@@ -4126,14 +5021,16 @@ subscriptions model =
         , Browser.Events.onMouseUp (Decode.succeed ReleasedDrag)
         , Browser.Events.onKeyDown (Decode.map GotKey keyEventDecoder)
         , Browser.Events.onKeyUp (Decode.map ReleasedKey (Decode.field "key" Decode.string))
+        , Browser.Events.onResize (\_ _ -> ResizedWindow)
         ]
 
 
 clientPosDecoder : Decode.Decoder ClientPos
 clientPosDecoder =
-    Decode.map2 ClientPos
+    Decode.map3 ClientPos
         (Decode.field "clientX" Decode.float)
         (Decode.field "clientY" Decode.float)
+        (Decode.field "altKey" Decode.bool)
 
 
 keyEventDecoder : Decode.Decoder KeyEvent

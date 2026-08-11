@@ -1,23 +1,46 @@
-module View.DrumEditor exposing (Config, view)
+module View.DrumEditor exposing (Config, ViewOpts, pitchesInYRange, view)
 
 import Data.DrumPattern
 import Data.Note exposing (Note)
 import Data.Time
-import Data.Timeline exposing (Timeline)
 import Html exposing (Html, button, div, option, select, span, text)
 import Html.Attributes as HA
 import Html.Events
 import Json.Decode as Decode
+import Set exposing (Set)
 import Svg
 import Svg.Attributes as SA
-import View.Palette as Palette
+import View.PianoRoll as PianoRoll
 import View.Style as Style
+import View.Theme as Theme
 
 
 type alias Config msg =
-    { toggledCell : Int -> Int -> msg
+    { pressedCell : { pitch : Int, tick : Int, offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool } -> msg
+    , rightClickedCell : { pitch : Int, tick : Int } -> msg
+    , doubleClickedCell : { pitch : Int, tick : Int } -> msg
+    , pressedVelocityBar : Int -> { clientX : Float, clientY : Float } -> msg
     , appliedPreset : String -> msg
     , changedFillBars : String -> msg
+    , pressedRuler : { offsetX : Float, clientX : Float, shift : Bool } -> msg
+    , pressedLoopHandle : Bool -> Float -> msg
+    , wheelZoomedRuler : { deltaY : Float, offsetX : Float } -> msg
+    , scrolled : { scrollLeft : Float, clientWidth : Float } -> msg
+    }
+
+
+type alias ViewOpts =
+    { sections : List PianoRoll.SectionSpan
+    , totalBars : Int
+    , fillBars : Int
+    , notes : List Note
+    , selectedIds : Set Int
+    , playheadTicks : Int
+    , pxPerSixteenth : Int
+    , gridUnit : Data.Time.GridUnit
+    , loop : Maybe { startTicks : Int, endTicks : Int }
+    , loopEditable : Bool
+    , rubberBand : Maybe { x : Float, y : Float, w : Float, h : Float }
     }
 
 
@@ -32,11 +55,6 @@ rows =
     ]
 
 
-cellWidth : Int
-cellWidth =
-    20
-
-
 rowHeight : Int
 rowHeight =
     22
@@ -47,9 +65,9 @@ totalSteps totalBars =
     totalBars * 16
 
 
-gridWidth : Int -> Int
-gridWidth totalBars =
-    totalSteps totalBars * cellWidth
+gridWidth : Int -> Int -> Int
+gridWidth pxPerSixteenth totalBars =
+    totalSteps totalBars * pxPerSixteenth
 
 
 gridHeight : Int
@@ -66,8 +84,72 @@ rowIndexOf pitch =
         |> Maybe.map Tuple.first
 
 
-view : Config msg -> Timeline -> Int -> Int -> List Note -> Int -> Html msg
-view config timeline totalBars fillBars notes playheadTicks =
+{-| ラバーバンド選択のY範囲（ピクセル座標）に交差する行のpitch集合を返す。
+`rows` は非連続・非単調なpitchリストなので、行indexとの交差判定を経由する。
+-}
+pitchesInYRange : Float -> Float -> Set Int
+pitchesInYRange y0 y1 =
+    rows
+        |> List.indexedMap (\i ( pitch, _ ) -> ( i, pitch ))
+        |> List.filter (\( i, _ ) -> toFloat (i * rowHeight) < y1 && toFloat ((i + 1) * rowHeight) > y0)
+        |> List.map Tuple.second
+        |> Set.fromList
+
+
+{-| ピクセル座標(offsetX, offsetY)からグリッドセルのpitch/tickを求める共通ヘルパー。
+-}
+cellAt : Data.Time.GridUnit -> Int -> Float -> Float -> { pitch : Int, tick : Int }
+cellAt gridUnit pxPerSixteenth ox oy =
+    let
+        tick =
+            Data.Time.snapFloor (Data.Time.gridTicks gridUnit) (PianoRoll.pixelsToTicks pxPerSixteenth ox)
+
+        rowIdx =
+            floor (oy / toFloat rowHeight)
+
+        pitch =
+            rows
+                |> List.drop rowIdx
+                |> List.head
+                |> Maybe.map Tuple.first
+                |> Maybe.withDefault 36
+    in
+    { pitch = pitch, tick = tick }
+
+
+{-| mousedown用。pitch/tickに加えてshift判定とドラッグ開始点（rubber band用）を持つ。
+-}
+cellPressDecoder :
+    Data.Time.GridUnit
+    -> Int
+    -> Decode.Decoder { pitch : Int, tick : Int, offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool }
+cellPressDecoder gridUnit pxPerSixteenth =
+    Decode.map5
+        (\ox oy cx cy sh ->
+            let
+                cell =
+                    cellAt gridUnit pxPerSixteenth ox oy
+            in
+            { pitch = cell.pitch, tick = cell.tick, offsetX = ox, offsetY = oy, clientX = cx, clientY = cy, shift = sh }
+        )
+        (Decode.field "offsetX" Decode.float)
+        (Decode.field "offsetY" Decode.float)
+        (Decode.field "clientX" Decode.float)
+        (Decode.field "clientY" Decode.float)
+        (Decode.field "shiftKey" Decode.bool)
+
+
+{-| dblclick / contextmenu 用。pitch/tickだけあればよい。
+-}
+cellClickDecoder : Data.Time.GridUnit -> Int -> Decode.Decoder { pitch : Int, tick : Int }
+cellClickDecoder gridUnit pxPerSixteenth =
+    Decode.map2 (cellAt gridUnit pxPerSixteenth)
+        (Decode.field "offsetX" Decode.float)
+        (Decode.field "offsetY" Decode.float)
+
+
+view : Config msg -> ViewOpts -> Html msg
+view config opts =
     div [ HA.style "margin-top" "1rem" ]
         [ div [ HA.style "display" "flex", HA.style "gap" "0.4rem", HA.style "align-items" "center", HA.style "flex-wrap" "wrap" ]
             (span [ HA.style "font-size" "0.85rem" ] [ text "プリセット（選択セクションがあればその範囲、なければ先頭から右の長さ）: " ]
@@ -82,7 +164,7 @@ view config timeline totalBars fillBars notes playheadTicks =
                             (\n ->
                                 option
                                     [ HA.value (String.fromInt n)
-                                    , HA.selected (n == fillBars)
+                                    , HA.selected (n == opts.fillBars)
                                     ]
                                     [ text (String.fromInt n ++ "小節") ]
                             )
@@ -90,87 +172,122 @@ view config timeline totalBars fillBars notes playheadTicks =
                         )
                    ]
             )
-        , div [ HA.style "display" "flex", HA.style "margin-top" "0.4rem" ]
+        , div
+            [ HA.style "display" "flex"
+            , HA.style "margin-top" "0.4rem"
+            , HA.style "border" ("1px solid " ++ Theme.outlineVariant)
+            ]
             [ labelColumn
-            , gridView config timeline totalBars notes playheadTicks
+            , div
+                [ HA.id PianoRoll.pianoRollScrollId
+                , HA.style "overflow-x" "auto"
+                , HA.style "flex" "1"
+                , HA.tabindex 0
+                , HA.attribute "aria-label" "ドラムステップグリッド"
+                , Html.Events.on "scroll" (PianoRoll.scrollDecoder config.scrolled)
+                ]
+                [ PianoRoll.rulerViewWith
+                    { pressedRuler = config.pressedRuler
+                    , pressedLoopHandle = config.pressedLoopHandle
+                    , wheelZoomedRuler = config.wheelZoomedRuler
+                    }
+                    { pxPerSixteenth = opts.pxPerSixteenth
+                    , totalBars = opts.totalBars
+                    , sections = opts.sections
+                    , loop = opts.loop
+                    , loopEditable = opts.loopEditable
+                    , playheadTicks = opts.playheadTicks
+                    }
+                , gridView config opts
+                , PianoRoll.velocityLaneViewWith
+                    { pressedVelocityBar = config.pressedVelocityBar }
+                    { pxPerSixteenth = opts.pxPerSixteenth
+                    , totalBars = opts.totalBars
+                    , notes = opts.notes
+                    , selectedIds = opts.selectedIds
+                    , playheadTicks = opts.playheadTicks
+                    }
+                ]
             ]
         ]
 
 
 labelColumn : Html msg
 labelColumn =
-    div [ HA.style "flex" "0 0 90px" ]
-        (List.map
-            (\( _, label ) ->
-                div
-                    [ HA.style "height" (String.fromInt rowHeight ++ "px")
-                    , HA.style "line-height" (String.fromInt rowHeight ++ "px")
-                    , HA.style "font-size" "0.8rem"
+    div [ HA.style "flex" "0 0 90px", HA.style "border-right" ("1px solid " ++ Theme.outline) ]
+        (div
+            [ HA.style "height" (String.fromInt PianoRoll.rulerHeight ++ "px")
+            , HA.style "box-sizing" "border-box"
+            , HA.style "border-bottom" ("1px solid " ++ Theme.outlineVariant)
+            ]
+            []
+            :: List.map
+                (\( _, label ) ->
+                    div
+                        [ HA.style "height" (String.fromInt rowHeight ++ "px")
+                        , HA.style "line-height" (String.fromInt rowHeight ++ "px")
+                        , HA.style "font-size" "0.8rem"
+                        , HA.style "text-align" "right"
+                        , HA.style "padding-right" "0.4rem"
+                        ]
+                        [ text label ]
+                )
+                rows
+            ++ [ div
+                    [ HA.style "height" (String.fromInt PianoRoll.velocityLaneHeight ++ "px")
+                    , HA.style "box-sizing" "border-box"
+                    , HA.style "border-top" ("1px solid " ++ Theme.outlineVariant)
+                    , HA.style "font-size" "9px"
+                    , HA.style "color" Theme.onSurfaceVariant
+                    , HA.style "padding" "2px 3px"
                     , HA.style "text-align" "right"
-                    , HA.style "padding-right" "0.4rem"
                     ]
-                    [ text label ]
-            )
-            rows
+                    [ text "Vel" ]
+               ]
         )
 
 
-gridView : Config msg -> Timeline -> Int -> List Note -> Int -> Html msg
-gridView config timeline totalBars notes playheadTicks =
-    div
-        [ HA.style "overflow-x" "auto"
-        , HA.style "border" "1px solid #ccc"
+gridView : Config msg -> ViewOpts -> Html msg
+gridView config opts =
+    Svg.svg
+        [ SA.width (String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars))
+        , SA.height (String.fromInt gridHeight)
+        , SA.viewBox ("0 0 " ++ String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars) ++ " " ++ String.fromInt gridHeight)
+        , HA.style "display" "block"
+        , HA.style "cursor" "pointer"
+        , Html.Events.on "mousedown"
+            (Decode.map config.pressedCell (cellPressDecoder opts.gridUnit opts.pxPerSixteenth))
+        , Html.Events.on "dblclick"
+            (Decode.map config.doubleClickedCell (cellClickDecoder opts.gridUnit opts.pxPerSixteenth))
+        , Html.Events.preventDefaultOn "contextmenu"
+            (Decode.map (\cell -> ( config.rightClickedCell cell, True )) (cellClickDecoder opts.gridUnit opts.pxPerSixteenth))
         ]
-        [ Svg.svg
-            [ SA.width (String.fromInt (gridWidth totalBars))
-            , SA.height (String.fromInt gridHeight)
-            , SA.viewBox ("0 0 " ++ String.fromInt (gridWidth totalBars) ++ " " ++ String.fromInt gridHeight)
-            , HA.style "display" "block"
-            , HA.style "cursor" "pointer"
-            , Html.Events.on "mousedown"
-                (Decode.map2
-                    (\ox oy ->
-                        let
-                            step =
-                                floor (ox / toFloat cellWidth)
-
-                            rowIdx =
-                                floor (oy / toFloat rowHeight)
-
-                            pitch =
-                                rows
-                                    |> List.drop rowIdx
-                                    |> List.head
-                                    |> Maybe.map Tuple.first
-                                    |> Maybe.withDefault 36
-                        in
-                        config.toggledCell pitch (step * Data.Time.ticksPerSixteenth)
-                    )
-                    (Decode.field "offsetX" Decode.float)
-                    (Decode.field "offsetY" Decode.float)
-                )
-            ]
-            (backgroundRows totalBars ++ sectionTintBars timeline totalBars ++ verticalLines totalBars ++ List.filterMap activeCell notes ++ playheadView playheadTicks)
-        ]
+        (backgroundRows opts.pxPerSixteenth opts.totalBars
+            ++ List.concat (List.indexedMap (PianoRoll.sectionTintWithHeight gridHeight opts.pxPerSixteenth) opts.sections)
+            ++ verticalLines opts.gridUnit opts.pxPerSixteenth opts.totalBars
+            ++ List.filterMap (activeCell opts.gridUnit opts.pxPerSixteenth opts.selectedIds) opts.notes
+            ++ [ PianoRoll.playheadLine opts.pxPerSixteenth gridHeight opts.playheadTicks ]
+            ++ PianoRoll.rubberBandView opts.rubberBand
+        )
 
 
-backgroundRows : Int -> List (Svg.Svg msg)
-backgroundRows totalBars =
+backgroundRows : Int -> Int -> List (Svg.Svg msg)
+backgroundRows pxPerSixteenth totalBars =
     List.indexedMap
         (\i _ ->
             Svg.rect
                 [ SA.x "0"
                 , SA.y (String.fromInt (i * rowHeight))
-                , SA.width (String.fromInt (gridWidth totalBars))
+                , SA.width (String.fromInt (gridWidth pxPerSixteenth totalBars))
                 , SA.height (String.fromInt rowHeight)
                 , SA.fill
                     (if modBy 2 i == 0 then
-                        "#fdfdfd"
+                        Theme.surfaceContainerLowest
 
                      else
-                        "#f3f3f3"
+                        Theme.surfaceContainerLow
                     )
-                , SA.stroke "#e5e5e5"
+                , SA.stroke Theme.surfaceContainerHighest
                 , SA.strokeWidth "0.5"
                 ]
                 []
@@ -178,82 +295,86 @@ backgroundRows totalBars =
         rows
 
 
-{-| 小節ごとに所属セクションを引いて、コード進行エディタ・ピアノロール・セクションバーと同じ配色で背景を塗る。
-末尾余白（sectionIndexが Nothing）は何も描画しない。
--}
-sectionTintBars : Timeline -> Int -> List (Svg.Svg msg)
-sectionTintBars timeline totalBars =
-    List.range 0 (totalBars - 1)
-        |> List.filterMap (\i -> Data.Timeline.barAt i timeline)
-        |> List.filterMap
-            (\bar ->
-                bar.sectionIndex
-                    |> Maybe.map
-                        (\idx ->
-                            Svg.rect
-                                [ SA.x (String.fromInt (bar.index * 16 * cellWidth))
-                                , SA.y "0"
-                                , SA.width (String.fromInt (16 * cellWidth))
-                                , SA.height (String.fromInt gridHeight)
-                                , SA.fill (Palette.sectionTint idx)
-                                , SA.pointerEvents "none"
-                                ]
-                                []
-                        )
-            )
+verticalLines : Data.Time.GridUnit -> Int -> Int -> List (Svg.Svg msg)
+verticalLines gridUnit pxPerSixteenth totalBars =
+    let
+        grid =
+            Data.Time.gridTicks gridUnit
 
-
-verticalLines : Int -> List (Svg.Svg msg)
-verticalLines totalBars =
-    List.range 0 (totalSteps totalBars)
+        linesPerBar =
+            Data.Time.ticksPerBar // grid
+    in
+    List.range 0 (totalBars * linesPerBar)
         |> List.map
             (\i ->
+                let
+                    t =
+                        i * grid
+
+                    x =
+                        PianoRoll.ticksToPixels pxPerSixteenth t
+                in
                 Svg.line
-                    [ SA.x1 (String.fromInt (i * cellWidth))
+                    [ SA.x1 (String.fromFloat x)
                     , SA.y1 "0"
-                    , SA.x2 (String.fromInt (i * cellWidth))
+                    , SA.x2 (String.fromFloat x)
                     , SA.y2 (String.fromInt gridHeight)
                     , SA.stroke
-                        (if modBy 16 i == 0 then
-                            "#999"
+                        (if modBy Data.Time.ticksPerBar t == 0 then
+                            Theme.outline
 
-                         else if modBy 4 i == 0 then
-                            "#ccc"
+                         else if modBy Data.Time.ppq t == 0 then
+                            Theme.outlineVariant
 
                          else
-                            "#eee"
+                            Theme.surfaceContainerHighest
                         )
                     ]
                     []
             )
 
 
-activeCell : Note -> Maybe (Svg.Svg msg)
-activeCell note =
+activeCell : Data.Time.GridUnit -> Int -> Set Int -> Note -> Maybe (Svg.Svg msg)
+activeCell gridUnit pxPerSixteenth selectedIds note =
     rowIndexOf note.pitch
         |> Maybe.map
             (\rowIdx ->
+                let
+                    grid =
+                        Data.Time.gridTicks gridUnit
+
+                    cellPx =
+                        PianoRoll.ticksToPixels pxPerSixteenth grid
+
+                    x =
+                        PianoRoll.ticksToPixels pxPerSixteenth (note.start // grid * grid)
+
+                    pad =
+                        Basics.min 2.0 (cellPx / 6)
+
+                    selected =
+                        Set.member note.id selectedIds
+                in
                 Svg.rect
-                    [ SA.x (String.fromInt (note.start // Data.Time.ticksPerSixteenth * cellWidth + 2))
+                    [ SA.x (String.fromFloat (x + pad))
                     , SA.y (String.fromInt (rowIdx * rowHeight + 3))
-                    , SA.width (String.fromInt (cellWidth - 4))
+                    , SA.width (String.fromFloat (Basics.max 2.0 (cellPx - pad * 2)))
                     , SA.height (String.fromInt (rowHeight - 6))
                     , SA.rx "3"
-                    , SA.fill "#e67e22"
+                    , SA.fill
+                        (if selected then
+                            Style.colorSelection
+
+                         else
+                            Theme.onPendingContainer
+                        )
+                    , SA.stroke
+                        (if selected then
+                            Theme.selectionDeep
+
+                         else
+                            "none"
+                        )
                     ]
                     []
             )
-
-
-playheadView : Int -> List (Svg.Svg msg)
-playheadView ticks =
-    [ Svg.line
-        [ SA.x1 (String.fromFloat (toFloat ticks * toFloat cellWidth / toFloat Data.Time.ticksPerSixteenth))
-        , SA.y1 "0"
-        , SA.x2 (String.fromFloat (toFloat ticks * toFloat cellWidth / toFloat Data.Time.ticksPerSixteenth))
-        , SA.y2 (String.fromInt gridHeight)
-        , SA.stroke "#e74c3c"
-        , SA.strokeWidth "2"
-        ]
-        []
-    ]

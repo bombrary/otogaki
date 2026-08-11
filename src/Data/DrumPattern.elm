@@ -7,6 +7,7 @@ import Data.Time
 type alias Hit =
     { pitch : Int
     , step : Int
+    , velocity : Int
     }
 
 
@@ -16,24 +17,41 @@ type alias Pattern =
     }
 
 
-hitsOf : Int -> List Int -> List Hit
-hitsOf pitch steps =
-    List.map (\s -> { pitch = pitch, step = s }) steps
+hitsAt : Int -> List ( Int, Int ) -> List Hit
+hitsAt pitch stepVels =
+    List.map (\( s, v ) -> { pitch = pitch, step = s, velocity = v }) stepVels
 
 
 patterns : List Pattern
 patterns =
     [ { name = "8ビート"
-      , hits = hitsOf 36 [ 0, 8 ] ++ hitsOf 38 [ 4, 12 ] ++ hitsOf 42 [ 0, 2, 4, 6, 8, 10, 12, 14 ]
+      , hits =
+            hitsAt 36 [ ( 0, 118 ), ( 8, 108 ) ]
+                ++ hitsAt 38 [ ( 4, 112 ), ( 12, 112 ) ]
+                ++ hitsAt 42 [ ( 0, 104 ), ( 2, 72 ), ( 4, 92 ), ( 6, 72 ), ( 8, 96 ), ( 10, 72 ), ( 12, 92 ), ( 14, 72 ) ]
       }
     , { name = "16ビート"
-      , hits = hitsOf 36 [ 0, 7, 10 ] ++ hitsOf 38 [ 4, 12 ] ++ hitsOf 42 (List.range 0 15)
+      , hits =
+            hitsAt 36 [ ( 0, 118 ), ( 7, 94 ), ( 10, 104 ) ]
+                ++ hitsAt 38 [ ( 4, 112 ), ( 12, 110 ) ]
+                ++ hitsAt 42
+                    [ ( 0, 106 ), ( 1, 62 ), ( 2, 82 ), ( 3, 62 )
+                    , ( 4, 100 ), ( 5, 62 ), ( 6, 82 ), ( 7, 62 )
+                    , ( 8, 100 ), ( 9, 62 ), ( 10, 82 ), ( 11, 62 )
+                    , ( 12, 100 ), ( 13, 62 ), ( 14, 82 ), ( 15, 62 )
+                    ]
       }
     , { name = "4つ打ち"
-      , hits = hitsOf 36 [ 0, 4, 8, 12 ] ++ hitsOf 38 [ 4, 12 ] ++ hitsOf 46 [ 2, 6, 10, 14 ]
+      , hits =
+            hitsAt 36 [ ( 0, 116 ), ( 4, 110 ), ( 8, 112 ), ( 12, 110 ) ]
+                ++ hitsAt 38 [ ( 4, 104 ), ( 12, 104 ) ]
+                ++ hitsAt 46 [ ( 2, 90 ), ( 6, 86 ), ( 10, 90 ), ( 14, 86 ) ]
       }
     , { name = "バラード"
-      , hits = hitsOf 36 [ 0, 10 ] ++ hitsOf 38 [ 8 ] ++ hitsOf 51 [ 0, 4, 8, 12 ]
+      , hits =
+            hitsAt 36 [ ( 0, 104 ), ( 10, 86 ) ]
+                ++ hitsAt 38 [ ( 8, 98 ) ]
+                ++ hitsAt 51 [ ( 0, 88 ), ( 4, 76 ), ( 8, 84 ), ( 12, 78 ) ]
       }
     ]
 
@@ -63,6 +81,7 @@ apply cfg pattern project =
                                     * Data.Time.ticksPerBar
                                     + hit.step
                                     * Data.Time.ticksPerSixteenth
+                                , hit.velocity
                                 )
                             )
                             pattern.hits
@@ -70,12 +89,12 @@ apply cfg pattern project =
 
         ( newNotesRev, finalNextId ) =
             List.foldl
-                (\( pitch, start ) ( acc, nid ) ->
+                (\( pitch, start, velocity ) ( acc, nid ) ->
                     ( { id = nid
                       , pitch = pitch
                       , start = start
                       , duration = Data.Time.ticksPerSixteenth
-                      , velocity = 100
+                      , velocity = velocity
                       }
                         :: acc
                     , nid + 1

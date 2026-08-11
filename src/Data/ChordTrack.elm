@@ -14,12 +14,16 @@ module Data.ChordTrack exposing
     , removeTokens
     , resolved
     , stripComments
+    , tokenKeyAtTicks
     , tokenKeysInTickRange
     , tokenSpans
     , toPlainText
     , trackId
     , transpose
     , transposeBars
+    , updateToken
+    , withVoicingName
+    , withoutVoicingName
     )
 
 import Data.Chord exposing (Chord)
@@ -385,6 +389,18 @@ tokenKeysInTickRange timeline t0 t1 track =
         |> List.filter (\s -> s.startTicks >= t0 && s.startTicks < t1)
         |> List.map .key
         |> Set.fromList
+
+
+{-| `startTicks` が一致するトークンのキーを逆引きする。`tokenSpans` と完全に同じ均等分割式でタイミングを求めるので、
+`ChordSpan.startTicks`（`namedSpans` 由来）は必ずいずれかの `TokenSpan.startTicks` と厳密一致する。ChordStrip の
+ダブルクリックで tick 位置から TokenKey を逆引きして FormPicker を開く際に使う。一致がなければ Nothing。
+-}
+tokenKeyAtTicks : Timeline -> Int -> ChordTrack -> Maybe TokenKey
+tokenKeyAtTicks timeline ticks track =
+    tokenSpans timeline track
+        |> List.filter (\s -> s.startTicks == ticks)
+        |> List.head
+        |> Maybe.map .key
 
 
 {-| 選択トークンを deltaBars 小節移動してテキストを再構成する。移動先セルへは末尾追記（上書き・押し出しなし）。
@@ -762,3 +778,95 @@ plainWord word =
 
                 Err _ ->
                     word
+
+
+{-| 対象 1 トークンのテキストだけを f で書き換える。`removeTokens` と同じ「`|` で split → 対象小節だけ再構成、
+他の小節は生チャンク温存」パターンを踏襲する。変更した小節のコメントは消える（`moveTokens`/`removeTokens`
+と同一仕様）。key の barIndex が範囲外なら何もしない。
+-}
+updateToken : Timeline -> TokenKey -> (String -> String) -> ChordTrack -> ChordTrack
+updateToken timeline ( barIdx, tokenIdx ) f track =
+    let
+        cellsList =
+            cells timeline track
+
+        rawChunks =
+            String.split "|" track.text
+
+        barCountRaw =
+            List.length rawChunks
+
+        newTokensForBar b =
+            cellsList
+                |> List.filter (\c -> c.barIndex == b)
+                |> List.head
+                |> Maybe.map
+                    (\c ->
+                        c.chords
+                            |> List.indexedMap Tuple.pair
+                            |> List.map
+                                (\( j, tk ) ->
+                                    if j == tokenIdx then
+                                        f tk.token
+
+                                    else
+                                        tk.token
+                                )
+                    )
+                |> Maybe.withDefault []
+    in
+    if barIdx < 0 || barIdx >= barCountRaw then
+        track
+
+    else
+        let
+            newChunks =
+                List.range 0 (barCountRaw - 1)
+                    |> List.map
+                        (\b ->
+                            if b == barIdx then
+                                let
+                                    toks =
+                                        newTokensForBar b
+                                in
+                                if List.isEmpty toks then
+                                    ""
+
+                                else
+                                    " " ++ String.join " " toks ++ " "
+
+                            else
+                                rawChunks |> List.drop b |> List.head |> Maybe.withDefault ""
+                        )
+        in
+        { track | text = String.join "|" newChunks }
+
+
+{-| 既存の `@NAME` 部分を除去し、末尾に `@name` を追記する。parse→format だとクオリティが正規化されて表記が壊れる
+（例: FM7 が Fmaj7 になる）ため、テキスト操作だけで行う。スラッシュベース（`/BASS`）がある場合は
+`withoutVoicingName` で保ったまま末尾に `@name` を付ける（`MAIN@OLD/BASS` → `MAIN/BASS@name`）。
+-}
+withVoicingName : String -> String -> String
+withVoicingName name token =
+    withoutVoicingName token ++ "@" ++ name
+
+
+{-| `@NAME`（ボイシング指定）を除去する。`/BASS` が後ろにあっても保つ。`@` がなければそのまま返す。
+-}
+withoutVoicingName : String -> String
+withoutVoicingName token =
+    case String.indexes "@" token of
+        [ atIdx ] ->
+            let
+                afterAt =
+                    String.dropLeft (atIdx + 1) token
+            in
+            case String.indexes "/" afterAt of
+                slashIdx :: _ ->
+                    String.left atIdx token ++ String.dropLeft slashIdx afterAt
+
+                [] ->
+                    String.left atIdx token
+
+        _ ->
+            token

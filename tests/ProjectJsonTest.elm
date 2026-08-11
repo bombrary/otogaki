@@ -2,6 +2,7 @@ module ProjectJsonTest exposing (suite)
 
 import Codec.ProjectJson as ProjectJson
 import Data.Project
+import Data.Track
 import Expect
 import Json.Decode as Decode
 import Json.Encode as Encode
@@ -107,4 +108,9 @@ suite =
                     |> Decode.decodeValue ProjectJson.decoder
                     |> Result.map (.referenceAudio >> .durationMs)
                     |> Expect.equal (Ok Nothing)
+        , test "全楽器が instrumentToString / instrumentFromString で往復できる" <|
+            \_ ->
+                Data.Track.allInstruments
+                    |> List.map (Data.Track.instrumentToString >> Data.Track.instrumentFromString)
+                    |> Expect.equal (List.map Just Data.Track.allInstruments)
         ]

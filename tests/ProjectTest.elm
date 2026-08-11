@@ -8,7 +8,9 @@ import Data.Project as Project
 import Data.Section exposing (Section)
 import Data.Timeline as Timeline
 import Data.Track exposing (TrackKind(..))
+import Data.Voicing exposing (Voicing)
 import Expect
+import Set
 import Test exposing (Test, describe, test)
 
 
@@ -33,6 +35,50 @@ suite =
         [ timelineSuite
         , moveSectionToIndexSuite
         , reorderSectionsWithContentSuite
+        , voicingIndexByNameSuite
+        ]
+
+
+voicing : String -> Voicing
+voicing name =
+    { name = name, offsets = [], stringPicks = Set.empty }
+
+
+voicingIndexByNameSuite : Test
+voicingIndexByNameSuite =
+    describe "Data.Project.voicingIndexByName"
+        [ test "insertVoicing で同名を置換した場合、index は変わらない" <|
+            \_ ->
+                let
+                    project =
+                        { demo | voicings = [ voicing "A", voicing "B", voicing "C" ] }
+
+                    demo =
+                        Project.demo
+
+                    replaced =
+                        Project.insertVoicing (voicing "B") project
+                in
+                Project.voicingIndexByName "B" replaced.voicings
+                    |> Expect.equal (Just 1)
+        , test "insertVoicing で新規名を追加した場合、末尾 index になる" <|
+            \_ ->
+                let
+                    project =
+                        { demo | voicings = [ voicing "A", voicing "B" ] }
+
+                    demo =
+                        Project.demo
+
+                    appended =
+                        Project.insertVoicing (voicing "C") project
+                in
+                Project.voicingIndexByName "C" appended.voicings
+                    |> Expect.equal (Just 2)
+        , test "存在しない名前は Nothing" <|
+            \_ ->
+                Project.voicingIndexByName "X" [ voicing "A", voicing "B" ]
+                    |> Expect.equal Nothing
         ]
 
 

@@ -41,7 +41,8 @@ document.addEventListener("change", (e) => {
 window.addEventListener("keydown", (e) => {
   const tag = e.target && e.target.tagName;
   const hotkeys = [" ", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"];
-  if (hotkeys.includes(e.key) && !["INPUT", "TEXTAREA", "SELECT"].includes(tag)) {
+  const isSelectAll = (e.ctrlKey || e.metaKey) && (e.key === "a" || e.key === "A");
+  if ((hotkeys.includes(e.key) || isSelectAll) && !["INPUT", "TEXTAREA", "SELECT"].includes(tag)) {
     e.preventDefault();
   }
 });

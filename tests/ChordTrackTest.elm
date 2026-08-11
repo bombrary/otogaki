@@ -45,9 +45,12 @@ suite =
     Test.concat
         [ resolveSuite
         , tokenSpansSuite
+        , tokenKeyAtTicksSuite
         , tokenKeysInTickRangeSuite
         , moveTokensSuite
         , removeTokensSuite
+        , updateTokenSuite
+        , voicingNameSuite
         ]
 
 
@@ -180,6 +183,24 @@ tokenSpansSuite =
                 ChordTrack.tokenSpans timeline (track "C | _ | XYZ123")
                     |> List.map (\s -> s.resolvedName)
                     |> Expect.equal [ Just "C", Nothing, Nothing ]
+        ]
+
+
+tokenKeyAtTicksSuite : Test
+tokenKeyAtTicksSuite =
+    describe "Data.ChordTrack.tokenKeyAtTicks"
+        [ test "先頭トークンに一致する ticks" <|
+            \_ ->
+                ChordTrack.tokenKeyAtTicks timeline 0 (track "C G | Am")
+                    |> Expect.equal (Just ( 0, 0 ))
+        , test "途中トークンに一致する ticks" <|
+            \_ ->
+                ChordTrack.tokenKeyAtTicks timeline barLen (track "C G | Am")
+                    |> Expect.equal (Just ( 1, 0 ))
+        , test "どのトークンにも一致しない ticks" <|
+            \_ ->
+                ChordTrack.tokenKeyAtTicks timeline (barLen * 10) (track "C G | Am")
+                    |> Expect.equal Nothing
         ]
 
 
@@ -317,4 +338,78 @@ removeTokensSuite =
                         ChordTrack.removeTokens timeline (Set.fromList [ ( 0, 0 ) ]) (track "C | G // secret")
                 in
                 String.contains "// secret" result.text |> Expect.equal True
+        ]
+
+
+updateTokenSuite : Test
+updateTokenSuite =
+    describe "Data.ChordTrack.updateToken"
+        [ test "対象トークンだけを書き換える" <|
+            \_ ->
+                let
+                    result =
+                        ChordTrack.updateToken timeline ( 1, 0 ) (\_ -> "REPLACED") (track "C | G")
+                in
+                ChordTrack.cells timeline result
+                    |> List.map (\c -> List.map .token c.chords)
+                    |> Expect.equal [ [ "C" ], [ "REPLACED" ] ]
+        , test "小節内の複数トークンでも対象 tokenIndex だけを書き換える" <|
+            \_ ->
+                let
+                    result =
+                        ChordTrack.updateToken timeline ( 0, 1 ) (\_ -> "REPLACED") (track "C G | Am")
+                in
+                ChordTrack.cells timeline result
+                    |> List.map (\c -> List.map .token c.chords)
+                    |> Expect.equal [ [ "C", "REPLACED" ], [ "Am" ] ]
+        , test "無変更の小節のコメントは温存される" <|
+            \_ ->
+                let
+                    result =
+                        ChordTrack.updateToken timeline ( 1, 0 ) (\_ -> "REPLACED") (track "C // secret\n| G")
+                in
+                ( String.contains "// secret" result.text
+                , ChordTrack.cells timeline result |> List.map (\c -> List.map .token c.chords)
+                )
+                    |> Expect.equal ( True, [ [ "C" ], [ "REPLACED" ] ] )
+        , test "barIndex が範囲外なら何もしない" <|
+            \_ ->
+                let
+                    original =
+                        track "C | G"
+
+                    result =
+                        ChordTrack.updateToken timeline ( 5, 0 ) (\_ -> "X") original
+                in
+                result.text |> Expect.equal original.text
+        ]
+
+
+voicingNameSuite : Test
+voicingNameSuite =
+    describe "Data.ChordTrack.withVoicingName / withoutVoicingName"
+        [ test "withVoicingName は @NAME が無ければ末尾に追加する" <|
+            \_ ->
+                ChordTrack.withVoicingName "Bm7b5_6弦" "Bm7-5"
+                    |> Expect.equal "Bm7-5@Bm7b5_6弦"
+        , test "withVoicingName は既存の @NAME を新しい名前に付け替える" <|
+            \_ ->
+                ChordTrack.withVoicingName "New" "Bm7-5@Old"
+                    |> Expect.equal "Bm7-5@New"
+        , test "withVoicingName はスラッシュベースを保ったまま付け替える" <|
+            \_ ->
+                ChordTrack.withVoicingName "New" "C@Old/E"
+                    |> Expect.equal "C/E@New"
+        , test "withoutVoicingName は @NAME を除去する" <|
+            \_ ->
+                ChordTrack.withoutVoicingName "Bm7-5@Bm7b5_6弦"
+                    |> Expect.equal "Bm7-5"
+        , test "withoutVoicingName は @NAME が無ければそのまま返す" <|
+            \_ ->
+                ChordTrack.withoutVoicingName "Bm7-5"
+                    |> Expect.equal "Bm7-5"
+        , test "withoutVoicingName はスラッシュベースを保つ" <|
+            \_ ->
+                ChordTrack.withoutVoicingName "C@Old/E"
+                    |> Expect.equal "C/E"
         ]

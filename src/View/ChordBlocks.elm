@@ -1,6 +1,6 @@
-module View.ChordBlocks exposing (view)
+module View.ChordBlocks exposing (Config, view)
 
-import Data.ChordTrack exposing (ChordCell, ChordTrack, TokenKind(..))
+import Data.ChordTrack exposing (ChordCell, ChordTrack, TokenKey, TokenKind(..))
 import Data.Key exposing (Key)
 import Data.Timeline exposing (Timeline)
 import Html exposing (Html, div, span, text)
@@ -8,25 +8,32 @@ import Html.Attributes as HA
 import Html.Events as HE
 import View.Palette as Palette
 import View.Style as Style
+import View.Theme as Theme
+
+
+type alias Config msg =
+    { clickedChord : Int -> msg
+    , doubleClickedToken : TokenKey -> msg
+    }
 
 
 {-| 小節ごとのブロックとしてコード進行を表示する。旧 ChordEditor.cellsView/cellView/chordView
 （`e325f2e` で削除される前の実装）の移植。ピアノロール風の一直線表示（View.ChordStrip）と
 切り替えて使うトグル表示。
 -}
-view : (Int -> msg) -> Timeline -> Int -> ChordTrack -> Html msg
-view clickedChord timeline playheadTicks track =
+view : Config msg -> Timeline -> Int -> ChordTrack -> Html msg
+view config timeline playheadTicks track =
     div
         [ HA.style "display" "flex"
         , HA.style "gap" "2px"
         , HA.style "margin-top" "0.4rem"
         , HA.style "flex-wrap" "wrap"
         ]
-        (List.map (cellView clickedChord timeline playheadTicks) (Data.ChordTrack.cells timeline track))
+        (List.map (cellView config timeline playheadTicks) (Data.ChordTrack.cells timeline track))
 
 
-cellView : (Int -> msg) -> Timeline -> Int -> ChordCell -> Html msg
-cellView clickedChord timeline playheadTicks cell =
+cellView : Config msg -> Timeline -> Int -> ChordCell -> Html msg
+cellView config timeline playheadTicks cell =
     let
         isCurrentBar =
             playheadTicks >= cell.startTicks && playheadTicks < cell.startTicks + cell.lengthTicks
@@ -49,7 +56,7 @@ cellView clickedChord timeline playheadTicks cell =
 
         background =
             if isCurrentBar then
-                "#fff6dd"
+                Theme.highlightContainer
 
             else
                 case Data.Timeline.sectionIndexAt cell.startTicks timeline of
@@ -60,33 +67,27 @@ cellView clickedChord timeline playheadTicks cell =
                         Palette.neutral
     in
     div
-        [ HA.style "border"
-            (if isCurrentBar then
-                "1px solid #e6a817"
-
-             else
-                "1px solid #ccc"
-            )
-        , HA.style "border-radius" "3px"
+        [ HA.style "border-radius" "3px"
         , HA.style "padding" "0.2rem 0.4rem"
         , HA.style "min-width" "3.5rem"
         , HA.style "background" background
         ]
         (span
-            [ HA.style "font-size" "0.7rem"
-            , HA.style "color" "#aaa"
+            [ HA.class "m3-btn"
+            , HA.style "font-size" "0.7rem"
+            , HA.style "color" Theme.onSurfaceVariant
             , HA.style "margin-right" "0.3rem"
             , HA.style "cursor" "pointer"
             , HA.title "この小節の頭から再生"
-            , HE.onClick (clickedChord cell.startTicks)
+            , HE.onClick (config.clickedChord cell.startTicks)
             ]
             [ text (String.fromInt (cell.barIndex + 1)) ]
-            :: List.indexedMap (\i c -> chordView clickedChord (tickAtToken i) key (i == currentToken) c) cell.chords
+            :: List.indexedMap (\i c -> chordView config ( cell.barIndex, i ) (tickAtToken i) key (i == currentToken) c) cell.chords
         )
 
 
-chordView : (Int -> msg) -> Int -> Key -> Bool -> { token : String, result : Result String TokenKind } -> Html msg
-chordView clickedChord tick key isCurrent c =
+chordView : Config msg -> TokenKey -> Int -> Key -> Bool -> { token : String, result : Result String TokenKind } -> Html msg
+chordView config tokenKey tick key isCurrent c =
     let
         highlight =
             [ HA.style "padding" "0 0.15rem"
@@ -101,9 +102,11 @@ chordView clickedChord tick key isCurrent c =
             ]
 
         clickable =
-            [ HA.style "cursor" "pointer"
-            , HA.title "クリックでここから再生"
-            , HE.onClick (clickedChord tick)
+            [ HA.class "m3-btn"
+            , HA.style "cursor" "pointer"
+            , HA.title "クリックでここから再生（ダブルクリックで運指を選ぶ）"
+            , HE.onClick (config.clickedChord tick)
+            , HE.onDoubleClick (config.doubleClickedToken tokenKey)
             ]
 
         degree =
@@ -124,10 +127,10 @@ chordView clickedChord tick key isCurrent c =
                     ++ highlight
                     ++ clickable
                 )
-                [ span [ HA.style "color" color, HA.style "font-weight" "bold" ] [ text c.token ]
+                [ span (HA.style "color" color :: Theme.typeTitleSmall) [ text c.token ]
                 , case degree of
                     Just d ->
-                        span [ HA.style "font-size" "0.6rem", HA.style "color" "#aaa" ] [ text d ]
+                        span [ HA.style "font-size" "0.6rem", HA.style "color" Theme.onSurfaceVariant ] [ text d ]
 
                     Nothing ->
                         text ""
@@ -135,14 +138,14 @@ chordView clickedChord tick key isCurrent c =
     in
     case c.result of
         Ok (TChord _) ->
-            withDegree "#2c7a2c"
+            withDegree Theme.success
 
         Ok _ ->
-            withDegree "#888"
+            withDegree Theme.onSurfaceVariant
 
         Err reason ->
             span
-                ([ HA.style "color" "#e74c3c"
+                ([ HA.style "color" Theme.error
                  , HA.style "text-decoration" "underline wavy"
                  , HA.style "margin-right" "0.3rem"
                  , HA.title reason

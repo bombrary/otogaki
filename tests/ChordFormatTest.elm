@@ -65,9 +65,84 @@ roundtripTest preferFlat c =
         \_ -> Expect.equal (Ok c) (Parser.parse (Format.format { preferFlat = preferFlat } c))
 
 
+degreeLabelCases : List ( Int, String )
+degreeLabelCases =
+    [ ( 0, "R" )
+    , ( 1, "b9" )
+    , ( 2, "9" )
+    , ( 3, "b3" )
+    , ( 4, "3" )
+    , ( 5, "11" )
+    , ( 6, "b5" )
+    , ( 7, "5" )
+    , ( 8, "#5" )
+    , ( 9, "6" )
+    , ( 10, "b7" )
+    , ( 11, "7" )
+    ]
+
+
+degreeLabelTest : ( Int, String ) -> Test
+degreeLabelTest ( interval, label ) =
+    test ("degreeLabel " ++ String.fromInt interval ++ " == " ++ label) <|
+        \_ -> Expect.equal label (Format.degreeLabel interval)
+
+
+degreeLabelExtendedCases : List ( Int, String )
+degreeLabelExtendedCases =
+    [ -- 明示的にサポートする14種の度数記号
+      ( 3, "b3" )
+    , ( 4, "3" )
+    , ( 5, "4" )
+    , ( 6, "b5" )
+    , ( 7, "5" )
+    , ( 8, "#5" )
+    , ( 10, "b7" )
+    , ( 11, "7" )
+    , ( 14, "9" )
+    , ( 15, "b3" )
+    , ( 17, "11" )
+    , ( 18, "#11" )
+    , ( 21, "13" )
+    , ( 20, "b13" )
+
+    -- root
+    , ( 0, "R" )
+
+    -- リスト外だが既存degreeLabelと同じ規則を踏襲する代表値（オクターブ内）
+    , ( 1, "b9" )
+    , ( 2, "9" )
+    , ( 9, "6" )
+
+    -- 1オクターブ上のroot
+    , ( 12, "R" )
+
+    -- 負のoffset（Voicing.offsetsの下限は-12。-1はElmの modBy 12 -1 == 11 により
+    -- semitone=11, octave=(-1-11)//12=-1 となり、octaveが0でないのでテンション側のテーブルを引く。
+    -- テンション側テーブルはsemitone=11 -> "7"なので、-1 は "7" になる（elm-testで実際に確認済み）。
+    , ( -1, "7" )
+    ]
+
+
+degreeLabelExtendedTest : ( Int, String ) -> Test
+degreeLabelExtendedTest ( offset, label ) =
+    test ("degreeLabelExtended " ++ String.fromInt offset ++ " == " ++ label) <|
+        \_ -> Expect.equal label (Format.degreeLabelExtended offset)
+
+
 suite : Test
 suite =
     describe "Data.Chord.Format roundtrip"
         [ describe "preferFlat = False" (List.map (roundtripTest False) cases)
         , describe "preferFlat = True" (List.map (roundtripTest True) cases)
+        , describe "degreeLabel" (List.map degreeLabelTest degreeLabelCases)
+        , describe "degreeLabel modBy 12 wraps around"
+            [ test "12 wraps to R (same as 0)" <|
+                \_ -> Expect.equal "R" (Format.degreeLabel 12)
+            , test "16 wraps to 3 (same as 4)" <|
+                \_ -> Expect.equal "3" (Format.degreeLabel 16)
+            , test "-1 wraps to 7 (same as 11)" <|
+                \_ -> Expect.equal "7" (Format.degreeLabel -1)
+            ]
+        , describe "degreeLabelExtended" (List.map degreeLabelExtendedTest degreeLabelExtendedCases)
         ]

@@ -14,7 +14,7 @@ anchorPitch =
 
 type alias Voicing =
     { name : String
-    , offsets : List Int -- anchorPitch + root からの半音オフセット。常に 0 以上
+    , offsets : List Int -- anchorPitch + root からの半音オフセット。常に -12 以上（転回形・ハイブリッドコードで root より低いベース音を許容）
     , stringPicks : Set ( Int, Int ) -- (offset, 弦インデックス)。押さえた位置の運指メモ。Data.GuitarForm.StringPicks と同型
     }
 
@@ -60,7 +60,7 @@ shiftOffsets delta maxOffset selected offsets =
         |> List.map
             (\o ->
                 if Set.member o selected then
-                    clamp 0 maxOffset (o + delta)
+                    clamp -12 maxOffset (o + delta)
 
                 else
                     o

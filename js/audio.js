@@ -1,5 +1,5 @@
 import * as Tone from "tone";
-import { DrumMachine, Soundfont } from "smplr";
+import { DrumMachine, ElectricPiano, Mallet, Mellotron, Smolken, Soundfont, SplendidGrandPiano } from "smplr";
 
 let started = false;
 let synth = null;
@@ -149,12 +149,31 @@ export async function ensureAudio() {
 function loaderFor(name, ctx) {
   switch (name) {
     case "piano":
-      return new Soundfont(ctx, { instrument: "acoustic_grand_piano" });
+      // GM から差し替え。実録スタインウェイ（生音に近い）
+      return new SplendidGrandPiano(ctx);
+    case "electricPiano":
+      return new ElectricPiano(ctx, { instrument: "WurlitzerEP200" });
+    case "organ":
+      return new Soundfont(ctx, { instrument: "drawbar_organ" });
     case "acousticGuitar":
       return new Soundfont(ctx, { instrument: "acoustic_guitar_nylon" });
+    case "steelGuitar":
+      return new Soundfont(ctx, { instrument: "acoustic_guitar_steel" });
+    case "electricGuitarClean":
+      return new Soundfont(ctx, { instrument: "electric_guitar_clean" });
+    case "electricGuitarJazz":
+      return new Soundfont(ctx, { instrument: "electric_guitar_jazz" });
     case "electricBass":
       // MusyngKite の electric_bass_finger は高音域でオクターブ落ちするので FluidR3_GM を使う
       return new Soundfont(ctx, { instrument: "electric_bass_finger", kit: "FluidR3_GM" });
+    case "uprightBass":
+      return new Smolken(ctx, { instrument: "Pizzicato" });
+    case "vibraphone":
+      return new Mallet(ctx, { instrument: "Vibraphone - Hard Mallets" });
+    case "strings":
+      return new Soundfont(ctx, { instrument: "string_ensemble_1" });
+    case "mellotron":
+      return new Mellotron(ctx, { instrument: "MKII VIOLINS" });
     case "drumKit":
       return new DrumMachine(ctx, { instrument: "TR-808" });
     default:

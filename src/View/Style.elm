@@ -8,6 +8,7 @@ module View.Style exposing
     , colorLoopHandle
     , colorPrimary
     , colorSelection
+    , colorViewRange
     , dangerButton
     , divider
     , focusCss
@@ -17,120 +18,147 @@ module View.Style exposing
     , toggleButton
     )
 
-{-| button and text style helpers shared across all View modules. -}
+{-| button and text style helpers shared across all View modules.
+
+Material Design 3 のトークン（View.Theme）をラップする層。公開APIの名前・型は変えていないので、
+ここを書き換えるだけで全 View に一斉に反映される。
+
+-}
 
 import Html
 import Html.Attributes as HA
+import View.Theme as Theme
 
 
 colorPrimary : String
 colorPrimary =
-    "#4a90d9"
+    Theme.primary
 
 
 colorDanger : String
 colorDanger =
-    "#e74c3c"
+    Theme.error
 
 
 colorSelection : String
 colorSelection =
-    "#d6336c"
+    Theme.selection
 
 
 colorHighlight : String
 colorHighlight =
-    "#ffd54f"
+    Theme.highlight
 
 
 colorLoop : String
 colorLoop =
-    "#5e60ce"
+    Theme.loop
 
 
 colorLoopHandle : String
 colorLoopHandle =
-    "#3f3d9e"
+    Theme.loopHandle
 
 
+{-| リージョン上に示すピアノロールの可視範囲枠の色。ループ帯（colorLoop）・プレイヘッド（Theme.playhead）と区別するため highlight を使う。
+-}
+colorViewRange : String
+colorViewRange =
+    Theme.highlight
+
+
+{-| M3 の text button。境界線も塗りもなく、文字は枠 primary、形状 pill。
+`m3-btn` クラスで hover/active の state layer（View.Theme.globalCss 定義）が付く。
+-}
 baseButton : List (Html.Attribute msg)
 baseButton =
-    [ HA.style "padding" "0.3rem 0.6rem"
-    , HA.style "border" "1px solid #ccc"
-    , HA.style "border-radius" "4px"
-    , HA.style "background" "#fff"
-    , HA.style "font-size" "0.85rem"
+    [ HA.class "m3-btn"
+    , HA.style "padding" "0.3rem 0.6rem"
+    , HA.style "border" "1px solid transparent"
+    , HA.style "border-radius" Theme.shapeFull
+    , HA.style "background" "transparent"
+    , HA.style "color" Theme.primary
     , HA.style "cursor" "pointer"
     ]
+        ++ Theme.typeLabelLarge
 
 
+{-| ON: filled button（primary 背景 + onPrimary 文字）。OFF: baseButton と同じ outlined。
+-}
 toggleButton : Bool -> List (Html.Attribute msg)
 toggleButton isOn =
-    baseButton
-        ++ [ HA.style "background"
+    Theme.typeLabelLarge
+        ++ [ HA.class "m3-btn"
+           , HA.style "padding" "0.3rem 0.6rem"
+           , HA.style "border-radius" Theme.shapeFull
+           , HA.style "cursor" "pointer"
+           , HA.style "border" "1px solid transparent"
+           , HA.style "background"
                 (if isOn then
-                    colorPrimary
+                    Theme.primary
 
                  else
-                    "#eee"
+                    "transparent"
                 )
            , HA.style "color"
                 (if isOn then
-                    "#fff"
+                    Theme.onPrimary
 
                  else
-                    "#333"
-                )
-           , HA.style "border-color"
-                (if isOn then
-                    colorPrimary
-
-                 else
-                    "#ccc"
+                    Theme.primary
                 )
            ]
 
 
+{-| outlined error button（文字・枠が error）。削除の1段階目など、確認前の危険操作に使う。
+-}
 dangerButton : List (Html.Attribute msg)
 dangerButton =
-    baseButton
-        ++ [ HA.style "color" colorDanger
-           , HA.style "border-color" colorDanger
-           ]
+    [ HA.class "m3-btn"
+    , HA.style "padding" "0.3rem 0.6rem"
+    , HA.style "border" "1px solid transparent"
+    , HA.style "border-radius" Theme.shapeFull
+    , HA.style "background" "transparent"
+    , HA.style "color" Theme.error
+    , HA.style "cursor" "pointer"
+    ]
+        ++ Theme.typeLabelLarge
 
 
+{-| filled error button（削除確定など、実行直前の確認済み状態）。
+-}
 armedDangerButton : List (Html.Attribute msg)
 armedDangerButton =
-    baseButton
-        ++ [ HA.style "background" colorDanger
-           , HA.style "color" "#fff"
-           , HA.style "border-color" colorDanger
-           ]
+    [ HA.class "m3-btn"
+    , HA.style "padding" "0.3rem 0.6rem"
+    , HA.style "border" "1px solid transparent"
+    , HA.style "border-radius" Theme.shapeFull
+    , HA.style "background" Theme.error
+    , HA.style "color" Theme.onError
+    , HA.style "cursor" "pointer"
+    ]
+        ++ Theme.typeLabelLarge
 
 
 headingText : List (Html.Attribute msg)
 headingText =
-    [ HA.style "font-size" "0.9rem"
-    , HA.style "font-weight" "bold"
-    ]
+    Theme.typeTitleSmall
 
 
 labelText : List (Html.Attribute msg)
 labelText =
-    [ HA.style "font-size" "0.85rem" ]
+    Theme.typeBodyMedium
 
 
 hintText : List (Html.Attribute msg)
 hintText =
-    [ HA.style "font-size" "0.75rem"
-    , HA.style "color" "#888"
-    ]
+    Theme.typeBodySmall ++ [ HA.style "color" Theme.onSurfaceVariant ]
 
 
 divider : Html.Html msg
 divider =
     Html.div
-        [ HA.style "border-left" "1px solid #ddd"
+        [ HA.style "border-left" ("1px solid " ++ Theme.outlineVariant)
         , HA.style "height" "1.2rem"
         , HA.style "margin" "0 0.2rem"
         ]
@@ -139,14 +167,7 @@ divider =
 
 focusCss : Html.Html msg
 focusCss =
-    Html.node "style"
-        []
-        [ Html.text
-            ("html, body { margin: 0; height: 100%; } button:focus-visible, [tabindex]:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid "
-                ++ colorPrimary
-                ++ "; outline-offset: 1px; }"
-            )
-        ]
+    Theme.globalCss
 
 
 badge : String -> List (Html.Attribute msg)
@@ -155,20 +176,20 @@ badge tone =
         ( bg, fg ) =
             case tone of
                 "loading" ->
-                    ( "#fdf0e4", "#e67e22" )
+                    ( Theme.pendingContainer, Theme.onPendingContainer )
 
                 "failed" ->
-                    ( "#fdecea", "#e74c3c" )
+                    ( Theme.errorContainer, Theme.onErrorContainer )
 
                 "success" ->
-                    ( "#e8f8ee", "#2c7a2c" )
+                    ( Theme.successContainer, Theme.onSuccessContainer )
 
                 _ ->
-                    ( "#eee", "#333" )
+                    ( Theme.surfaceContainerHigh, Theme.onSurfaceVariant )
     in
-    [ HA.style "padding" "0.1rem 0.4rem"
-    , HA.style "border-radius" "8px"
-    , HA.style "font-size" "0.75rem"
-    , HA.style "background" bg
-    , HA.style "color" fg
-    ]
+    Theme.typeBodySmall
+        ++ [ HA.style "padding" "0.1rem 0.4rem"
+           , HA.style "border-radius" Theme.shapeS
+           , HA.style "background" bg
+           , HA.style "color" fg
+           ]

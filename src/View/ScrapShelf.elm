@@ -9,6 +9,7 @@ import Html.Events as HE
 import Svg
 import Svg.Attributes as SA
 import View.Style as Style
+import View.Theme as Theme
 
 
 type alias Config msg =
@@ -25,11 +26,11 @@ view config selectionCount scraps pendingDeleteId =
         [ HA.attribute "open" ""
         , HA.style "margin-top" "1rem"
         , HA.style "padding" "0.5rem"
-        , HA.style "border" "1px dashed #bbb"
+        , HA.style "border" ("1px dashed " ++ Theme.outline)
         , HA.style "border-radius" "4px"
         ]
         [ Html.summary (HA.style "cursor" "pointer" :: Style.headingText) [ text "📋 断片棚" ]
-        , span [ HA.style "font-size" "0.75rem", HA.style "color" "#888", HA.style "display" "block", HA.style "margin-top" "0.3rem" ]
+        , span [ HA.style "font-size" "0.75rem", HA.style "color" Theme.onSurfaceVariant, HA.style "display" "block", HA.style "margin-top" "0.3rem" ]
             [ text "思いついたフレーズを曲に置く前にここへ貯めておける。「配置」で選択中のトラックの再生位置に置く" ]
         , div [ HA.style "display" "flex", HA.style "gap" "0.5rem", HA.style "flex-wrap" "wrap", HA.style "margin-top" "0.4rem" ]
             (List.map (scrapCard config pendingDeleteId) scraps
@@ -49,10 +50,9 @@ view config selectionCount scraps pendingDeleteId =
 scrapCard : Config msg -> Maybe Int -> Scrap -> Html msg
 scrapCard config pendingDeleteId scrap =
     div
-        [ HA.style "border" "1px solid #ccc"
-        , HA.style "border-radius" "4px"
+        [ HA.style "border-radius" "4px"
         , HA.style "padding" "0.3rem"
-        , HA.style "background" "#fafafa"
+        , HA.style "background" Theme.surfaceContainerLow
         ]
         [ input
             [ HA.value scrap.name
@@ -107,7 +107,7 @@ preview notes =
                 , SA.y (String.fromFloat (toFloat (maxP - n.pitch) / toFloat range * toFloat (height - 4)))
                 , SA.width (String.fromFloat (Basics.max 2 (toFloat n.duration / toFloat endTicks * toFloat width)))
                 , SA.height "3"
-                , SA.fill "#4a90d9"
+                , SA.fill Theme.primary
                 ]
                 []
     in
@@ -115,8 +115,8 @@ preview notes =
         [ SA.width (String.fromInt width)
         , SA.height (String.fromInt height)
         , HA.style "display" "block"
-        , HA.style "background" "#fff"
-        , HA.style "border" "1px solid #eee"
+        , HA.style "background" Theme.surfaceContainerLowest
+        , HA.style "border" ("1px solid " ++ Theme.surfaceContainerHighest)
         , HA.style "margin-top" "0.2rem"
         ]
         (List.map noteRect notes)

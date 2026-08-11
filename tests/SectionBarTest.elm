@@ -66,11 +66,15 @@ regionZoomStepSuite =
         [ test "deltaY が負（ホイール上）なら拡大する" <|
             \_ ->
                 SectionBar.regionZoomStep -1 40
-                    |> Expect.equal 48
+                    |> Expect.greaterThan 40
         , test "deltaY が正（ホイール下）なら縮小する" <|
             \_ ->
                 SectionBar.regionZoomStep 1 48
-                    |> Expect.equal 40
+                    |> Expect.lessThan 48
+        , test "deltaY がホイール1ノッチ相当（±100）なら従来同等の1.2倍/分一になる" <|
+            \_ ->
+                Expect.equal ( 48, 40 )
+                    ( SectionBar.regionZoomStep -100 40, SectionBar.regionZoomStep 100 48 )
         , test "deltaY が 0 なら変化しない" <|
             \_ ->
                 SectionBar.regionZoomStep 0 40

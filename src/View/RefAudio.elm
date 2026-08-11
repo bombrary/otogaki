@@ -5,6 +5,7 @@ import Html exposing (Html, button, div, input, label, span, text)
 import Html.Attributes as HA
 import Html.Events as HE
 import View.Style as Style
+import View.Theme as Theme
 
 
 type alias Config msg =
@@ -21,11 +22,11 @@ view config offsetInput loaded ra =
         [ HA.attribute "open" ""
         , HA.style "margin-top" "1rem"
         , HA.style "padding" "0.5rem"
-        , HA.style "border" "1px solid #ddd"
+        , HA.style "border" ("1px solid " ++ Theme.outlineVariant)
         , HA.style "border-radius" "4px"
         ]
         [ Html.summary (HA.style "cursor" "pointer" :: Style.headingText) [ text "🎧 参考オーディオ" ]
-        , span [ HA.style "font-size" "0.75rem", HA.style "color" "#888", HA.style "display" "block", HA.style "margin-top" "0.3rem" ]
+        , span [ HA.style "font-size" "0.75rem", HA.style "color" Theme.onSurfaceVariant, HA.style "display" "block", HA.style "margin-top" "0.3rem" ]
             [ text "耳コピ・分析用。音声データは保存されないので、リロード後はファイルを選び直してね" ]
         , div [ HA.style "display" "flex", HA.style "gap" "0.7rem", HA.style "align-items" "center", HA.style "flex-wrap" "wrap", HA.style "margin-top" "0.4rem" ]
             [ input
@@ -76,13 +77,13 @@ statusView : Bool -> ReferenceAudio -> Html msg
 statusView loaded ra =
     case ( loaded, ra.fileName ) of
         ( True, Just name ) ->
-            span [ HA.style "font-size" "0.8rem", HA.style "color" "#2c7a2c" ] [ text ("読込済: " ++ name) ]
+            span [ HA.style "font-size" "0.8rem", HA.style "color" Theme.success ] [ text ("読込済: " ++ name) ]
 
         ( True, Nothing ) ->
-            span [ HA.style "font-size" "0.8rem", HA.style "color" "#2c7a2c" ] [ text "読込済" ]
+            span [ HA.style "font-size" "0.8rem", HA.style "color" Theme.success ] [ text "読込済" ]
 
         ( False, Just name ) ->
-            span [ HA.style "font-size" "0.8rem", HA.style "color" "#e67e22" ] [ text ("前回: " ++ name ++ "（要再読込）") ]
+            span [ HA.style "font-size" "0.8rem", HA.style "color" Theme.onPendingContainer ] [ text ("前回: " ++ name ++ "（要再読込）") ]
 
         ( False, Nothing ) ->
             text ""

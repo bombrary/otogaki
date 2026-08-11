@@ -5,6 +5,7 @@ import Html.Attributes as HA
 import Html.Events as HE
 import Set exposing (Set)
 import View.Style as Style
+import View.Theme as Theme
 
 
 type alias Config msg =
@@ -47,7 +48,7 @@ view config highlighted open =
             ]
             :: (if open then
                     [ pianoView config highlighted
-                    , div [ HA.style "font-size" "0.75rem", HA.style "color" "#888", HA.style "margin-top" "0.3rem" ]
+                    , div [ HA.style "font-size" "0.75rem", HA.style "color" Theme.onSurfaceVariant, HA.style "margin-top" "0.3rem" ]
                         [ text "キーボードでも弾ける: Z〜M = C3〜B3 / Q,2,W,3,E,R,5,T,6,Y,7,U = C4〜B4 / I = C5（選択中のトラックの音色）" ]
                     ]
 
@@ -85,9 +86,9 @@ pianoView config highlighted =
                         Style.colorHighlight
 
                      else
-                        "#fff"
+                        Theme.keyWhite
                     )
-                , HA.style "border" "1px solid #999"
+                , HA.style "border" ("1px solid " ++ Theme.outline)
                 , HA.style "box-sizing" "border-box"
                 , HA.style "cursor" "pointer"
                 , HA.style "user-select" "none"
@@ -95,7 +96,7 @@ pianoView config highlighted =
                 , HA.style "align-items" "flex-end"
                 , HA.style "justify-content" "center"
                 , HA.style "font-size" "9px"
-                , HA.style "color" "#999"
+                , HA.style "color" Theme.outline
                 , HE.onMouseDown (config.pressedKey pitch)
                 ]
                 [ text
@@ -116,12 +117,12 @@ pianoView config highlighted =
                 , HA.style "height" "68px"
                 , HA.style "background"
                     (if Set.member pitch highlighted then
-                        "#c8a415"
+                        Theme.highlight
 
                      else
-                        "#222"
+                        Theme.keyBlack
                     )
-                , HA.style "border" "1px solid #000"
+                , HA.style "border" ("1px solid " ++ Theme.keyBlack)
                 , HA.style "border-radius" "0 0 3px 3px"
                 , HA.style "box-sizing" "border-box"
                 , HA.style "cursor" "pointer"
