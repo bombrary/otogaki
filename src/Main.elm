@@ -4894,7 +4894,8 @@ view model =
                 , style "flex" "0 0 auto"
                 , style "cursor" "col-resize"
                 , style "background" Theme.outlineVariant
-                , Html.Events.on "mousedown" (Decode.map PressedPaneDivider (Decode.field "clientX" Decode.float))
+                , style "touch-action" "none"
+                , Html.Events.on "pointerdown" (Decode.map PressedPaneDivider (Decode.field "clientX" Decode.float))
                 ]
                 []
             , div
@@ -5247,7 +5248,31 @@ view model =
                 text ""
         , hoveredNoteTooltipView model timeline
         , hoveredFretCellTooltipView model
+        , if isDragging model then
+            viewDragOverlay
+
+          else
+            text ""
         ]
+
+
+{-| ポインター化したドラッグ中だけ全画面に重ねる透明のdiv。ElmのBrowser.Eventsには
+pointermove/pointerupの購読が存在しないため、代わりにこの要素自体にpointermove/pointerup/pointercancelを
+張ってドラッグ中のポインターを追跡する。既存のDraggedTo/ReleasedDragをそのまま再利用するので、
+update側の処理は一切変えなくてよい。
+-}
+viewDragOverlay : Html Msg
+viewDragOverlay =
+    div
+        [ style "position" "fixed"
+        , style "inset" "0"
+        , style "z-index" "900"
+        , style "touch-action" "none"
+        , Html.Events.on "pointermove" (Decode.map DraggedTo clientPosDecoder)
+        , Html.Events.on "pointerup" (Decode.succeed ReleasedDrag)
+        , Html.Events.on "pointercancel" (Decode.succeed ReleasedDrag)
+        ]
+        []
 
 
 {-| ノートホバー時のツールチップ。ホバー中ノートと同じトラック（通常ピアノロールなら選択中トラック、
@@ -5356,11 +5381,27 @@ hoveredFretCellTooltipView model =
                 ]
 
 
+{-| ポインターイベント化済みのドラッグ種。viewDragOverlayを出すかどうかの判定に使う。
+タッチ対応の移行が進むまでは、ここに入っていない残りのドラッグ種はlegacyDraggingで別途判定する。
+-}
+isDragging : Model -> Bool
+isDragging model =
+    model.paneDividerDrag /= Nothing || model.dragState /= NoDrag
+
+
+{-| まだpointerdown化していない残りのドラッグ種。こちらは従来通りマウスイベントのままである。
+すべてpointerdown化したら、この関数と併用のマウス移動購読も削除する。
+-}
+legacyDragging : Model -> Bool
+legacyDragging model =
+    model.rubberBand /= Nothing || model.loopDrag /= Nothing || model.voicingDragState /= NoVoicingDrag || model.sectionResizeDrag /= Nothing || model.sectionMoveDrag /= Nothing || model.sectionLoopDrag /= Nothing || model.chordDrag /= Nothing || model.chordRubberBand /= Nothing || model.velocityDrag /= Nothing || model.viewRangeDrag /= Nothing
+
+
 subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
         [ Ports.fromAudio (AudioMsg.decode >> GotAudio)
-        , if model.dragState /= NoDrag || model.rubberBand /= Nothing || model.loopDrag /= Nothing || model.voicingDragState /= NoVoicingDrag || model.sectionResizeDrag /= Nothing || model.sectionMoveDrag /= Nothing || model.sectionLoopDrag /= Nothing || model.paneDividerDrag /= Nothing || model.chordDrag /= Nothing || model.chordRubberBand /= Nothing || model.velocityDrag /= Nothing || model.viewRangeDrag /= Nothing then
+        , if legacyDragging model then
             Browser.Events.onMouseMove (Decode.map DraggedTo clientPosDecoder)
 
           else

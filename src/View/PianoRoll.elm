@@ -1254,10 +1254,17 @@ noteView config pxPerSixteenth selectedIds tool note =
              else
                 "inherit"
             )
+         , HA.style "touch-action"
+            (if interactive then
+                "none"
+
+             else
+                "auto"
+            )
          ]
             ++ cutOnlyAttrs
             ++ (if interactive then
-                    [ Html.Events.stopPropagationOn "mousedown"
+                    [ Html.Events.stopPropagationOn "pointerdown"
                         (Decode.map (\pos -> ( config.pressedNote note.id NoResize pos, True )) notePressDecoder)
                     , Html.Events.stopPropagationOn "dblclick"
                         (Decode.succeed ( config.doubleClickedNote note.id, True ))
@@ -1321,10 +1328,17 @@ noteView config pxPerSixteenth selectedIds tool note =
              else
                 "inherit"
             )
+         , HA.style "touch-action"
+            (if interactive then
+                "none"
+
+             else
+                "auto"
+            )
          ]
             ++ cutOnlyAttrs
             ++ (if interactive then
-                    [ Html.Events.stopPropagationOn "mousedown"
+                    [ Html.Events.stopPropagationOn "pointerdown"
                         (Decode.map (\pos -> ( config.pressedNote note.id ResizeRight pos, True )) notePressDecoder)
                     , Html.Events.preventDefaultOn "contextmenu"
                         (Decode.succeed ( config.rightClickedNote note.id, True ))
@@ -1350,10 +1364,17 @@ noteView config pxPerSixteenth selectedIds tool note =
                          else
                             "inherit"
                         )
+                     , HA.style "touch-action"
+                        (if interactive then
+                            "none"
+
+                         else
+                            "auto"
+                        )
                      ]
                         ++ cutOnlyAttrs
                         ++ (if interactive then
-                                [ Html.Events.stopPropagationOn "mousedown"
+                                [ Html.Events.stopPropagationOn "pointerdown"
                                     (Decode.map (\pos -> ( config.pressedNote note.id ResizeLeft pos, True )) notePressDecoder)
                                 , Html.Events.preventDefaultOn "contextmenu"
                                     (Decode.succeed ( config.rightClickedNote note.id, True ))
