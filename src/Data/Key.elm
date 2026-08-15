@@ -1,13 +1,16 @@
 module Data.Key exposing
-    ( Key
+    ( DiatonicDegree
+    , Key
     , Mode(..)
     , default
     , degreeLabel
+    , diatonicChords
     , fromString
     , isFlatSpelled
     , modeFromString
     , modeToString
     , scalePitchClasses
+    , scaleTones
     , toString
     , tonicName
     , tonicOptions
@@ -87,6 +90,144 @@ scalePitchClasses key =
     scaleIntervals key.mode
         |> List.map (\i -> modBy 12 (key.tonic + i))
         |> Set.fromList
+
+
+{-| トニックから順に並んだスケール音のピッチクラス。scalePitchClasses の Set 版と違い順序を保つ。
+-}
+scaleTones : Key -> List Int
+scaleTones key =
+    scaleIntervals key.mode
+        |> List.map (\i -> modBy 12 (key.tonic + i))
+
+
+
+-- ダイアトニックコード
+
+
+{-| scale の n 番目（7を超えたらオクターブを畳んで +12 する）の音を、トニックからの半音数で返す。
+-}
+scaleStep : List Int -> Int -> Int
+scaleStep scale n =
+    let
+        idx =
+            modBy 7 n
+
+        octaves =
+            n // 7
+    in
+    (List.drop idx scale |> List.head |> Maybe.withDefault 0) + 12 * octaves
+
+
+{-| 度数 i（0-6）のコードトーンを、root からの半音数 (third, fifth, seventh) で返す。
+scale 上を 3 度ずつ堆積して求めるので、教会旋法でもそのまま成立する。
+-}
+diatonicIntervals : List Int -> Int -> { third : Int, fifth : Int, seventh : Int }
+diatonicIntervals scale i =
+    let
+        root =
+            scaleStep scale i
+    in
+    { third = scaleStep scale (i + 2) - root
+    , fifth = scaleStep scale (i + 4) - root
+    , seventh = scaleStep scale (i + 6) - root
+    }
+
+
+triadQuality : { third : Int, fifth : Int } -> Maybe Quality
+triadQuality intervals =
+    case ( intervals.third, intervals.fifth ) of
+        ( 4, 7 ) ->
+            Just Maj
+
+        ( 3, 7 ) ->
+            Just Min
+
+        ( 3, 6 ) ->
+            Just Dim
+
+        ( 4, 8 ) ->
+            Just Aug
+
+        _ ->
+            Nothing
+
+
+{-| セブンスの quality。HarmonicMinor の III 度（augmented major 7th）は Quality に専用の型が
+無いため、Maj7 に Sharp5 を重ねて表現する（Data.Chord.applyAlteration の Sharp5 と音が一致する）。
+-}
+seventhQuality : { third : Int, fifth : Int, seventh : Int } -> Maybe ( Quality, List Alteration )
+seventhQuality intervals =
+    case ( intervals.third, intervals.fifth, intervals.seventh ) of
+        ( 4, 7, 11 ) ->
+            Just ( Maj7, [] )
+
+        ( 4, 7, 10 ) ->
+            Just ( Dom7, [] )
+
+        ( 3, 7, 10 ) ->
+            Just ( Min7, [] )
+
+        ( 3, 7, 11 ) ->
+            Just ( MinMaj7, [] )
+
+        ( 3, 6, 10 ) ->
+            Just ( HalfDim7, [] )
+
+        ( 3, 6, 9 ) ->
+            Just ( Dim7, [] )
+
+        ( 4, 8, 11 ) ->
+            Just ( Maj7, [ Sharp5 ] )
+
+        _ ->
+            Nothing
+
+
+{-| キーの1つの度数について、三和音とセブンスのペア。
+-}
+type alias DiatonicDegree =
+    { triad : Chord
+    , seventh : Chord
+    }
+
+
+{-| キーの7つの度数それぞれについて、スケール音を 3 度ずつ堆積したダイアトニックコード（三和音＋セブンス）を返す。
+常に7要素。
+-}
+diatonicChords : Key -> List DiatonicDegree
+diatonicChords key =
+    let
+        scale =
+            scaleIntervals key.mode
+
+        toChord quality alterations root =
+            { root = root
+            , quality = quality
+            , extensions = []
+            , alterations = alterations
+            , bass = Nothing
+            , voicing = Nothing
+            }
+    in
+    List.range 0 6
+        |> List.filterMap
+            (\i ->
+                let
+                    intervals =
+                        diatonicIntervals scale i
+
+                    rootPitch =
+                        modBy 12 (key.tonic + scaleStep scale i)
+                in
+                Maybe.map2
+                    (\tq ( sq, salts ) ->
+                        { triad = toChord tq [] rootPitch
+                        , seventh = toChord sq salts rootPitch
+                        }
+                    )
+                    (triadQuality { third = intervals.third, fifth = intervals.fifth })
+                    (seventhQuality intervals)
+            )
 
 
 

@@ -4,51 +4,15 @@ import Data.Chord exposing (Extension(..), Quality(..))
 import Data.GuitarForm as GuitarForm
 import Data.Key as Key
 import Data.Meter as Meter
-import Data.Project as Project exposing (Project)
-import Data.ReferenceAudio as ReferenceAudio
 import Data.StrumExpand as StrumExpand
 import Data.StrumPattern exposing (Direction(..), Pattern, Pick(..))
 import Data.Time
 import Data.Timeline
-import Data.Track exposing (Instrument(..), TrackKind(..))
+import Data.Track exposing (Instrument(..))
 import Data.Voicing
 import Expect
 import Set
 import Test exposing (Test, describe, test)
-
-
-testProject : String -> Project
-testProject chordText =
-    { name = "test"
-    , bpm = 120.0
-    , tracks = [ { id = 1, name = "guitar", instrument = AcousticGuitar, muted = False, volume = 100, kind = NoteTrack [] } ]
-    , chordTrack = { text = chordText, instrument = Piano, muted = False, volume = 100, rhythm = Nothing }
-    , sections = [ { id = 2, name = "A", lengthBars = 2, memo = "", key = Key.default, meter = Meter.default } ]
-    , scraps = []
-    , referenceAudio = ReferenceAudio.empty
-    , nextId = 100
-    , memo = ""
-    , voicings = []
-    , voicingEnabled = True
-    , guitarFormEnabled = True
-    }
-
-
-notesOfTrack : Int -> Project -> List { id : Int, pitch : Int, start : Int, duration : Int, velocity : Int }
-notesOfTrack trackId project =
-    project.tracks
-        |> List.filter (\t -> t.id == trackId)
-        |> List.head
-        |> Maybe.map
-            (\t ->
-                case t.kind of
-                    NoteTrack notes ->
-                        notes
-
-                    DrumTrack notes ->
-                        notes
-            )
-        |> Maybe.withDefault []
 
 
 downUpPattern : Pattern
@@ -67,27 +31,18 @@ suite =
 strumExpandSuite : Test
 strumExpandSuite =
     describe "Data.StrumExpand"
-        [ test "コード区間をまたぐノートが生えない" <|
+        [ test "Down と Up で弦の順序が逆になる" <|
             \_ ->
                 let
-                    result =
-                        StrumExpand.apply { trackId = 1, startTicks = 0, endTicks = 2 * Data.Time.ticksPerBar } True [] downUpPattern (testProject "C | G")
+                    chordC =
+                        { root = 0, quality = Maj, extensions = [], alterations = [], bass = Nothing, voicing = Nothing }
+
+                    resolvedChords =
+                        [ { startTicks = 0, durationTicks = Data.Time.ticksPerBar, chord = chordC } ]
 
                     notes =
-                        notesOfTrack 1 result
-
-                    firstBarNotes =
-                        List.filter (\n -> n.start < Data.Time.ticksPerBar) notes
-                in
-                Expect.equal True (List.all (\n -> n.start + n.duration <= Data.Time.ticksPerBar) firstBarNotes)
-        , test "Down と Up で弦の順序が逆になる" <|
-            \_ ->
-                let
-                    result =
-                        StrumExpand.apply { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar } True [] downUpPattern (testProject "C")
-
-                    notes =
-                        notesOfTrack 1 result |> List.sortBy .start
+                        StrumExpand.expand { startTicks = 0, endTicks = Data.Time.ticksPerBar } True [] downUpPattern resolvedChords
+                            |> List.sortBy .start
 
                     downGroup =
                         List.filter (\n -> n.start < 4 * Data.Time.ticksPerSixteenth) notes
@@ -105,19 +60,6 @@ strumExpandSuite =
                     ( List.sort downPitches == downPitches
                     , List.sort upPitches == List.reverse upPitches
                     )
-        , test "nextId が重複しない" <|
-            \_ ->
-                let
-                    result =
-                        StrumExpand.apply { trackId = 1, startTicks = 0, endTicks = 2 * Data.Time.ticksPerBar } True [] downUpPattern (testProject "C | G")
-
-                    notes =
-                        notesOfTrack 1 result
-
-                    ids =
-                        List.map .id notes
-                in
-                Expect.equal (List.length ids) (Set.size (Set.fromList ids))
         , test "@NAME で登録ボイシングを指定したら、root/quality が forChord の固定表にあっても登録ボイシングの方を使う" <|
             \_ ->
                 let
@@ -126,11 +68,17 @@ strumExpandSuite =
                     myopen =
                         { name = "myopen", offsets = [ 0, 5, 10, 15 ], stringPicks = Set.empty }
 
-                    result =
-                        StrumExpand.apply { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar } True [ myopen ] downUpPattern (testProject "E@myopen")
+                    chordE =
+                        { root = 4, quality = Maj, extensions = [], alterations = [], bass = Nothing, voicing = Just "myopen" }
+
+                    resolvedChords =
+                        [ { startTicks = 0, durationTicks = Data.Time.ticksPerBar, chord = chordE } ]
+
+                    notes =
+                        StrumExpand.expand { startTicks = 0, endTicks = Data.Time.ticksPerBar } True [ myopen ] downUpPattern resolvedChords
 
                     pitches =
-                        notesOfTrack 1 result |> List.map .pitch |> Set.fromList
+                        notes |> List.map .pitch |> Set.fromList
                 in
                 Expect.equal ( True, False )
                     ( Set.member 40 pitches && Set.member 45 pitches && Set.member 50 pitches && Set.member 55 pitches
@@ -215,16 +163,6 @@ strumExpandSuite =
                         { root = 0, quality = Maj, extensions = [], alterations = [], bass = Nothing, voicing = Nothing }
                 in
                 Expect.equal (StrumExpand.soundingPitches True [] chordC) (StrumExpand.soundingPitches True [] chordCOnC)
-        , test "apply で Fm7/A# を展開してもベース音が残る（E2E）" <|
-            \_ ->
-                let
-                    result =
-                        StrumExpand.apply { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar } True [] downUpPattern (testProject "Fm7/A#")
-
-                    pitches =
-                        notesOfTrack 1 result |> List.map .pitch
-                in
-                Expect.equal (Just 10) (List.minimum pitches |> Maybe.map (modBy 12))
         , test "soundingPitches は guitarFormEnabled が False でも従来どおりベース込み" <|
             \_ ->
                 let
@@ -332,7 +270,7 @@ strumExpandSuite =
                 Expect.equal
                     [ ( 0, Down ), ( 4, Down ), ( 6, Down ), ( 7, Up ), ( 9, Up ), ( 10, Down ), ( 12, Down ), ( 14, Down ), ( 15, Up ) ]
                     actual
-        , test "アルペジオパターンを適用すると、各ステップにちょうど1音ずつ配置され、低音から音数循環で音が選ばれる" <|
+        , test "アルペジオパターンを適用すると、コード構成音の数だけノートが低音から順に1回ずつ配置される" <|
             \_ ->
                 let
                     chordC =
@@ -347,33 +285,105 @@ strumExpandSuite =
                     arpeggioPattern =
                         Data.StrumPattern.byName "アルペジオ（分散）" |> Maybe.withDefault { name = "", strums = [] }
 
-                    result =
-                        StrumExpand.apply { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar } True [] arpeggioPattern (testProject "C")
+                    resolvedChords =
+                        [ { startTicks = 0, durationTicks = Data.Time.ticksPerBar, chord = chordC } ]
 
                     notes =
-                        notesOfTrack 1 result |> List.sortBy .start
+                        StrumExpand.expand { startTicks = 0, endTicks = Data.Time.ticksPerBar } True [] arpeggioPattern resolvedChords
+                            |> List.sortBy .start
 
                     expectedPitches =
-                        List.range 0 15
-                            |> List.map (\i -> pitches |> List.drop (modBy n i) |> List.head)
+                        List.take n pitches
 
                     actualPitches =
-                        List.map (\note -> Just note.pitch) notes
+                        List.map .pitch notes
                 in
-                Expect.equal ( 16, expectedPitches ) ( List.length notes, actualPitches )
-        , test "アルペジオの各ノートのdurationが1×ticksPerSixteenthになっている" <|
+                Expect.equal ( n, expectedPitches ) ( List.length notes, actualPitches )
+        , test "アルペジオは同一ピッチのノートが重複して生成されない" <|
             \_ ->
                 let
+                    chordCmaj7 =
+                        { root = 0, quality = Maj7, extensions = [], alterations = [], bass = Nothing, voicing = Nothing }
+
                     arpeggioPattern =
                         Data.StrumPattern.byName "アルペジオ（分散）" |> Maybe.withDefault { name = "", strums = [] }
 
-                    result =
-                        StrumExpand.apply { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar } True [] arpeggioPattern (testProject "C")
+                    resolvedChords =
+                        [ { startTicks = 0, durationTicks = Data.Time.ticksPerBar, chord = chordCmaj7 } ]
 
-                    durations =
-                        notesOfTrack 1 result |> List.map .duration
+                    notes =
+                        StrumExpand.expand { startTicks = 0, endTicks = Data.Time.ticksPerBar } True [] arpeggioPattern resolvedChords
+
+                    pitches =
+                        List.map .pitch notes
                 in
-                Expect.equal True (List.all (\d -> d == Data.Time.ticksPerSixteenth) durations)
+                Expect.equal (List.length pitches) (Set.size (Set.fromList pitches))
+        , test "アルペジオの各ノートは開始時刻はずれるが、全て同じコードの終端まで伸びて重なる" <|
+            \_ ->
+                let
+                    chordC =
+                        { root = 0, quality = Maj, extensions = [], alterations = [], bass = Nothing, voicing = Nothing }
+
+                    arpeggioPattern =
+                        Data.StrumPattern.byName "アルペジオ（分散）" |> Maybe.withDefault { name = "", strums = [] }
+
+                    resolvedChords =
+                        [ { startTicks = 0, durationTicks = Data.Time.ticksPerBar, chord = chordC } ]
+
+                    notes =
+                        StrumExpand.expand { startTicks = 0, endTicks = Data.Time.ticksPerBar } True [] arpeggioPattern resolvedChords
+
+                    ends =
+                        notes |> List.map (\n -> n.start + n.duration)
+                in
+                Expect.equal True (List.all (\e -> e == Data.Time.ticksPerBar) ends)
+        , test "アルペジオの隣接ノートは重なって鳴る（次の開始が前の終了より前）" <|
+            \_ ->
+                let
+                    chordC =
+                        { root = 0, quality = Maj, extensions = [], alterations = [], bass = Nothing, voicing = Nothing }
+
+                    arpeggioPattern =
+                        Data.StrumPattern.byName "アルペジオ（分散）" |> Maybe.withDefault { name = "", strums = [] }
+
+                    resolvedChords =
+                        [ { startTicks = 0, durationTicks = Data.Time.ticksPerBar, chord = chordC } ]
+
+                    notes =
+                        StrumExpand.expand { startTicks = 0, endTicks = Data.Time.ticksPerBar } True [] arpeggioPattern resolvedChords
+                            |> List.sortBy .start
+
+                    overlaps =
+                        List.map2 (\a b -> b.start < a.start + a.duration) notes (List.drop 1 notes)
+                in
+                Expect.equal True (List.all identity overlaps)
+        , test "アルペジオは1小節内でコードが切り替わっても、後半のコードの音が0から数え直されて鳴る" <|
+            \_ ->
+                let
+                    chordAm7 =
+                        { root = 9, quality = Min7, extensions = [], alterations = [], bass = Nothing, voicing = Nothing }
+
+                    chordFmaj7 =
+                        { root = 5, quality = Maj7, extensions = [], alterations = [], bass = Nothing, voicing = Nothing }
+
+                    half =
+                        Data.Time.ticksPerBar // 2
+
+                    resolvedChords =
+                        [ { startTicks = 0, durationTicks = half, chord = chordAm7 }
+                        , { startTicks = half, durationTicks = half, chord = chordFmaj7 }
+                        ]
+
+                    arpeggioPattern =
+                        Data.StrumPattern.byName "アルペジオ（分散）" |> Maybe.withDefault { name = "", strums = [] }
+
+                    notes =
+                        StrumExpand.expand { startTicks = 0, endTicks = Data.Time.ticksPerBar } True [] arpeggioPattern resolvedChords
+
+                    secondHalfNotes =
+                        notes |> List.filter (\n -> n.start >= half)
+                in
+                Expect.notEqual [] secondHalfNotes
         , test "Upストロークでも全音が発音し、順番は Down と逆になる" <|
             \_ ->
                 let
@@ -383,11 +393,12 @@ strumExpandSuite =
                     pitches =
                         StrumExpand.soundingPitches True [] chordC
 
-                    result =
-                        StrumExpand.apply { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar } True [] downUpPattern (testProject "C")
+                    resolvedChords =
+                        [ { startTicks = 0, durationTicks = Data.Time.ticksPerBar, chord = chordC } ]
 
                     notes =
-                        notesOfTrack 1 result |> List.sortBy .start
+                        StrumExpand.expand { startTicks = 0, endTicks = Data.Time.ticksPerBar } True [] downUpPattern resolvedChords
+                            |> List.sortBy .start
 
                     upGroupPitches =
                         notes |> List.filter (\note -> note.start >= 4 * Data.Time.ticksPerSixteenth) |> List.map .pitch
@@ -436,11 +447,14 @@ strumExpandSuite =
                     ( List.all (\v -> v == 100) downVelocities
                     , List.all (\v -> v == 70) upVelocities
                     )
-        , test "expand: アルペジオ（StringIndex）パターンは各ステップでちょうど 1 音" <|
+        , test "expand: アルペジオ（StringIndex）パターンは各ステップでちょうど 1 音、かつコード終端まで伸びる" <|
             \_ ->
                 let
                     chordC =
                         { root = 0, quality = Maj, extensions = [], alterations = [], bass = Nothing, voicing = Nothing }
+
+                    pitches =
+                        StrumExpand.soundingPitches True [] chordC
 
                     resolvedChords =
                         [ { startTicks = 0, durationTicks = Data.Time.ticksPerBar, chord = chordC } ]
@@ -451,8 +465,8 @@ strumExpandSuite =
                     notes =
                         StrumExpand.expand { startTicks = 0, endTicks = Data.Time.ticksPerBar } True [] arpeggioPattern resolvedChords
                 in
-                Expect.equal ( List.length arpeggioPattern.strums, True )
-                    ( List.length notes, List.all (\n -> n.duration == Data.Time.ticksPerSixteenth) notes )
+                Expect.equal ( List.length pitches, True )
+                    ( List.length notes, List.all (\n -> n.start + n.duration == Data.Time.ticksPerBar) notes )
         ]
 
 

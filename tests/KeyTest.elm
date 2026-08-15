@@ -1,6 +1,7 @@
 module KeyTest exposing (suite)
 
-import Data.Chord exposing (Quality(..))
+import Data.Chord exposing (Alteration(..), Quality(..))
+import Data.Chord.Format as Format
 import Data.Key as Key exposing (Mode(..))
 import Expect
 import Set
@@ -54,6 +55,20 @@ suite =
                 \_ ->
                     Key.degreeLabel majorC { spelledFlat = True } (mkChord 6 Maj)
                         |> Expect.equal "♭V"
+            , test "vii°（Bdim、diatonicChords 経由）" <|
+                \_ ->
+                    Key.diatonicChords majorC
+                        |> List.drop 6
+                        |> List.head
+                        |> Maybe.map (\deg -> Key.degreeLabel majorC { spelledFlat = False } deg.triad)
+                        |> Expect.equal (Just "vii°")
+            , test "viiø7（Bm7b5、diatonicChords 経由）" <|
+                \_ ->
+                    Key.diatonicChords majorC
+                        |> List.drop 6
+                        |> List.head
+                        |> Maybe.map (\deg -> Key.degreeLabel majorC { spelledFlat = False } deg.seventh)
+                        |> Expect.equal (Just "viiø7")
             ]
         , describe "scalePitchClasses"
             [ test "C Major は白鍵の7音" <|
@@ -64,6 +79,72 @@ suite =
                 \_ ->
                     Key.scalePitchClasses minorA
                         |> Expect.equal (Set.fromList [ 0, 2, 4, 5, 7, 9, 11 ])
+            ]
+        , describe "scaleTones"
+            [ test "C Major は白鍵の7音をトニックから順に" <|
+                \_ ->
+                    Key.scaleTones majorC
+                        |> Expect.equal [ 0, 2, 4, 5, 7, 9, 11 ]
+            , test "A Minor は A から順に7音" <|
+                \_ ->
+                    Key.scaleTones minorA
+                        |> Expect.equal [ 9, 11, 0, 2, 4, 5, 7 ]
+            ]
+        , describe "diatonicChords"
+            [ test "C Major は常に7要素" <|
+                \_ ->
+                    Key.diatonicChords majorC
+                        |> List.length
+                        |> Expect.equal 7
+            , test "C Major の三和音（C, Dm, Em, F, G, Am, Bdim）" <|
+                \_ ->
+                    Key.diatonicChords majorC
+                        |> List.map (.triad >> Format.formatPlain { preferFlat = False })
+                        |> Expect.equal [ "C", "Dm", "Em", "F", "G", "Am", "Bdim" ]
+            , test "C Major のセブンス（Cmaj7, Dm7, Em7, Fmaj7, G7, Am7, Bm7b5）" <|
+                \_ ->
+                    Key.diatonicChords majorC
+                        |> List.map (.seventh >> Format.formatPlain { preferFlat = False })
+                        |> Expect.equal [ "Cmaj7", "Dm7", "Em7", "Fmaj7", "G7", "Am7", "Bm7b5" ]
+            , test "A Minor（自然的短音階）の三和音" <|
+                \_ ->
+                    Key.diatonicChords minorA
+                        |> List.map (.triad >> Format.formatPlain { preferFlat = False })
+                        |> Expect.equal [ "Am", "Bdim", "C", "Dm", "Em", "F", "G" ]
+            , test "A Minor（自然的短音階）のセブンス" <|
+                \_ ->
+                    Key.diatonicChords minorA
+                        |> List.map (.seventh >> Format.formatPlain { preferFlat = False })
+                        |> Expect.equal [ "Am7", "Bm7b5", "Cmaj7", "Dm7", "Em7", "Fmaj7", "G7" ]
+            , test "A Harmonic Minor の三和音（III が Aug、vii が Dim）" <|
+                \_ ->
+                    Key.diatonicChords { tonic = 9, mode = HarmonicMinor }
+                        |> List.map (.triad >> Format.formatPlain { preferFlat = False })
+                        |> Expect.equal [ "Am", "Bdim", "Caug", "Dm", "E", "F", "G#dim" ]
+            , test "A Harmonic Minor のセブンス（III が Maj7(#5)、vii が Dim7）" <|
+                \_ ->
+                    Key.diatonicChords { tonic = 9, mode = HarmonicMinor }
+                        |> List.map (.seventh >> Format.formatPlain { preferFlat = False })
+                        |> Expect.equal [ "AmM7", "Bm7b5", "Cmaj7(#5)", "Dm7", "E7", "Fmaj7", "G#dim7" ]
+            , test "A Harmonic Minor の III 度セブンスは quality Maj7 + alteration Sharp5" <|
+                \_ ->
+                    Key.diatonicChords { tonic = 9, mode = HarmonicMinor }
+                        |> List.drop 2
+                        |> List.head
+                        |> Maybe.map (\deg -> ( deg.seventh.quality, deg.seventh.alterations ))
+                        |> Expect.equal (Just ( Maj7, [ Sharp5 ] ))
+            , test "A Harmonic Minor の vii 度セブンスは quality Dim7" <|
+                \_ ->
+                    Key.diatonicChords { tonic = 9, mode = HarmonicMinor }
+                        |> List.drop 6
+                        |> List.head
+                        |> Maybe.map (.seventh >> .quality)
+                        |> Expect.equal (Just Dim7)
+            , test "D Dorian の三和音（白鍵の回転: Dm, Em, F, G, Am, Bdim, C）" <|
+                \_ ->
+                    Key.diatonicChords { tonic = 2, mode = Dorian }
+                        |> List.map (.triad >> Format.formatPlain { preferFlat = False })
+                        |> Expect.equal [ "Dm", "Em", "F", "G", "Am", "Bdim", "C" ]
             ]
         , describe "toString / fromString"
             [ test "C" <| \_ -> Key.toString majorC |> Expect.equal "C"

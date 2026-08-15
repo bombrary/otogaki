@@ -1,10 +1,9 @@
-module Data.StrumExpand exposing (apply, expand, formFor, previewNotes, soundingPitches, voicingFromForm)
+module Data.StrumExpand exposing (expand, formFor, previewNotes, soundingPitches, voicingFromForm)
 
 import Data.Chord
 import Data.ChordTrack
 import Data.GuitarForm as GuitarForm
 import Data.Note exposing (Note)
-import Data.Project exposing (Project)
 import Data.StrumPattern exposing (Direction(..), Pattern, Pick(..))
 import Data.Time
 import Data.Timeline exposing (Timeline)
@@ -19,12 +18,10 @@ stringDelayTicks =
     8
 
 
-{-| このコードをギターで鳴らすならどの Form を使うか。
-`chord.voicing` が登録済みボイシングを指していれば、`guitarFormEnabled` に関係なく常にそれを使う（保存された運指があればそのとおりの弦で、
-なければ bestForm が推定した弦で）。登録ボイシングがないコードは、`guitarFormEnabled` が True なら forChord の固定表を試し、それも引けなければ
-`bestForm` でコード理論値を実在の弦・フレットに割り当てる（quality を問わない全探索なので forChord の固定表にない dim/sus/m7-5
-等でも実運指が出せる）。`guitarFormEnabled` が False なら常に `Nothing`（呼び出し側が toPitchesWith の理論値にフォールバックする）。
-ストローク音生成、普段の再生、指板ハイライト表示の全てがこの優先順を共有する。
+{-| このコードをギターで鳴らすならどの Form を使うか決める。
+`chord.voicing` が登録済みボイシングを指していればそれを優先し、フレットに置き換えられない
+場合はピッチ集合から近いフォームを探す。ボイシング指定がなければ `guitarFormEnabled` の
+true/false で「コード名から自動でフォームを探す」か「フォームを使わない」かを切り替える。
 -}
 formFor : Bool -> List Voicing -> Data.Chord.Chord -> Maybe GuitarForm.Form
 formFor guitarFormEnabled voicings chord =
@@ -55,9 +52,7 @@ formFor guitarFormEnabled voicings chord =
 
 
 {-| Form を Voicing に変換する。全弦の (offset, 弦インデックス) を stringPicks に入れるので、
-`formFor` の `formFromPicks` 経路（coversAll 成立）で選んだフォームを弦単位で完全に再現できる。
-`rootPitch` は呼び出し側が `Data.Voicing.anchorPitch + modBy 12 chord.root` で求める。
-`View.ChordEditor.formToFretboardData` の picks 計算と同じロジック。
+後から同じ offset で別の弦を選ぶこともできる。offsets は重複を除いた並び順を保ったリストにしておく。
 -}
 voicingFromForm : Int -> GuitarForm.Form -> String -> Voicing
 voicingFromForm rootPitch form name =
@@ -79,8 +74,8 @@ voicingFromForm rootPitch form name =
 
 
 {-| コードの発音候補を「弦順（低音から高音）のピッチ列」として取り出す。
-Form が引ければ実際の弦・フレットから、引けなければ toPitchesWith の理論値をそのまま昇順に並べたものを
-「擬似弦」として使う。
+ギターフォームが見つかればそのフォームの弦順（スラッシュベース反映済み）を使い、
+見つからなければボイシングテーブルからのピッチ集合を昇順ソートしたものを返す。
 -}
 soundingPitches : Bool -> List Voicing -> Data.Chord.Chord -> List Int
 soundingPitches guitarFormEnabled voicings chord =
@@ -93,8 +88,8 @@ soundingPitches guitarFormEnabled voicings chord =
 
 
 {-| フォーム由来のピッチ列にスラッシュコードのベース音を反映する。
-GuitarForm.forChord / 登録ボイシングの弦割当は root と quality だけで決まり、on-chord のベース指定 (`chord.bass`) を無視するため、
-ここで別途ベース音を最低音として先頭に足す。フォームの最低音が既に同じピッチクラスならそのまま返す（例: C/C）。
+最低音がすでにベース音と同じピッチクラスならそのまま、違えば最低音より低いオクターブで
+ベース音を先頭に追加する。
 -}
 withSlashBass : Maybe Int -> List Int -> List Int
 withSlashBass maybeBass pitches =
@@ -121,9 +116,12 @@ withSlashBass maybeBass pitches =
 
 
 {-| コード進行を実際にストローク展開して鳴らす場合のノート列を計算する純関数。`resolvedChords` は呼び出し側が
-`Data.ChordTrack.resolved` で求めて渡す（Project 全体を持たないので `apply` の Project 直接操作から独立してテストできる）。
-`apply`（MIDI トラックへの焼き込み）と `Codec.Performance.chordEvents` / `Data.StrumExpand.previewNotes`（実際の再生・プレビュー）が
+`Data.ChordTrack.resolved` で求めて渡す。`Codec.Performance.chordEvents` / `previewNotes`（実際の再生・プレビュー）が
 この関数を共有するので、鳴る音は常に一致する。
+
+soundingPitches（ギターフォーム探索を伴う重い処理）はコード区間ごとに1回だけ事前計算し、
+アルペジオ（StringIndex）のステップ番号（localArpeggioIndices）も strumStarts を一回走査するだけで
+事前計算する。どちらも「小節内全イベントのたびに全体を走査し直す」 O(N²) を避けるため。
 -}
 expand :
     { startTicks : Int, endTicks : Int }
@@ -134,9 +132,13 @@ expand :
     -> List { pitch : Int, start : Int, duration : Int, velocity : Int }
 expand cfg guitarFormEnabled voicings pattern resolvedChords =
     let
-        chordAt ticks =
+        resolvedChordsWithPitches =
             resolvedChords
-                |> List.filter (\rc -> ticks >= rc.startTicks && ticks < rc.startTicks + rc.durationTicks)
+                |> List.map (\rc -> ( rc, soundingPitches guitarFormEnabled voicings rc.chord ))
+
+        chordAt ticks =
+            resolvedChordsWithPitches
+                |> List.filter (\( rc, _ ) -> ticks >= rc.startTicks && ticks < rc.startTicks + rc.durationTicks)
                 |> List.head
 
         bars =
@@ -155,26 +157,52 @@ expand cfg guitarFormEnabled voicings pattern resolvedChords =
         nextEventStart index =
             strumStarts |> List.drop (index + 1) |> List.head |> Maybe.map Tuple.first
 
-        eventEnd index start =
-            case nextEventStart index of
-                Just next ->
-                    next
+        chordEndAfter start =
+            chordAt start
+                |> Maybe.map (\( rc, _ ) -> rc.startTicks + rc.durationTicks)
+                |> Maybe.withDefault (start + Data.Time.ticksPerSixteenth)
 
-                Nothing ->
-                    chordAt start
-                        |> Maybe.map (\rc -> rc.startTicks + rc.durationTicks)
-                        |> Maybe.withDefault (start + Data.Time.ticksPerSixteenth)
+        eventEnd index start pick =
+            case pick of
+                StringIndex _ ->
+                    chordEndAfter start
 
-        notesForEvent index ( start, s ) =
+                AllStrings ->
+                    case nextEventStart index of
+                        Just next ->
+                            next
+
+                        Nothing ->
+                            chordEndAfter start
+
+        chordSegmentKey ticks =
+            chordAt ticks |> Maybe.map (\( rc, _ ) -> rc.startTicks) |> Maybe.withDefault -1
+
+        localArpeggioIndices : List Int
+        localArpeggioIndices =
+            strumStarts
+                |> List.foldl
+                    (\( start, _ ) ( maybeLastKey, counter, accRev ) ->
+                        let
+                            key =
+                                chordSegmentKey start
+                        in
+                        if maybeLastKey == Just key then
+                            ( Just key, counter + 1, counter :: accRev )
+
+                        else
+                            ( Just key, 1, 0 :: accRev )
+                    )
+                    ( Nothing, 0, [] )
+                |> (\( _, _, accRev ) -> List.reverse accRev)
+
+        notesForEvent index ( ( start, s ), localIndex ) =
             case chordAt start of
                 Nothing ->
                     []
 
-                Just rc ->
+                Just ( _, pitches ) ->
                     let
-                        pitches =
-                            soundingPitches guitarFormEnabled voicings rc.chord
-
                         ordered =
                             case s.pick of
                                 AllStrings ->
@@ -185,16 +213,15 @@ expand cfg guitarFormEnabled voicings pattern resolvedChords =
                                         Up ->
                                             List.reverse pitches
 
-                                StringIndex i ->
-                                    case List.length pitches of
-                                        0 ->
-                                            []
+                                StringIndex _ ->
+                                    if localIndex < List.length pitches then
+                                        pitches |> List.drop localIndex |> List.take 1
 
-                                        n ->
-                                            pitches |> List.drop (modBy n i) |> List.take 1
+                                    else
+                                        []
 
                         dur =
-                            Basics.max 1 (eventEnd index start - start)
+                            Basics.max 1 (eventEnd index start s.pick - start)
 
                         velocity =
                             s.velocity
@@ -209,13 +236,15 @@ expand cfg guitarFormEnabled voicings pattern resolvedChords =
                                 }
                             )
     in
-    strumStarts |> List.indexedMap notesForEvent |> List.concat
+    List.map2 Tuple.pair strumStarts localArpeggioIndices
+        |> List.indexedMap notesForEvent
+        |> List.concat
 
 
 {-| コード進行を実際にMIDI化（「→ MIDIトラック化」）した場合に鳴るはずのノート列を計算する。
-ピアノロールのMIDIプレビュー表示で使う。soundingPitches と同じギターフォーム判定を通すので、実際の再生（Codec.Performance）と一致する。
-`track.rhythm` が Just ならストロークパターンで刻み、Nothing なら従来どおりベタうち。
-id はプレビュー専用の連番（実際のPianoRollのノートとは不一致する）。
+リズムパターン（ストローク）が設定されていれば `expand` で展開し、なければ各コード区間を
+そのまま1本のロングノートにする。内部では `expand`（コードトラック展開の中核）と同じロジックを
+共有しているので、プレビューと実際の再生・MIDI化の結果は常に一致する。
 -}
 previewNotes : Bool -> List Voicing -> Timeline -> Data.ChordTrack.ChordTrack -> List Note
 previewNotes guitarFormEnabled voicings timeline track =
@@ -244,39 +273,3 @@ previewNotes guitarFormEnabled voicings timeline track =
     rawNotes
         |> List.indexedMap
             (\i n -> { id = i, pitch = n.pitch, start = n.start, duration = n.duration, velocity = n.velocity })
-
-
-{-| 選択範囲内の既存ノートを置換し、コード進行に沿ったストロークを展開する。
-`Data.DrumPattern.apply` と同じ形の Project 直接操作 API。ノート列の計算そのものは `expand` に委譲する。
--}
-apply : { trackId : Int, startTicks : Int, endTicks : Int } -> Bool -> List Voicing -> Pattern -> Project -> Project
-apply cfg guitarFormEnabled voicings pattern project =
-    let
-        timeline =
-            Data.Project.timeline project
-
-        resolvedChords =
-            Data.ChordTrack.resolved timeline project.chordTrack
-
-        allNotesNoId =
-            expand { startTicks = cfg.startTicks, endTicks = cfg.endTicks } guitarFormEnabled voicings pattern resolvedChords
-
-        ( newNotesRev, finalNextId ) =
-            List.foldl
-                (\note ( acc, nid ) ->
-                    ( { id = nid, pitch = note.pitch, start = note.start, duration = note.duration, velocity = note.velocity } :: acc
-                    , nid + 1
-                    )
-                )
-                ( [], project.nextId )
-                allNotesNoId
-
-        cleaned =
-            Data.Project.mapNotes cfg.trackId
-                (\existing ->
-                    List.filter (\n -> n.start < cfg.startTicks || n.start >= cfg.endTicks) existing
-                        ++ List.reverse newNotesRev
-                )
-                project
-    in
-    { cleaned | nextId = finalNextId }

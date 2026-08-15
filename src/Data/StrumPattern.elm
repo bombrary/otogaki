@@ -78,7 +78,7 @@ patterns =
                 |> List.map
                     (\i ->
                         pickStrum i i
-                            (if modBy 4 i == 0 then
+                            (if i == 0 then
                                 90
 
                              else
