@@ -50,6 +50,7 @@ import View.DrumEditor as DrumEditor
 import View.FormPicker as FormPicker
 import View.Keyboard as Keyboard
 import View.Modal as Modal
+import View.Palette as Palette
 import View.PianoRoll as PianoRoll
 import View.RefAudio as RefAudio
 import View.ScrapShelf as ScrapShelf
@@ -203,6 +204,11 @@ type alias Model =
     , chordRubberBand : Maybe RubberBand
     , formPicker : Maybe { key : Data.ChordTrack.TokenKey, draft : String, tab : FormPicker.Tab }
     , velocityDrag : Maybe VelocityDrag
+    , wavExportModalOpen : Bool
+    , wavExportState : WavExportState
+    , tool : PianoRoll.Tool
+    , cutGuideTicks : Maybe Int
+    , themePreference : Theme.ThemePreference
     }
 
 
@@ -219,6 +225,12 @@ type LoopMode
     | LoopSong
     | LoopSection
     | LoopRange
+
+
+type WavExportState
+    = WavExportIdle
+    | WavExportRendering
+    | WavExportFailed String
 
 
 type Msg
@@ -260,6 +272,7 @@ type Msg
     | GotImportContent String
     | ChangedChordSheetText String
     | ChangedChordInstrument String
+    | ChangedChordRhythm (Maybe String)
     | ToggledChordMute
     | ToggledVoicingEnabled
     | ToggledGuitarFormEnabled
@@ -294,6 +307,9 @@ type Msg
     | AppliedStrumPattern String
     | ChangedDrumFillBars String
     | ClickedExportMidi
+    | ClickedExportWav
+    | ClosedWavExportModal
+    | ConfirmedExportWav Bool
     | ToggledKeyboard
     | ClickedAddScrap
     | ClickedPlaceScrap Int
@@ -350,6 +366,11 @@ type Msg
     | SubmittedFormPickerDraft
     | SelectedFormPickerTab FormPicker.Tab
     | PressedVelocityBar Int { clientX : Float, clientY : Float }
+    | PressedCutAt { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, seekMod : Bool }
+    | MovedCutGuide { offsetX : Float }
+    | ClearedCutGuide
+    | SelectedTool PianoRoll.Tool
+    | ClickedThemeToggle
     | NoOp
 
 
@@ -360,11 +381,24 @@ init flags =
             flags
                 |> Decode.decodeValue ProjectJson.decoder
                 |> Result.withDefault Data.Project.demo
+
+        restoredSelectedTrackId =
+            flags
+                |> Decode.decodeValue ProjectJson.selectedTrackIdDecoder
+                |> Result.withDefault Nothing
+                |> Maybe.andThen (\tid -> if validTrackId project tid then Just tid else Nothing)
+
+        restoredThemePreference =
+            flags
+                |> Decode.decodeValue (Decode.field "theme" Decode.string)
+                |> Result.toMaybe
+                |> Maybe.andThen Theme.themeFromString
+                |> Maybe.withDefault Theme.SystemTheme
     in
     ( { project = project
       , playState = Idle
       , playheadTicks = 0
-      , selectedTrackId = firstTrackId project
+      , selectedTrackId = Maybe.withDefault (firstTrackId project) restoredSelectedTrackId
       , dragState = NoDrag
       , instrumentLoad = Dict.empty
       , selectedSectionId = Nothing
@@ -424,6 +458,11 @@ init flags =
       , chordRubberBand = Nothing
       , formPicker = Nothing
       , velocityDrag = Nothing
+      , wavExportModalOpen = False
+      , wavExportState = WavExportIdle
+      , tool = PianoRoll.PointerTool
+      , cutGuideTicks = Nothing
+      , themePreference = restoredThemePreference
       }
     , Cmd.none
     )
@@ -521,6 +560,49 @@ findNote model noteId =
         |> List.head
 
 
+{-| ノートをドラッグ移動/リサイズ状態にする共通処理。PressedNote の非Shift分岐と、PressedEmptyCell が
+既存ノート上のクリックを新規作成ではなく選択+移動にフォールバックする場合の両方から呼ばれる。
+-}
+pressNoteForDrag : Data.Note.Note -> PianoRoll.ResizeHandle -> { r | clientX : Float, clientY : Float } -> Model -> ( Model, Cmd Msg )
+pressNoteForDrag note handle pos model =
+    let
+        sel =
+            if Set.member note.id model.selectedNoteIds then
+                model.selectedNoteIds
+
+            else
+                Set.singleton note.id
+
+        origs =
+            trackNotes model
+                |> List.filter (\n -> Set.member n.id sel)
+    in
+    ( { model
+        | selectedNoteIds = sel
+        , highlightedPitches = Set.singleton note.pitch
+        , dragState =
+            Dragging
+                { anchorId = note.id
+                , mode =
+                    case handle of
+                        PianoRoll.NoResize ->
+                            MoveNote
+
+                        PianoRoll.ResizeLeft ->
+                            ResizeLeft
+
+                        PianoRoll.ResizeRight ->
+                            ResizeRight
+                , startClientX = pos.clientX
+                , startClientY = pos.clientY
+                , origNotes = origs
+                , lastPreviewPitch = note.pitch
+                }
+      }
+    , Ports.toAudio (Performance.encodePreviewNote (selectedInstrumentName model) note.pitch)
+    )
+
+
 {-| ドラムグリッドのセル（pitch, グリッドにスナップした tick）に履ているノートを探す。
 -}
 findDrumNoteAt : { pitch : Int, tick : Int } -> Model -> Maybe Data.Note.Note
@@ -605,6 +687,14 @@ firstTrackId project =
         |> List.head
         |> Maybe.map .id
         |> Maybe.withDefault 1
+
+
+{-| 保存データの selectedTrackId を復元していいかの検証。-1（コードトラック）は常に許可し、
+それ以外は project.tracks に実在する id のみ許可する（削除済みトラックを指さないように）。
+-}
+validTrackId : Project -> Int -> Bool
+validTrackId project trackId =
+    trackId == Data.ChordTrack.trackId || List.any (\t -> t.id == trackId) project.tracks
 
 
 {-| 小節計算は Data.Timeline に集約されている。ここは既存呼び出し側を変えないための薄いラッパ。
@@ -786,6 +876,9 @@ describeMsg msg =
         PressedEmptyCell _ ->
             "ノート追加"
 
+        PressedCutAt _ ->
+            "ノートカット"
+
         TransposedSong _ ->
             "移調"
 
@@ -797,6 +890,9 @@ describeMsg msg =
 
         RemovedBarsAtPlayhead ->
             "小節削除"
+
+        ChangedChordRhythm _ ->
+            "コードリズム変更"
 
         _ ->
             "編集"
@@ -839,6 +935,23 @@ chordDragMove pos cd model =
           }
         , Cmd.none
         )
+
+
+{-| 矩形選択を開始する共通ヘルパー。空セルの Shift+mousedown（ポインタ/カット両ツール共通）から呼ぶ。
+-}
+startRubberBand : { a | offsetX : Float, offsetY : Float, clientX : Float, clientY : Float } -> Model -> Model
+startRubberBand pos model =
+    { model
+        | rubberBand =
+            Just
+                { originX = pos.offsetX
+                , originY = pos.offsetY
+                , startClientX = pos.clientX
+                , startClientY = pos.clientY
+                , curX = pos.offsetX
+                , curY = pos.offsetY
+                }
+    }
 
 
 {-| ラバーバンドのドラッグ原点/現在点から矩形（x, y, w, h）へ変換する共通ヘルパー。
@@ -994,8 +1107,8 @@ update msg model =
             newModel.dragState /= NoDrag || newModel.chordDrag /= Nothing || newModel.chordRubberBand /= Nothing || newModel.velocityDrag /= Nothing
 
         saveCmds =
-            if projectChanged then
-                [ Ports.saveToLocalStorage (ProjectJson.encode newModel.project) ]
+            if projectChanged || newModel.selectedTrackId /= model.selectedTrackId then
+                [ Ports.saveToLocalStorage (ProjectJson.encodeWith { selectedTrackId = newModel.selectedTrackId } newModel.project) ]
 
             else
                 []
@@ -1272,13 +1385,18 @@ confirmTwice cfg =
 
 {-| プロジェクトを丸ごと差し替える（新規作成・JSON読込共通）。選択・ループ範囲・ドラッグ中の pending 系を全てリセットし、再生を止める。
 -}
-resetToProject : Data.Project.Project -> Model -> ( Model, Cmd Msg )
-resetToProject project model =
+resetToProject : Data.Project.Project -> Maybe Int -> Model -> ( Model, Cmd Msg )
+resetToProject project maybeSelectedTrackId model =
     let
+        selectedTrackId =
+            maybeSelectedTrackId
+                |> Maybe.andThen (\tid -> if validTrackId project tid then Just tid else Nothing)
+                |> Maybe.withDefault (firstTrackId project)
+
         newModel =
             { model
                 | project = project
-                , selectedTrackId = firstTrackId project
+                , selectedTrackId = selectedTrackId
                 , playState = Idle
                 , playheadTicks = 0
                 , bpmInput = String.fromFloat project.bpm
@@ -2001,6 +2119,23 @@ updateCore msg model =
         ClickedRedo ->
             applyRedo model
 
+        ClickedThemeToggle ->
+            let
+                nextPreference =
+                    case model.themePreference of
+                        Theme.SystemTheme ->
+                            Theme.LightTheme
+
+                        Theme.LightTheme ->
+                            Theme.DarkTheme
+
+                        Theme.DarkTheme ->
+                            Theme.SystemTheme
+            in
+            ( { model | themePreference = nextPreference }
+            , Ports.setTheme (Theme.themeToString nextPreference)
+            )
+
         ChangedChordVolume raw ->
             case String.toInt raw of
                 Just vol ->
@@ -2094,6 +2229,15 @@ updateCore msg model =
                     , Cmd.none
                     )
 
+                WavRenderStarted ->
+                    ( model, Cmd.none )
+
+                WavRenderDone ->
+                    ( { model | wavExportModalOpen = False, wavExportState = WavExportIdle }, Cmd.none )
+
+                WavRenderFailed message ->
+                    ( { model | wavExportState = WavExportFailed message }, Cmd.none )
+
                 _ ->
                     ( model, Cmd.none )
 
@@ -2102,52 +2246,57 @@ updateCore msg model =
                 seekTo (snapFloor model (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX)) model
 
             else if pos.shift then
-                ( { model
-                    | rubberBand =
-                        Just
-                            { originX = pos.offsetX
-                            , originY = pos.offsetY
-                            , startClientX = pos.clientX
-                            , startClientY = pos.clientY
-                            , curX = pos.offsetX
-                            , curY = pos.offsetY
-                            }
-                  }
-                , Cmd.none
-                )
+                ( startRubberBand pos model, Cmd.none )
 
             else
                 let
-                    start =
-                        Basics.max 0 (snapFloor model (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX))
+                    exactTick =
+                        PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX
 
-                    pitch =
-                        clamp PianoRoll.minPitch PianoRoll.maxPitch (PianoRoll.yToPitch pos.offsetY)
+                    hitPitch =
+                        PianoRoll.yToPitch pos.offsetY
 
-                    note =
-                        { id = model.project.nextId
-                        , pitch = pitch
-                        , start = start
-                        , duration = model.defaultNoteDuration
-                        , velocity = 100
-                        }
+                    hit =
+                        trackNotes model
+                            |> List.filter (\n -> n.pitch == hitPitch && n.start <= exactTick && exactTick < n.start + n.duration)
+                            |> List.head
                 in
-                ( { model
-                    | project = Data.Project.addNote model.selectedTrackId note model.project
-                    , selectedNoteIds = Set.singleton note.id
-                    , highlightedPitches = Set.singleton note.pitch
-                    , dragState =
-                        Dragging
-                            { anchorId = note.id
-                            , mode = ResizeRight
-                            , startClientX = pos.clientX
-                            , startClientY = pos.clientY
-                            , origNotes = [ note ]
-                            , lastPreviewPitch = note.pitch
-                            }
-                  }
-                , Ports.toAudio (Performance.encodePreviewNote (selectedInstrumentName model) note.pitch)
-                )
+                case hit of
+                    Just note ->
+                        pressNoteForDrag note PianoRoll.NoResize { clientX = pos.clientX, clientY = pos.clientY } model
+
+                    Nothing ->
+                        let
+                            start =
+                                Basics.max 0 (snapFloor model exactTick)
+
+                            pitch =
+                                clamp PianoRoll.minPitch PianoRoll.maxPitch hitPitch
+
+                            note =
+                                { id = model.project.nextId
+                                , pitch = pitch
+                                , start = start
+                                , duration = model.defaultNoteDuration
+                                , velocity = 100
+                                }
+                        in
+                        ( { model
+                            | project = Data.Project.addNote model.selectedTrackId note model.project
+                            , selectedNoteIds = Set.singleton note.id
+                            , highlightedPitches = Set.singleton note.pitch
+                            , dragState =
+                                Dragging
+                                    { anchorId = note.id
+                                    , mode = ResizeRight
+                                    , startClientX = pos.clientX
+                                    , startClientY = pos.clientY
+                                    , origNotes = [ note ]
+                                    , lastPreviewPitch = note.pitch
+                                    }
+                          }
+                        , Ports.toAudio (Performance.encodePreviewNote (selectedInstrumentName model) note.pitch)
+                        )
 
         PressedNote noteId handle pos ->
             case findNote model noteId of
@@ -2166,45 +2315,51 @@ updateCore msg model =
                         )
 
                     else
-                        let
-                            sel =
-                                if Set.member noteId model.selectedNoteIds then
-                                    model.selectedNoteIds
-
-                                else
-                                    Set.singleton noteId
-
-                            origs =
-                                trackNotes model
-                                    |> List.filter (\n -> Set.member n.id sel)
-                        in
-                        ( { model
-                            | selectedNoteIds = sel
-                            , highlightedPitches = Set.singleton note.pitch
-                            , dragState =
-                                Dragging
-                                    { anchorId = noteId
-                                    , mode =
-                                        case handle of
-                                            PianoRoll.NoResize ->
-                                                MoveNote
-
-                                            PianoRoll.ResizeLeft ->
-                                                ResizeLeft
-
-                                            PianoRoll.ResizeRight ->
-                                                ResizeRight
-                                    , startClientX = pos.clientX
-                                    , startClientY = pos.clientY
-                                    , origNotes = origs
-                                    , lastPreviewPitch = note.pitch
-                                    }
-                          }
-                        , Ports.toAudio (Performance.encodePreviewNote (selectedInstrumentName model) note.pitch)
-                        )
+                        pressNoteForDrag note handle pos model
 
                 Nothing ->
                     ( model, Cmd.none )
+
+        SelectedTool t ->
+            ( { model | tool = t, cutGuideTicks = Nothing }, Cmd.none )
+
+        MovedCutGuide pos ->
+            let
+                newGuide =
+                    Just (Basics.max 0 (snapRound model (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX)))
+            in
+            if newGuide == model.cutGuideTicks then
+                ( model, Cmd.none )
+
+            else
+                ( { model | cutGuideTicks = newGuide }, Cmd.none )
+
+        ClearedCutGuide ->
+            ( { model | cutGuideTicks = Nothing }, Cmd.none )
+
+        PressedCutAt pos ->
+            if pos.seekMod then
+                seekTo (snapFloor model (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX)) model
+
+            else if pos.shift then
+                ( startRubberBand pos model, Cmd.none )
+
+            else
+                let
+                    tick =
+                        Basics.max 0 (snapRound model (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX))
+
+                    targetIds =
+                        if Set.isEmpty model.selectedNoteIds then
+                            trackNotes model |> List.map .id |> Set.fromList
+
+                        else
+                            model.selectedNoteIds
+
+                    result =
+                        Data.Project.cutNotesAt { trackId = model.selectedTrackId, tick = tick, targetIds = targetIds } model.project
+                in
+                ( { model | project = result.project, selectedNoteIds = result.newSelection }, Cmd.none )
 
         PressedVelocityBar noteId pos ->
             let
@@ -2922,9 +3077,35 @@ updateCore msg model =
                     , pendingTrackDelete = Nothing
                     , pendingScrapDelete = Nothing
                     , pendingNewProject = False
+                    , tool = PianoRoll.PointerTool
+                    , cutGuideTicks = Nothing
                   }
                 , Cmd.none
                 )
+
+            else if k.key == "c" && not k.ctrl && not k.meta && not model.showKeyboard then
+                ( { model
+                    | tool =
+                        if model.tool == PianoRoll.PointerTool then
+                            PianoRoll.CutTool
+
+                        else
+                            PianoRoll.PointerTool
+                    , cutGuideTicks = Nothing
+                  }
+                , Cmd.none
+                )
+
+            else if k.key == "g" && not k.ctrl && not k.meta && not model.showKeyboard then
+                if Set.isEmpty model.selectedNoteIds then
+                    ( model, Cmd.none )
+
+                else
+                    let
+                        result =
+                            Data.Project.mergeNotes { trackId = model.selectedTrackId, targetIds = model.selectedNoteIds } model.project
+                    in
+                    ( { model | project = result.project, selectedNoteIds = result.newSelection }, Cmd.none )
 
             else if k.key == "Home" then
                 seekTo 0 model
@@ -3117,7 +3298,12 @@ updateCore msg model =
         GotImportContent content ->
             case Decode.decodeString ProjectJson.decoder content of
                 Ok project ->
-                    resetToProject project model
+                    let
+                        importedSelectedTrackId =
+                            Decode.decodeString ProjectJson.selectedTrackIdDecoder content
+                                |> Result.withDefault Nothing
+                    in
+                    resetToProject project importedSelectedTrackId model
 
                 Err _ ->
                     ( model, Cmd.none )
@@ -3141,7 +3327,7 @@ updateCore msg model =
                 { pending = if model.pendingNewProject then Just () else Nothing
                 , id = ()
                 , arm = ( { model | pendingNewProject = True }, Cmd.none )
-                , confirm = resetToProject Data.Project.empty model
+                , confirm = resetToProject Data.Project.empty Nothing model
                 }
 
         ChangedChordInstrument raw ->
@@ -3160,6 +3346,11 @@ updateCore msg model =
 
                 Nothing ->
                     ( model, Cmd.none )
+
+        ChangedChordRhythm rhythm ->
+            ( { model | project = Data.Project.updateChordTrack (\ct -> { ct | rhythm = rhythm }) model.project }
+            , Cmd.none
+            )
 
         ToggledChordMute ->
             let
@@ -3760,6 +3951,25 @@ updateCore msg model =
             , File.Download.bytes (model.project.name ++ ".mid") "audio/midi" (Midi.Encode.fromProject model.project)
             )
 
+        ClickedExportWav ->
+            ( { model | wavExportModalOpen = True, wavExportState = WavExportIdle }, Cmd.none )
+
+        ClosedWavExportModal ->
+            ( { model | wavExportModalOpen = False }, Cmd.none )
+
+        ConfirmedExportWav useLoopRange ->
+            let
+                loop =
+                    if useLoopRange then
+                        currentLoop model
+
+                    else
+                        Nothing
+            in
+            ( { model | wavExportState = WavExportRendering }
+            , Ports.toAudio (Performance.encodeRenderWav { loop = loop, fileName = model.project.name ++ ".wav" } model.project)
+            )
+
         ToggledKeyboard ->
             ( { model | showKeyboard = not model.showKeyboard, heldKeyPitches = Set.empty }, Cmd.none )
 
@@ -4227,6 +4437,21 @@ dragMove pos d model =
             ( { model | project = project2 }, Cmd.none )
 
 
+{-| 手動テーマトグルのボタンラベル。現在の状態を絵文字付きで表示する。
+-}
+themeToggleLabel : Theme.ThemePreference -> String
+themeToggleLabel pref =
+    case pref of
+        Theme.SystemTheme ->
+            "🖥️ OS設定"
+
+        Theme.LightTheme ->
+            "☀️ ライト"
+
+        Theme.DarkTheme ->
+            "🌙 ダーク"
+
+
 view : Model -> Html Msg
 view model =
     let
@@ -4279,8 +4504,8 @@ view model =
 
         chordEditorConfig =
             { changedChordSheetText = ChangedChordSheetText
-            , toggledChordProgressionModal = ToggledChordProgressionModal
             , convertToTrack = ClickedConvertChords
+            , changedRhythm = ChangedChordRhythm
             , toggledVoicingEnabled = ToggledVoicingEnabled
             , toggledGuitarFormEnabled = ToggledGuitarFormEnabled
             , clickedCopyText = ClickedCopyChordText
@@ -4333,6 +4558,7 @@ view model =
     in
     div [ style "display" "flex", style "flex-direction" "column", style "height" "100vh", style "font-family" "sans-serif" ]
         [ Style.focusCss
+        , Palette.globalCss
         , div [ style "padding" "0.5rem 1rem 0 1rem", style "flex" "0 0 auto" ]
             [ h1 [ style "font-size" "1.3rem", style "margin" "0 0 0.3rem 0" ] [ text "音書き otogaki" ]
             , div [ style "display" "flex", style "flex-wrap" "wrap", style "gap" "0.5rem", style "align-items" "center" ]
@@ -4371,6 +4597,17 @@ view model =
                                ]
                         )
                         [ text "↪" ]
+                    ]
+                , Style.divider
+                , div groupStyle
+                    [ button
+                        (Style.baseButton
+                            ++ [ onClick ClickedThemeToggle
+                               , Html.Attributes.title "テーマ切替（OS設定→ライト→ダーク→OS設定）"
+                               , Html.Attributes.attribute "aria-label" "テーマ切替"
+                               ]
+                        )
+                        [ text (themeToggleLabel model.themePreference) ]
                     ]
                 , Style.divider
                 , div groupStyle
@@ -4468,6 +4705,7 @@ view model =
                     , button (Style.baseButton ++ [ onClick ClickedExport ]) [ text "JSON書出" ]
                     , button (Style.baseButton ++ [ onClick ClickedImport ]) [ text "JSON読込" ]
                     , button (Style.baseButton ++ [ onClick ClickedExportMidi ]) [ text "MIDI書出" ]
+                    , button (Style.baseButton ++ [ onClick ClickedExportWav ]) [ text "WAV書出" ]
                     ]
                 , Style.divider
                 , div (groupStyle ++ Style.labelText)
@@ -4585,7 +4823,7 @@ view model =
                     model.project.scraps
                     model.pendingScrapDelete
                 , div [ style "font-size" "0.75rem", style "color" Theme.onSurfaceVariant, style "margin-top" "0.6rem" ]
-                    [ text "Space: 再生/停止（ボタンのEnterは別） ・ Ctrl/Cmd+Z: 元に戻す（Shiftでやり直し） ・ ルーラーか Ctrl/Cmd+クリック・コードをクリック: 再生位置移動 ・ Home/End: 曲頭/曲末へシーク ・ ⏮⏪⏩ かセクション編集欄の「先頭へ」: セクション/曲頭へ移動 ・ Shift+ドラッグ: 矩形選択 ・ Ctrl/Cmd+Shift+A: 選択中セクション内のノートを全選択 ・ ルーラーをshift+ドラッグ: ループ範囲を作成、ハンドルをドラッグで伸縮、[/]: ループの開始/終了を再生位置に設定 ・ ↑↓: 半音移動（Shiftでオクターブ） ・ ←→: 隣のノートを選択（Ctrl/Cmdで横移動、+Shiftで1小節） ・ n: 再生位置にノートを追加（鍵盤表示中は無効） ・ Ctrl/Cmd+C・X・V: コピー・カット・貼付 ・ Delete: 削除 ・ ダブルクリック/右クリック: ノート削除 ・ Escape: 選択解除（削除確認待ちも解除）" ]
+                    [ text "Space: 再生/停止（ボタンのEnterは別） ・ Ctrl/Cmd+Z: 元に戻す（Shiftでやり直し） ・ ルーラーか Ctrl/Cmd+クリック・コードをクリック: 再生位置移動 ・ Home/End: 曲頭/曲末へシーク ・ ⏮⏪⏩ かセクション編集欄の「先頭へ」: セクション/曲頭へ移動 ・ Shift+ドラッグ: 矩形選択 ・ Ctrl/Cmd+Shift+A: 選択中セクション内のノートを全選択 ・ ルーラーをshift+ドラッグ: ループ範囲を作成、ハンドルをドラッグで伸縮、[/]: ループの開始/終了を再生位置に設定 ・ ↑↓: 半音移動（Shiftでオクターブ） ・ ←→: 隣のノートを選択（Ctrl/Cmdで横移動、+Shiftで1小節） ・ n: 再生位置にノートを追加（鍵盤表示中は無効） ・ Ctrl/Cmd+C・X・V: コピー・カット・貼付 ・ Delete: 削除 ・ ダブルクリック/右クリック: ノート削除 ・ c: 選択↔カットツール切替 ・ Escape: 選択解除・ツールを選択に戻す（削除確認待ちも解除）" ]
                 ]
             , div
                 [ style "width" "6px"
@@ -4647,7 +4885,13 @@ view model =
                             ]
 
                     pianoRollConfig =
-                        { pressedEmpty = PressedEmptyCell
+                        { pressedEmpty =
+                            case model.tool of
+                                PianoRoll.PointerTool ->
+                                    PressedEmptyCell
+
+                                PianoRoll.CutTool ->
+                                    PressedCutAt
                         , pressedNote = PressedNote
                         , doubleClickedNote = DoubleClickedNote
                         , rightClickedNote = RightClickedNote
@@ -4661,6 +4905,8 @@ view model =
                         , unhoveredNote = UnhoveredNote
                         , scrolled = ScrolledPianoRoll
                         , pressedVelocityBar = PressedVelocityBar
+                        , movedCutGuide = MovedCutGuide
+                        , clearedCutGuide = ClearedCutGuide
                         }
 
                     pianoRollOpts =
@@ -4679,10 +4925,31 @@ view model =
                         , pxPerSixteenth = model.pianoRollZoom
                         , gridUnit = model.gridUnit
                         , chordSpans = chordSpans
+                        , tool = model.tool
+                        , cutGuideTicks = model.cutGuideTicks
                         }
 
+                    toolToggle =
+                        div [ style "margin-top" "0.3rem", style "display" "flex", style "align-items" "center", style "gap" "0.4rem" ]
+                            [ span [ style "font-size" "0.85rem" ] [ text "ツール: " ]
+                            , button
+                                (Style.toggleButton (model.tool == PianoRoll.PointerTool)
+                                    ++ [ onClick (SelectedTool PianoRoll.PointerTool)
+                                       , Html.Attributes.title "選択・移動・リサイズ（c でカットと切替、Escape でも戻る）"
+                                       ]
+                                )
+                                [ text "🖱 選択" ]
+                            , button
+                                (Style.toggleButton (model.tool == PianoRoll.CutTool)
+                                    ++ [ onClick (SelectedTool PianoRoll.CutTool)
+                                       , Html.Attributes.title "クリック位置でノートを分割（c で切替）"
+                                       ]
+                                )
+                                [ text "✂ カット" ]
+                            ]
+
                     pianoRollView =
-                        div [] [ durationSelect, gridSelect, PianoRoll.view pianoRollConfig pianoRollOpts ]
+                        div [] [ durationSelect, gridSelect, toolToggle, PianoRoll.view pianoRollConfig pianoRollOpts ]
 
                     chordParseErrors =
                         Data.ChordTrack.cells timeline model.project.chordTrack
@@ -4702,14 +4969,21 @@ view model =
 
                     chordTrackMainView =
                         div []
-                            [ div [ style "margin-top" "0.5rem" ]
+                            [ div [ style "margin-top" "0.5rem", style "display" "flex", style "align-items" "center", style "flex-wrap" "wrap", style "gap" "0.3rem" ]
                                 [ button
                                     (Style.baseButton
                                         ++ [ onClick ToggledChordProgressionModal
-                                           , Html.Attributes.title "広い画面でコード進行のテキストを編集"
+                                           , Html.Attributes.title "表示/非表示を切替え"
                                            ]
                                     )
-                                    [ text "✎ コード進行を編集" ]
+                                    [ text
+                                        (if model.chordProgressionModalOpen then
+                                            "✦ コード進行を閉じる"
+
+                                         else
+                                            "✦ コード進行を編集"
+                                        )
+                                    ]
                                 , button
                                     (Style.baseButton
                                         ++ [ onClick ToggledChordBlockView
@@ -4725,7 +4999,15 @@ view model =
                                             "📦 ブロック表示に切替"
                                         )
                                     ]
+                                , Style.divider
+                                , span [ style "font-size" "0.75rem", style "color" Theme.onSurfaceVariant ] [ text "リズム:" ]
+                                , ChordEditor.rhythmSelect chordEditorConfig model.project.chordTrack.rhythm
                                 ]
+                            , if model.chordProgressionModalOpen then
+                                ChordEditor.progressionEditorView chordEditorConfig (Maybe.withDefault "" model.chordSheetDraft)
+
+                              else
+                                text ""
                             , if List.isEmpty chordParseErrors then
                                 text ""
 
@@ -4837,9 +5119,36 @@ view model =
                     model.showKeyboard
                 ]
             ]
-        , if model.chordProgressionModalOpen then
-            Modal.view ToggledChordProgressionModal
-                [ ChordEditor.progressionEditorView chordEditorConfig (Maybe.withDefault "" model.chordSheetDraft) ]
+        , if model.wavExportModalOpen then
+            Modal.view ClosedWavExportModal
+                [ div [ style "min-width" "20rem" ]
+                    (case model.wavExportState of
+                        WavExportIdle ->
+                            [ Html.h2 [] [ text "WAV書き出し" ]
+                            , div [ style "display" "flex", style "flex-direction" "column", style "gap" "0.5rem" ]
+                                [ button (Style.baseButton ++ [ onClick (ConfirmedExportWav False) ]) [ text "プロジェクト全体を書き出す" ]
+                                , button
+                                    (Style.baseButton
+                                        ++ [ onClick (ConfirmedExportWav True)
+                                           , disabled (currentLoop model == Nothing)
+                                           ]
+                                    )
+                                    [ text "ループ範囲を書き出す" ]
+                                ]
+                            ]
+
+                        WavExportRendering ->
+                            [ Html.h2 [] [ text "WAV書き出し" ]
+                            , div [] [ text "書き出し中…" ]
+                            ]
+
+                        WavExportFailed message ->
+                            [ Html.h2 [] [ text "WAV書き出し" ]
+                            , div [ style "color" "crimson" ] [ text ("書き出しに失敗しました: " ++ message) ]
+                            , button (Style.baseButton ++ [ onClick ClickedExportWav ]) [ text "再試行" ]
+                            ]
+                    )
+                ]
 
           else
             text ""

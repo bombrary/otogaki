@@ -5,6 +5,7 @@ module Data.Project exposing
     , addSection
     , addTrack
     , addVoicing
+    , cutNotesAt
     , demo
     , empty
     , insertBars
@@ -12,6 +13,7 @@ module Data.Project exposing
     , mapAllNotes
     , mapNoteTrackNotes
     , mapNotes
+    , mergeNotes
     , moveSection
     , moveSectionToIndex
     , removeBars
@@ -35,15 +37,16 @@ module Data.Project exposing
 import Data.ChordTrack exposing (ChordTrack)
 import Data.Key
 import Data.Meter
-import Data.Note exposing (Note)
+import Data.Note as Note exposing (Note)
 import Data.ReferenceAudio exposing (ReferenceAudio)
 import Data.Scrap exposing (Scrap)
 import Data.Section exposing (Section)
-import Data.Time exposing (ppq)
+import Data.Time exposing (Ticks, ppq)
 import Data.Timeline exposing (Timeline)
 import Data.Track exposing (Instrument(..), Track, TrackKind(..))
 import Data.Voicing exposing (Voicing)
 import Dict
+import Set exposing (Set)
 
 
 type alias Project =
@@ -157,6 +160,7 @@ demo =
         , instrument = Piano
         , muted = False
         , volume = 100
+        , rhythm = Nothing
         }
     , sections =
         [ { id = 2, name = "Aメロ", lengthBars = 4, memo = "", key = Data.Key.default, meter = Data.Meter.default }
@@ -657,6 +661,150 @@ updateTrack trackId f project =
 mapNotes : Int -> (List Note -> List Note) -> Project -> Project
 mapNotes =
     mapTrackNotes
+
+
+{-| カットツールの中核。targetIds のうち tick を開区間でまたぐノートだけを Note.splitAt で前半・後半に分割する。
+またぐノートが1つもなければ project を完全に不変で返す（undo に積まないことを呼び出し側（Main）が project 差分で判定できるように）。
+前半は元の id を維持して duration だけ縮める、後半は project.nextId から進発を割り当てる（pasteClipboard の foldl と同じパターン）。
+newSelection は分割されたノートの前後半全 id（分割が一つも起きなかった場合は元の targetIdsをそのまま）。
+-}
+cutNotesAt : { trackId : Int, tick : Ticks, targetIds : Set Int } -> Project -> { project : Project, newSelection : Set Int }
+cutNotesAt { trackId, tick, targetIds } project =
+    let
+        notes =
+            project.tracks
+                |> List.filter (\t -> t.id == trackId)
+                |> List.head
+                |> Maybe.map (\t -> trackNotes t)
+                |> Maybe.withDefault []
+
+        splitResults =
+            notes
+                |> List.filterMap
+                    (\n ->
+                        if Set.member n.id targetIds then
+                            Note.splitAt tick n |> Maybe.map (\halves -> ( n.id, halves ))
+
+                        else
+                            Nothing
+                    )
+                |> Dict.fromList
+    in
+    if Dict.isEmpty splitResults then
+        { project = project, newSelection = targetIds }
+
+    else
+        let
+            ( idAssignments, nextId2 ) =
+                Dict.foldl
+                    (\noteId _ ( acc, nid ) -> ( Dict.insert noteId nid acc, nid + 1 ))
+                    ( Dict.empty, project.nextId )
+                    splitResults
+
+            newSelectionIds =
+                Set.fromList (Dict.keys splitResults ++ Dict.values idAssignments)
+
+            applyToNotes ns =
+                ns
+                    |> List.concatMap
+                        (\n ->
+                            case Dict.get n.id splitResults of
+                                Just ( first, second ) ->
+                                    let
+                                        newId =
+                                            Dict.get n.id idAssignments |> Maybe.withDefault n.id
+                                    in
+                                    [ first, { second | id = newId } ]
+
+                                Nothing ->
+                                    [ n ]
+                        )
+
+            newProject =
+                mapTrackNotes trackId applyToNotes { project | nextId = nextId2 }
+        in
+        { project = newProject, newSelection = newSelectionIds }
+
+
+{-| カットの逆操作。targetIds のうち隣接（同じ pitch かつ tick が連続）するペアを Note.mergeAdjacent で連鎖的に結合する。
+結合対象のペアが1つもなければ project を完全に不変で返す（cutNotesAt と同じ規約。undo に積まないように）。
+id 採番は不要（残るノートは先頭（ソート順で一番早い）の id を継承し、余剰 id は消えるだけ）。
+newSelection は結合で消えた id を除いた targetIds（合併されなかったノートの id も含む）。
+-}
+mergeNotes : { trackId : Int, targetIds : Set Int } -> Project -> { project : Project, newSelection : Set Int }
+mergeNotes { trackId, targetIds } project =
+    let
+        notes =
+            project.tracks
+                |> List.filter (\t -> t.id == trackId)
+                |> List.head
+                |> Maybe.map (\t -> trackNotes t)
+                |> Maybe.withDefault []
+
+        sorted =
+            List.sortBy (\n -> ( n.pitch, n.start )) notes
+
+        foldStep note acc =
+            case acc of
+                run :: rest ->
+                    if Set.member run.note.id targetIds && Set.member note.id targetIds then
+                        case Note.mergeAdjacent run.note note of
+                            Just merged ->
+                                { note = merged, absorbedIds = Set.insert note.id run.absorbedIds } :: rest
+
+                            Nothing ->
+                                { note = note, absorbedIds = Set.empty } :: acc
+
+                    else
+                        { note = note, absorbedIds = Set.empty } :: acc
+
+                [] ->
+                    [ { note = note, absorbedIds = Set.empty } ]
+
+        runs =
+            List.foldl foldStep [] sorted
+
+        absorbedIds =
+            List.foldl (\r acc -> Set.union r.absorbedIds acc) Set.empty runs
+    in
+    if Set.isEmpty absorbedIds then
+        { project = project, newSelection = targetIds }
+
+    else
+        let
+            replacements =
+                runs
+                    |> List.filter (\r -> not (Set.isEmpty r.absorbedIds))
+                    |> List.foldl
+                        (\r acc ->
+                            acc
+                                |> Dict.insert r.note.id (Just r.note)
+                                |> (\d -> Set.foldl (\aid d2 -> Dict.insert aid Nothing d2) d r.absorbedIds)
+                        )
+                        Dict.empty
+
+            applyToNotes ns =
+                ns
+                    |> List.filterMap
+                        (\n ->
+                            case Dict.get n.id replacements of
+                                Just (Just merged) ->
+                                    Just merged
+
+                                Just Nothing ->
+                                    Nothing
+
+                                Nothing ->
+                                    Just n
+                        )
+
+            newProject =
+                mapTrackNotes trackId applyToNotes project
+
+            newSelection =
+                Set.diff targetIds absorbedIds
+        in
+        { project = newProject, newSelection = newSelection }
 
 
 ticksToMs : Float -> Int -> Float

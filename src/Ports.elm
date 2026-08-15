@@ -1,4 +1,4 @@
-port module Ports exposing (copyToClipboard, fromAudio, saveToLocalStorage, toAudio)
+port module Ports exposing (copyToClipboard, fromAudio, saveToLocalStorage, setTheme, toAudio)
 
 import Json.Decode as Decode
 import Json.Encode as Encode
@@ -14,3 +14,6 @@ port saveToLocalStorage : Encode.Value -> Cmd msg
 
 
 port copyToClipboard : String -> Cmd msg
+
+
+port setTheme : String -> Cmd msg

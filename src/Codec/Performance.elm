@@ -4,6 +4,7 @@ module Codec.Performance exposing
     , encodeLoadInstruments
     , encodePlay
     , encodePreviewNote
+    , encodeRenderWav
     , encodeSeek
     , encodeSetBpm
     , encodeSetMute
@@ -18,6 +19,7 @@ import Data.ChordTrack exposing (ChordTrack)
 import Data.Project exposing (Project)
 import Data.ReferenceAudio exposing (ReferenceAudio)
 import Data.StrumExpand
+import Data.StrumPattern
 import Data.Time
 import Data.Timeline
 import Data.Track exposing (Track, TrackKind(..))
@@ -39,19 +41,38 @@ encodePlay opts project =
             , ( "ppq", Encode.int Data.Time.ppq )
             , ( "events", Encode.list encodeEvent (toEvents project) )
             , ( "tracks", trackMetas project )
-            , ( "loop"
-              , case opts.loop of
-                    Just l ->
-                        Encode.object
-                            [ ( "startTicks", Encode.int l.startTicks )
-                            , ( "endTicks", Encode.int l.endTicks )
-                            ]
-
-                    Nothing ->
-                        Encode.null
-              )
+            , ( "loop", encodeLoop opts.loop )
             , ( "startTicks", Encode.int opts.startTicks )
             , ( "refAudio", encodeRefAudio project.referenceAudio )
+            ]
+        )
+
+
+encodeLoop : Maybe Loop -> Encode.Value
+encodeLoop maybeLoop =
+    case maybeLoop of
+        Just l ->
+            Encode.object
+                [ ( "startTicks", Encode.int l.startTicks )
+                , ( "endTicks", Encode.int l.endTicks )
+                ]
+
+        Nothing ->
+            Encode.null
+
+
+{-| プロジェクト全体 or ループ範囲を WAV に書き出す。refAudio はミックス対象外。
+-}
+encodeRenderWav : { loop : Maybe Loop, fileName : String } -> Project -> Encode.Value
+encodeRenderWav opts project =
+    command "renderWav"
+        (Encode.object
+            [ ( "bpm", Encode.float project.bpm )
+            , ( "ppq", Encode.int Data.Time.ppq )
+            , ( "events", Encode.list encodeEvent (toEvents project) )
+            , ( "tracks", trackMetas project )
+            , ( "loop", encodeLoop opts.loop )
+            , ( "fileName", Encode.string opts.fileName )
             ]
         )
 
@@ -183,22 +204,45 @@ chordEvents guitarFormEnabled voicings timeline chordTrack =
     let
         instrument =
             Data.Track.instrumentToString chordTrack.instrument
+
+        resolvedChords =
+            Data.ChordTrack.resolved timeline chordTrack
     in
-    Data.ChordTrack.resolved timeline chordTrack
-        |> List.concatMap
-            (\ev ->
-                Data.StrumExpand.soundingPitches guitarFormEnabled voicings ev.chord
-                    |> List.map
-                        (\pitch ->
-                            { ticks = ev.startTicks
-                            , durationTicks = ev.durationTicks
-                            , pitch = pitch
-                            , velocity = 90
-                            , instrument = instrument
-                            , trackId = -1
-                            }
-                        )
-            )
+    case chordTrack.rhythm |> Maybe.andThen Data.StrumPattern.byName of
+        Just pattern ->
+            case ( List.map .startTicks resolvedChords |> List.minimum, resolvedChords |> List.map (\rc -> rc.startTicks + rc.durationTicks) |> List.maximum ) of
+                ( Just startTicks, Just endTicks ) ->
+                    Data.StrumExpand.expand { startTicks = startTicks, endTicks = endTicks } guitarFormEnabled voicings pattern resolvedChords
+                        |> List.map
+                            (\n ->
+                                { ticks = n.start
+                                , durationTicks = n.duration
+                                , pitch = n.pitch
+                                , velocity = n.velocity
+                                , instrument = instrument
+                                , trackId = -1
+                                }
+                            )
+
+                _ ->
+                    []
+
+        Nothing ->
+            resolvedChords
+                |> List.concatMap
+                    (\ev ->
+                        Data.StrumExpand.soundingPitches guitarFormEnabled voicings ev.chord
+                            |> List.map
+                                (\pitch ->
+                                    { ticks = ev.startTicks
+                                    , durationTicks = ev.durationTicks
+                                    , pitch = pitch
+                                    , velocity = 90
+                                    , instrument = instrument
+                                    , trackId = -1
+                                    }
+                                )
+                    )
 
 
 trackEvents : Track -> List Event

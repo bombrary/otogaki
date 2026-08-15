@@ -86,8 +86,16 @@ patterns =
                             )
                     )
       }
-    , { name = "全音符ストローク"
+    , { name = "全音符"
       , strums = [ strum 0 Down 100 ]
+      }
+    , { name = "シンコペーション"
+      , strums =
+            [ strum 0 Down 100
+            , strum 6 Down 75
+            , strum 10 Down 75
+            , strum 14 Down 75
+            ]
       }
     ]
 

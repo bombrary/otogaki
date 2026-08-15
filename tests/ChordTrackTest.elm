@@ -13,7 +13,7 @@ import Test exposing (Test, describe, test)
 
 track : String -> ChordTrack.ChordTrack
 track text =
-    { text = text, instrument = Piano, muted = False, volume = 100 }
+    { text = text, instrument = Piano, muted = False, volume = 100, rhythm = Nothing }
 
 
 {-| 4/4 固定の十分長いセクションで作った timeline。既存テストはこれを通して resolved を呼ぶ。

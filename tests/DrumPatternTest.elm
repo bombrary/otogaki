@@ -16,7 +16,7 @@ baseProject =
     , tracks =
         [ { id = 1, name = "drums", instrument = Piano, muted = False, volume = 100, kind = DrumTrack [] }
         ]
-    , chordTrack = { text = "", instrument = Piano, muted = False, volume = 100 }
+    , chordTrack = { text = "", instrument = Piano, muted = False, volume = 100, rhythm = Nothing }
     , sections = []
     , scraps = []
     , referenceAudio = ReferenceAudio.empty

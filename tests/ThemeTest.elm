@@ -9,17 +9,31 @@ suite : Test
 suite =
     describe "View.Theme"
         [ describe "withAlpha"
-            [ test "# 付きHEXをrgbaに変換できる" <|
+            [ test "primary を 50% で color-mix する" <|
                 \_ ->
-                    Expect.equal "rgba(0, 97, 164, 0.5)" (Theme.withAlpha 0.5 "#0061A4")
-            , test "# なしHEXも受け付ける" <|
+                    Expect.equal "color-mix(in srgb, var(--md-primary) 50%, transparent)" (Theme.withAlpha 0.5 Theme.primary)
+            , test "primary を 15% で color-mix する" <|
                 \_ ->
-                    Expect.equal "rgba(0, 97, 164, 0.5)" (Theme.withAlpha 0.5 "0061A4")
-            , test "小文字HEXも正しくパースされる" <|
+                    Expect.equal "color-mix(in srgb, var(--md-primary) 15%, transparent)" (Theme.withAlpha 0.15 Theme.primary)
+            , test "scrim を 32% で color-mix する" <|
                 \_ ->
-                    Expect.equal "rgba(74, 144, 217, 0.15)" (Theme.withAlpha 0.15 "#4a90d9")
-            , test "白と黒の境界値" <|
+                    Expect.equal "color-mix(in srgb, var(--md-scrim) 32%, transparent)" (Theme.withAlpha 0.32 Theme.scrim)
+            , test "alpha 1 は 100% になる" <|
                 \_ ->
-                    Expect.equal "rgba(255, 255, 255, 1)" (Theme.withAlpha 1 "#FFFFFF")
+                    Expect.equal "color-mix(in srgb, var(--md-error) 100%, transparent)" (Theme.withAlpha 1 Theme.error)
+            ]
+        , describe "themeToString / themeFromString"
+            [ test "SystemTheme は round-trip する" <|
+                \_ ->
+                    Expect.equal (Just Theme.SystemTheme) (Theme.themeFromString (Theme.themeToString Theme.SystemTheme))
+            , test "LightTheme は round-trip する" <|
+                \_ ->
+                    Expect.equal (Just Theme.LightTheme) (Theme.themeFromString (Theme.themeToString Theme.LightTheme))
+            , test "DarkTheme は round-trip する" <|
+                \_ ->
+                    Expect.equal (Just Theme.DarkTheme) (Theme.themeFromString (Theme.themeToString Theme.DarkTheme))
+            , test "不明な文字列は Nothing を返す" <|
+                \_ ->
+                    Expect.equal Nothing (Theme.themeFromString "sepia")
             ]
         ]

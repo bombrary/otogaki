@@ -1,10 +1,11 @@
-module View.ChordEditor exposing (Config, progressionEditorView, view, voicingEditorView)
+module View.ChordEditor exposing (Config, progressionEditorView, rhythmSelect, view, voicingEditorView)
 
 import Data.Chord exposing (Chord)
 import Data.Chord.Format as Format
 import Data.ChordTrack exposing (ChordCell, ChordTrack, TokenKind(..))
 import Data.GuitarForm as GuitarForm
 import Data.StrumExpand
+import Data.StrumPattern
 import Data.Timeline exposing (Timeline)
 import Data.Voicing exposing (Voicing, anchorPitch)
 import Data.VoicingPreset as VoicingPreset
@@ -21,8 +22,8 @@ import View.VoicingKeyboard as VoicingKeyboard
 
 type alias Config msg =
     { changedChordSheetText : String -> msg
-    , toggledChordProgressionModal : msg
     , convertToTrack : msg
+    , changedRhythm : Maybe String -> msg
     , toggledVoicingEnabled : msg
     , toggledGuitarFormEnabled : msg
     , clickedCopyText : msg
@@ -85,7 +86,7 @@ currentChordView timeline playheadTicks voicingState track hover =
             text ""
 
         Just chord ->
-            div [ HA.style "margin-top" "0.5rem" ]
+            div [ HA.style "margin-top" "0.5rem", HA.style "overflow-x" "auto" ]
                 [ div Style.headingText [ text ("\u{1F3B8} " ++ Format.format { preferFlat = False } chord) ]
                 , case Data.StrumExpand.formFor voicingState.guitarFormEnabled effectiveVoicings chord of
                     Just form ->
@@ -155,27 +156,19 @@ view config timeline playheadTicks voicingState track =
                         "📋 コード譜をコピー"
                     )
                 ]
-            , button
-                (Style.baseButton
-                    ++ [ HE.onClick config.toggledChordProgressionModal
-                       , HA.title "広い画面でコード進行のテキストを編集"
-                       ]
-                )
-                [ text "✎ コード進行を編集" ]
             ]
         , currentChordView timeline playheadTicks voicingState track { hoveredFret = config.hoveredFretCell, unhoveredFret = config.unhoveredFretCell }
         , voicingsSection config voicingState (Data.ChordTrack.cells timeline track)
         ]
 
 
-{-| コード進行のテキストエリア。380px のサイドバーには打ちづらいという声を受け、
-Main.elm 側で `View.Modal` に載せて広い画面で表示する想定。
+{-| コード進行のテキストエリア。コードトラックのメイン画面にトグル表示するインラインパネル
+（ChordLane/ノートグリッド/ベロシティレーンと同時に見える）として表示する想定。
 -}
 progressionEditorView : Config msg -> String -> Html msg
 progressionEditorView config sheetText =
     div []
-        [ div Style.headingText [ text "コード進行を編集" ]
-        , span [ HA.style "font-size" "0.75rem", HA.style "color" Theme.onSurfaceVariant, HA.style "display" "block", HA.style "margin-top" "0.3rem" ]
+        [ span [ HA.style "font-size" "0.75rem", HA.style "color" Theme.onSurfaceVariant, HA.style "display" "block", HA.style "margin-top" "0.3rem" ]
             [ text "空行でセクションを区切り、ブロック先頭の縦棒を含まない行がセクション名になります。縦棒で小節区切り、空白で小節内分割。% = 直前のコードを繰返し、_ = 休符、= = 直前のコードを伸ばす、// 以降は行末までコメント。入力するたびに自動反映されます（形式が崩れている間は反映されません）。コードをクリックすると再生位置がそこへ移動" ]
         , textarea
             [ HA.value sheetText
@@ -186,7 +179,7 @@ progressionEditorView config sheetText =
             , HA.style "margin-top" "0.4rem"
             , HA.style "font-family" "monospace"
             , HA.style "padding" "0.3rem"
-            , HA.style "min-height" "16rem"
+            , HA.style "min-height" "8rem"
             , HA.style "resize" "vertical"
             , HA.style "box-sizing" "border-box"
             ]
@@ -376,6 +369,22 @@ voicingEditorView config voicingState index voicing =
                 { rootPitch = rootPitch, selected = selected, picks = voicing.stringPicks }
             ]
         ]
+
+
+{-| コードトラック全体に適用するリズムプリセット。「ベタうち」（value=""）は rhythm = Nothing、それ以外は
+`Data.StrumPattern.patterns` の name をそのまま保存する。
+-}
+rhythmSelect : Config msg -> Maybe String -> Html msg
+rhythmSelect config rhythm =
+    select
+        [ HE.onInput (\raw -> config.changedRhythm (if raw == "" then Nothing else Just raw)) ]
+        (option [ HA.value "", HA.selected (rhythm == Nothing) ] [ text "ベタうち" ]
+            :: List.map
+                (\p ->
+                    option [ HA.value p.name, HA.selected (rhythm == Just p.name) ] [ text p.name ]
+                )
+                Data.StrumPattern.patterns
+        )
 
 
 previewRootSelect : Config msg -> Int -> Html msg

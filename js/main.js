@@ -1,10 +1,15 @@
 import { Elm } from "../src/Main.elm";
 import { ensureAudio, handleCommand, loadRefAudio, setElmSender } from "./audio.js";
 import { loadProject, saveProject } from "./storage.js";
+import { loadTheme, saveTheme } from "./theme.js";
+
+// Elm 起動前に同期的に data-theme を付与し、テーマのフラッシュ（一瞬ライトで描画されてからダークに切り替わる）を避ける。
+const initialTheme = loadTheme();
+document.documentElement.setAttribute("data-theme", initialTheme);
 
 const app = Elm.Main.init({
   node: document.getElementById("app"),
-  flags: loadProject(),
+  flags: { ...(loadProject() ?? {}), theme: initialTheme },
 });
 
 setElmSender((msg) => app.ports.fromAudio.send(msg));
@@ -15,6 +20,11 @@ app.ports.toAudio.subscribe(async (msg) => {
 });
 
 app.ports.saveToLocalStorage.subscribe(saveProject);
+
+app.ports.setTheme.subscribe((theme) => {
+  document.documentElement.setAttribute("data-theme", theme);
+  saveTheme(theme);
+});
 
 app.ports.copyToClipboard.subscribe((text) => {
   navigator.clipboard.writeText(text).catch((err) =>
@@ -42,7 +52,7 @@ window.addEventListener("keydown", (e) => {
   const tag = e.target && e.target.tagName;
   const hotkeys = [" ", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"];
   const isSelectAll = (e.ctrlKey || e.metaKey) && (e.key === "a" || e.key === "A");
-  if ((hotkeys.includes(e.key) || isSelectAll) && !["INPUT", "TEXTAREA", "SELECT"].includes(tag)) {
+  if ((hotkeys.includes(e.key) || isSelectAll) && !(["INPUT", "TEXTAREA", "SELECT"].includes(tag))) {
     e.preventDefault();
   }
 });

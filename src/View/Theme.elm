@@ -1,5 +1,6 @@
 module View.Theme exposing
-    ( elevation1
+    ( ThemePreference(..)
+    , elevation1
     , elevation2
     , elevation3
     , error
@@ -15,6 +16,7 @@ module View.Theme exposing
     , keyWhite
     , loop
     , loopHandle
+    , noteFill
     , onError
     , onErrorContainer
     , onHighlightContainer
@@ -57,6 +59,8 @@ module View.Theme exposing
     , surfaceDim
     , tertiary
     , tertiaryContainer
+    , themeFromString
+    , themeToString
     , typeBodyMedium
     , typeBodySmall
     , typeLabelLarge
@@ -68,21 +72,137 @@ module View.Theme exposing
 
 {-| Material Design 3 のデザイントークン。全トークンの単一情報源。
 
-シードカラーは現行プライマリ青 #4a90d9。M3 のライトテーマのみをフラット定数として公開する
-（内部の `Scheme` レコードは将来のダークテーマ拡張のための下準備）。カラー値は
+シードカラーは現行プライマリ青 #4a90d9。ライト/ダーク両方の M3 スキームを CSS カスタムプロパティ
+（`--md-xxx`）として `globalCss` が注入し、色トークンの Elm 側の値はすべて `var(--md-xxx)` 参照文字列
+になる。実際のライト/ダーク値は `colorTokens` に一本化されている（この単一リストから `:root`・
+`prefers-color-scheme: dark`・`[data-theme=dark]` の3ブロックを生成する）。カラー値は
 [Material Theme Builder](https://material-foundation.github.io/material-theme-builder/) に
 #4A90D9 を入力した場合の青系標準出力に準拠する近似値。
 
 `selection`/`highlight`/`loop`/`playhead`/`success`/`pending` は M3 の標準ロール（primary/secondary/
 tertiary/error）には入り切らないこのアプリ固有の機能色で、M3 の custom colors の考え方に沿い
 color/onColor/container ペアで定義する。`keyWhite`/`keyBlack` は鍵盤・指板の実物メタファであり、
-surface 系トークンにはマップしない意図的な例外。
+surface 系トークンにはマップしない意図的な例外（ダークでも不変）。
 
 -}
 
-import Char
 import Html
 import Html.Attributes as HA
+
+
+
+-- テーマ切替
+
+
+{-| 手動テーマ選択。`SystemTheme` は OS の `prefers-color-scheme` に追従する。
+-}
+type ThemePreference
+    = SystemTheme
+    | LightTheme
+    | DarkTheme
+
+
+themeToString : ThemePreference -> String
+themeToString theme =
+    case theme of
+        SystemTheme ->
+            "system"
+
+        LightTheme ->
+            "light"
+
+        DarkTheme ->
+            "dark"
+
+
+themeFromString : String -> Maybe ThemePreference
+themeFromString raw =
+    case raw of
+        "system" ->
+            Just SystemTheme
+
+        "light" ->
+            Just LightTheme
+
+        "dark" ->
+            Just DarkTheme
+
+        _ ->
+            Nothing
+
+
+
+-- カラートークン
+
+
+{-| 色トークン1件のライト/ダークのペア。`css` は CSS カスタムプロパティ名の末尾（`--md-` の後ろ）。
+-}
+type alias ColorToken =
+    { css : String
+    , light : String
+    , dark : String
+    }
+
+
+{-| 全カラートークンの単一情報源。`globalCss` はここから `:root`・
+`@media (prefers-color-scheme: dark)`・`[data-theme=dark]` の3ブロックを生成する。
+-}
+colorTokens : List ColorToken
+colorTokens =
+    [ ColorToken "primary" "#0061A4" "#9ECAFF"
+    , ColorToken "on-primary" "#FFFFFF" "#003258"
+    , ColorToken "primary-container" "#D1E4FF" "#00497D"
+    , ColorToken "on-primary-container" "#001D36" "#D1E4FF"
+    , ColorToken "inverse-primary" "#9ECAFF" "#0061A4"
+    , ColorToken "secondary" "#526070" "#BAC8DA"
+    , ColorToken "on-secondary" "#FFFFFF" "#24323F"
+    , ColorToken "secondary-container" "#D5E4F7" "#3A4857"
+    , ColorToken "on-secondary-container" "#0E1D2A" "#D5E4F7"
+    , ColorToken "tertiary" "#6A5779" "#D6BEE4"
+    , ColorToken "on-tertiary" "#FFFFFF" "#3B2948"
+    , ColorToken "tertiary-container" "#F1DAFF" "#52405F"
+    , ColorToken "on-tertiary-container" "#251432" "#F1DAFF"
+    , ColorToken "error" "#BA1A1A" "#FFB4AB"
+    , ColorToken "on-error" "#FFFFFF" "#690005"
+    , ColorToken "error-container" "#FFDAD6" "#93000A"
+    , ColorToken "on-error-container" "#410002" "#FFDAD6"
+    , ColorToken "surface" "#F7F9FF" "#12131A"
+    , ColorToken "on-surface" "#191C20" "#E2E2E9"
+    , ColorToken "surface-dim" "#D8DAE0" "#12131A"
+    , ColorToken "on-surface-variant" "#42474E" "#C3C6CF"
+    , ColorToken "surface-container-lowest" "#FFFFFF" "#0C0D13"
+    , ColorToken "surface-container-low" "#F1F3F9" "#1A1B22"
+    , ColorToken "surface-container" "#EBEEF3" "#1E2027"
+    , ColorToken "surface-container-high" "#E6E8EE" "#282A31"
+    , ColorToken "surface-container-highest" "#E0E2E8" "#33353C"
+    , ColorToken "outline" "#72777F" "#8D9199"
+    , ColorToken "outline-variant" "#C2C7CF" "#43474E"
+    , ColorToken "inverse-surface" "#2D3135" "#E2E2E9"
+    , ColorToken "inverse-on-surface" "#EFF1F7" "#2F3036"
+    , ColorToken "scrim" "#000000" "#000000"
+    , ColorToken "note-fill" "#4A90D9" "#6FA8E0"
+    , ColorToken "selection" "#B42B62" "#FFB1C8"
+    , ColorToken "on-selection" "#FFFFFF" "#5E1133"
+    , ColorToken "selection-deep" "#8E1D4C" "#FFD9E2"
+    , ColorToken "highlight" "#F5C518" "#F5C518"
+    , ColorToken "highlight-container" "#FFF0C9" "#4D3C00"
+    , ColorToken "on-highlight-container" "#584400" "#FFE38C"
+    , ColorToken "loop" "#5E60CE" "#C2C1FF"
+    , ColorToken "loop-handle" "#3F3D9E" "#A6A4FF"
+    , ColorToken "playhead" "#D32F2F" "#FFB4A9"
+    , ColorToken "success" "#2C7A2C" "#8FDB8F"
+    , ColorToken "success-container" "#E8F8EE" "#0F3D0F"
+    , ColorToken "on-success-container" "#1E5A1E" "#B8F0B8"
+    , ColorToken "pending-container" "#FFDCBE" "#6B3600"
+    , ColorToken "on-pending-container" "#8F4C00" "#FFCA9E"
+    ]
+
+
+{-| CSS カスタムプロパティ参照文字列を組み立てる。`colorTokens` の `css` 名と対応させること。
+-}
+tokenVar : String -> String
+tokenVar name =
+    "var(--md-" ++ name ++ ")"
 
 
 
@@ -91,27 +211,27 @@ import Html.Attributes as HA
 
 primary : String
 primary =
-    "#0061A4"
+    tokenVar "primary"
 
 
 onPrimary : String
 onPrimary =
-    "#FFFFFF"
+    tokenVar "on-primary"
 
 
 primaryContainer : String
 primaryContainer =
-    "#D1E4FF"
+    tokenVar "primary-container"
 
 
 onPrimaryContainer : String
 onPrimaryContainer =
-    "#001D36"
+    tokenVar "on-primary-container"
 
 
 inversePrimary : String
 inversePrimary =
-    "#9ECAFF"
+    tokenVar "inverse-primary"
 
 
 
@@ -120,22 +240,22 @@ inversePrimary =
 
 secondary : String
 secondary =
-    "#526070"
+    tokenVar "secondary"
 
 
 onSecondary : String
 onSecondary =
-    "#FFFFFF"
+    tokenVar "on-secondary"
 
 
 secondaryContainer : String
 secondaryContainer =
-    "#D5E4F7"
+    tokenVar "secondary-container"
 
 
 onSecondaryContainer : String
 onSecondaryContainer =
-    "#0E1D2A"
+    tokenVar "on-secondary-container"
 
 
 
@@ -144,22 +264,22 @@ onSecondaryContainer =
 
 tertiary : String
 tertiary =
-    "#6A5779"
+    tokenVar "tertiary"
 
 
 onTertiary : String
 onTertiary =
-    "#FFFFFF"
+    tokenVar "on-tertiary"
 
 
 tertiaryContainer : String
 tertiaryContainer =
-    "#F1DAFF"
+    tokenVar "tertiary-container"
 
 
 onTertiaryContainer : String
 onTertiaryContainer =
-    "#251432"
+    tokenVar "on-tertiary-container"
 
 
 
@@ -168,22 +288,22 @@ onTertiaryContainer =
 
 error : String
 error =
-    "#BA1A1A"
+    tokenVar "error"
 
 
 onError : String
 onError =
-    "#FFFFFF"
+    tokenVar "on-error"
 
 
 errorContainer : String
 errorContainer =
-    "#FFDAD6"
+    tokenVar "error-container"
 
 
 onErrorContainer : String
 onErrorContainer =
-    "#410002"
+    tokenVar "on-error-container"
 
 
 
@@ -192,118 +312,126 @@ onErrorContainer =
 
 surface : String
 surface =
-    "#F7F9FF"
+    tokenVar "surface"
 
 
 onSurface : String
 onSurface =
-    "#191C20"
+    tokenVar "on-surface"
 
 
 surfaceDim : String
 surfaceDim =
-    "#D8DAE0"
+    tokenVar "surface-dim"
 
 
 onSurfaceVariant : String
 onSurfaceVariant =
-    "#42474E"
+    tokenVar "on-surface-variant"
 
 
 surfaceContainerLowest : String
 surfaceContainerLowest =
-    "#FFFFFF"
+    tokenVar "surface-container-lowest"
 
 
 surfaceContainerLow : String
 surfaceContainerLow =
-    "#F1F3F9"
+    tokenVar "surface-container-low"
 
 
 surfaceContainer : String
 surfaceContainer =
-    "#EBEEF3"
+    tokenVar "surface-container"
 
 
 surfaceContainerHigh : String
 surfaceContainerHigh =
-    "#E6E8EE"
+    tokenVar "surface-container-high"
 
 
 surfaceContainerHighest : String
 surfaceContainerHighest =
-    "#E0E2E8"
+    tokenVar "surface-container-highest"
 
 
 outline : String
 outline =
-    "#72777F"
+    tokenVar "outline"
 
 
 outlineVariant : String
 outlineVariant =
-    "#C2C7CF"
+    tokenVar "outline-variant"
 
 
 inverseSurface : String
 inverseSurface =
-    "#2D3135"
+    tokenVar "inverse-surface"
 
 
 inverseOnSurface : String
 inverseOnSurface =
-    "#EFF1F7"
+    tokenVar "inverse-on-surface"
 
 
 scrim : String
 scrim =
-    "#000000"
+    tokenVar "scrim"
 
 
 
 -- Custom colors（このアプリ固有の機能色。M3 の extended colors）
 
 
+{-| MIDI ノート本体の塗り。シードカラー #4A90D9 そのもの。枠線・リサイズ尻尾には
+primary を使い、Studio One 流の「明るい本体 + 同系濃色の縁」を作る。
+-}
+noteFill : String
+noteFill =
+    tokenVar "note-fill"
+
+
 selection : String
 selection =
-    "#B42B62"
+    tokenVar "selection"
 
 
 onSelection : String
 onSelection =
-    "#FFFFFF"
+    tokenVar "on-selection"
 
 
 {-| 選択ノートの枠線など、selection よりさらに濃い強調用（旧 #9c1f52 の後継）。
 -}
 selectionDeep : String
 selectionDeep =
-    "#8E1D4C"
+    tokenVar "selection-deep"
 
 
 highlight : String
 highlight =
-    "#F5C518"
+    tokenVar "highlight"
 
 
 highlightContainer : String
 highlightContainer =
-    "#FFF0C9"
+    tokenVar "highlight-container"
 
 
 onHighlightContainer : String
 onHighlightContainer =
-    "#584400"
+    tokenVar "on-highlight-container"
 
 
 loop : String
 loop =
-    "#5E60CE"
+    tokenVar "loop"
 
 
 loopHandle : String
 loopHandle =
-    "#3F3D9E"
+    tokenVar "loop-handle"
 
 
 {-| 再生位置マーカーの色。M3 の error ロールはエラー状態専用なので流用せず、
@@ -311,37 +439,38 @@ loopHandle =
 -}
 playhead : String
 playhead =
-    "#D32F2F"
+    tokenVar "playhead"
 
 
 success : String
 success =
-    "#2C7A2C"
+    tokenVar "success"
 
 
 successContainer : String
 successContainer =
-    "#E8F8EE"
+    tokenVar "success-container"
 
 
 onSuccessContainer : String
 onSuccessContainer =
-    "#1E5A1E"
+    tokenVar "on-success-container"
 
 
 {-| badge の "loading" トーンなど、進行中を示すオレンジ系（View.Palette のセクション橙と同系統）。
 -}
 pendingContainer : String
 pendingContainer =
-    "#FFDCBE"
+    tokenVar "pending-container"
 
 
 onPendingContainer : String
 onPendingContainer =
-    "#8F4C00"
+    tokenVar "on-pending-container"
 
 
 {-| ピアノ鍵盤・ギター指板の実物色。楽器の見た目を表す例外トークンで、surface 系にはマップしない。
+ダークモードでも不変。
 -}
 keyWhite : String
 keyWhite =
@@ -478,58 +607,17 @@ typeLabelSmall =
 -- Alpha 合成
 
 
-{-| `#RRGGBB` 形式の HEX 文字列を、指定した不透明度の `rgba(...)` 文字列に変換する。
-SVG の `SA.fill`/`SA.stroke` や state layer など、直書きの `rgba(...)` リテラルを
-トークン由来にするために使う。
+{-| CSS カスタムプロパティ参照（`var(--md-xxx)` 文字列）を、指定した不透明度で透明と混色する
+`color-mix(...)` 文字列に変換する。SVG の `SA.fill`/`SA.stroke` や state layer など、直書きの
+`rgba(...)` リテラルの代わりに使う。トークンがライト/ダークで切り替わっても、この関数自体は
+トークンの実色を知らなくて良い（ブラウザの `color-mix` がその時点の実効値で計算する）。
 
-    withAlpha 0.5 "#0061A4" == "rgba(0, 97, 164, 0.5)"
+    withAlpha 0.5 Theme.primary == "color-mix(in srgb, var(--md-primary) 50%, transparent)"
 
 -}
 withAlpha : Float -> String -> String
-withAlpha alpha hex =
-    let
-        clean =
-            if String.startsWith "#" hex then
-                String.dropLeft 1 hex
-
-            else
-                hex
-
-        channel start =
-            String.slice start (start + 2) clean
-                |> hexPairToInt
-                |> String.fromInt
-    in
-    "rgba(" ++ channel 0 ++ ", " ++ channel 2 ++ ", " ++ channel 4 ++ ", " ++ String.fromFloat alpha ++ ")"
-
-
-hexPairToInt : String -> Int
-hexPairToInt pair =
-    String.toList pair
-        |> List.map hexCharToInt
-        |> List.foldl (\d acc -> acc * 16 + d) 0
-
-
-hexCharToInt : Char -> Int
-hexCharToInt c =
-    case Char.toUpper c of
-        '0' -> 0
-        '1' -> 1
-        '2' -> 2
-        '3' -> 3
-        '4' -> 4
-        '5' -> 5
-        '6' -> 6
-        '7' -> 7
-        '8' -> 8
-        '9' -> 9
-        'A' -> 10
-        'B' -> 11
-        'C' -> 12
-        'D' -> 13
-        'E' -> 14
-        'F' -> 15
-        _ -> 0
+withAlpha alpha token =
+    "color-mix(in srgb, " ++ token ++ " " ++ String.fromInt (Basics.round (alpha * 100)) ++ "%, transparent)"
 
 
 
@@ -537,7 +625,12 @@ hexCharToInt c =
 
 
 {-| ページ全体に注入するグローバル CSS。`View.Style.focusCss` の後継。
-reset・body のフォント/配色・:focus-visible・ボタンの state layer（`.m3-btn`）をまとめる。
+reset・body のフォント/配色・:focus-visible・ボタンの state layer（`.m3-btn`）に加え、
+色トークンの CSS カスタムプロパティ（`--md-xxx`）を3ブロックで定義する:
+
+  - `:root {}` — ライト値（既定）
+  - `@media (prefers-color-scheme: dark) { :root:not([data-theme=light]) {} }` — OS のダーク設定に自動追従
+  - `:root[data-theme=dark] {}` — 手動トグルによる上書き（OS 設定より優先されるよう、上の media ブロックより後に置く）
 
 インラインスタイルの `background` は CSS の `:hover` に優先度で勝ってしまうため、
 state layer は `::after` 擬似要素 + `currentColor` で重ねる方式にする。これにより
@@ -549,6 +642,53 @@ globalCss =
     Html.node "style"
         []
         [ Html.text (String.join "\n" cssRules) ]
+
+
+{-| `colorTokens` から `:root {}` 用の宣言だけを取り出す（ライト値）。
+-}
+lightDeclarations : String
+lightDeclarations =
+    colorTokens
+        |> List.map (\t -> "  --md-" ++ t.css ++ ": " ++ t.light ++ ";")
+        |> String.join "\n"
+
+
+{-| `colorTokens` から `[data-theme=dark]` 用の宣言だけを取り出す（ダーク値）。
+-}
+darkDeclarations : String
+darkDeclarations =
+    colorTokens
+        |> List.map (\t -> "  --md-" ++ t.css ++ ": " ++ t.dark ++ ";")
+        |> String.join "\n"
+
+
+rootBlock : String
+rootBlock =
+    ":root {\n" ++ lightDeclarations ++ "\n}"
+
+
+{-| OS のダーク設定に自動追従するブロック。`[data-theme=light]` が明示されている時だけ除外するので、
+`SystemTheme`（属性なし、または "system"）でも `DarkTheme`（"dark"）でも OS がダークならここが効く。
+手動 `[data-theme=dark]` 上書きより先に置く必要がある（同specificityのため、後勝ち）。
+-}
+darkMediaBlock : String
+darkMediaBlock =
+    "@media (prefers-color-scheme: dark) {\n"
+        ++ ":root:not([data-theme=light]) {\n"
+        ++ darkDeclarations
+        ++ "\n}\n"
+        ++ ":root:not([data-theme=light]) .m3-hit:hover { filter: brightness(1.15); }\n"
+        ++ "}"
+
+
+{-| 手動トグルで `dark` を選んだ時の上書きブロック。OS 設定に関わらずダーク配色にする。
+-}
+darkOverrideBlock : String
+darkOverrideBlock =
+    ":root[data-theme=dark] {\n"
+        ++ darkDeclarations
+        ++ "\n}\n"
+        ++ ":root[data-theme=dark] .m3-hit:hover { filter: brightness(1.15); }"
 
 
 cssRules : List String
@@ -565,4 +705,7 @@ cssRules =
     , ".m3-btn:focus-visible::after { opacity: 0.10; }"
     , ".m3-hit { transition: filter 0.1s; }"
     , ".m3-hit:hover { filter: brightness(0.94); }"
+    , rootBlock
+    , darkMediaBlock
+    , darkOverrideBlock
     ]

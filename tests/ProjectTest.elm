@@ -181,7 +181,7 @@ reorderSectionsWithContentSuite =
             { baseProject
                 | sections = sections
                 , tracks = [ { id = 1, name = "t", instrument = Data.Track.instrumentFromString "Piano" |> Maybe.withDefault Data.Track.Piano, muted = False, volume = 100, kind = NoteTrack notes } ]
-                , chordTrack = { text = chordText, instrument = Data.Track.Piano, muted = False, volume = 100 }
+                , chordTrack = { text = chordText, instrument = Data.Track.Piano, muted = False, volume = 100, rhythm = Nothing }
             }
 
         ticksPerBar44 =

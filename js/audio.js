@@ -104,28 +104,35 @@ const DRUM_ROLES = {
 
 let drumSampleCache = {};
 
-function drumSampleNames() {
-  const player = players["drumKit"];
+function drumSampleNamesFor(player) {
   if (!player) return [];
   if (Array.isArray(player.sampleNames)) return player.sampleNames;
   if (typeof player.getSampleNames === "function") return player.getSampleNames();
   return [];
 }
 
-function resolveDrumSample(pitch) {
-  if (drumSampleCache[pitch] !== undefined) return drumSampleCache[pitch];
-  const names = drumSampleNames();
+function resolveDrumSampleForPlayer(player, pitch, cache) {
+  if (cache[pitch] !== undefined) return cache[pitch];
+  const names = drumSampleNamesFor(player);
   const candidates = DRUM_ROLES[pitch] || [];
   let found = null;
   for (const cand of candidates) {
     found = names.find((n) => n.toLowerCase().includes(cand)) || null;
     if (found) break;
   }
-  drumSampleCache[pitch] = found;
+  cache[pitch] = found;
   if (!found) {
     console.warn("[audio] ピッチに対応するドラムサンプルがない:", pitch, "候補:", names);
   }
   return found;
+}
+
+function drumSampleNames() {
+  return drumSampleNamesFor(players["drumKit"]);
+}
+
+function resolveDrumSample(pitch) {
+  return resolveDrumSampleForPlayer(players["drumKit"], pitch, drumSampleCache);
 }
 
 export function setElmSender(fn) {
@@ -146,36 +153,36 @@ export async function ensureAudio() {
   }
 }
 
-function loaderFor(name, ctx) {
+function loaderFor(name, ctx, extraOpts = {}) {
   switch (name) {
     case "piano":
       // GM から差し替え。実録スタインウェイ（生音に近い）
-      return new SplendidGrandPiano(ctx);
+      return new SplendidGrandPiano(ctx, extraOpts);
     case "electricPiano":
-      return new ElectricPiano(ctx, { instrument: "WurlitzerEP200" });
+      return new ElectricPiano(ctx, { instrument: "WurlitzerEP200", ...extraOpts });
     case "organ":
-      return new Soundfont(ctx, { instrument: "drawbar_organ" });
+      return new Soundfont(ctx, { instrument: "drawbar_organ", ...extraOpts });
     case "acousticGuitar":
-      return new Soundfont(ctx, { instrument: "acoustic_guitar_nylon" });
+      return new Soundfont(ctx, { instrument: "acoustic_guitar_nylon", ...extraOpts });
     case "steelGuitar":
-      return new Soundfont(ctx, { instrument: "acoustic_guitar_steel" });
+      return new Soundfont(ctx, { instrument: "acoustic_guitar_steel", ...extraOpts });
     case "electricGuitarClean":
-      return new Soundfont(ctx, { instrument: "electric_guitar_clean" });
+      return new Soundfont(ctx, { instrument: "electric_guitar_clean", ...extraOpts });
     case "electricGuitarJazz":
-      return new Soundfont(ctx, { instrument: "electric_guitar_jazz" });
+      return new Soundfont(ctx, { instrument: "electric_guitar_jazz", ...extraOpts });
     case "electricBass":
       // MusyngKite の electric_bass_finger は高音域でオクターブ落ちするので FluidR3_GM を使う
-      return new Soundfont(ctx, { instrument: "electric_bass_finger", kit: "FluidR3_GM" });
+      return new Soundfont(ctx, { instrument: "electric_bass_finger", kit: "FluidR3_GM", ...extraOpts });
     case "uprightBass":
-      return new Smolken(ctx, { instrument: "Pizzicato" });
+      return new Smolken(ctx, { instrument: "Pizzicato", ...extraOpts });
     case "vibraphone":
-      return new Mallet(ctx, { instrument: "Vibraphone - Hard Mallets" });
+      return new Mallet(ctx, { instrument: "Vibraphone - Hard Mallets", ...extraOpts });
     case "strings":
-      return new Soundfont(ctx, { instrument: "string_ensemble_1" });
+      return new Soundfont(ctx, { instrument: "string_ensemble_1", ...extraOpts });
     case "mellotron":
-      return new Mellotron(ctx, { instrument: "MKII VIOLINS" });
+      return new Mellotron(ctx, { instrument: "MKII VIOLINS", ...extraOpts });
     case "drumKit":
-      return new DrumMachine(ctx, { instrument: "TR-808" });
+      return new DrumMachine(ctx, { instrument: "TR-808", ...extraOpts });
     default:
       return null;
   }
@@ -236,10 +243,222 @@ function triggerEvent(e, time, durSec) {
   });
 }
 
+function encodeWavPCM16(audioBuffer) {
+  const numChannels = audioBuffer.numberOfChannels;
+  const sampleRate = audioBuffer.sampleRate;
+  const numFrames = audioBuffer.length;
+  const bytesPerSample = 2;
+  const blockAlign = numChannels * bytesPerSample;
+  const dataSize = numFrames * blockAlign;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  function writeString(offset, str) {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  }
+
+  writeString(0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(8, "WAVE");
+  writeString(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bytesPerSample * 8, true);
+  writeString(36, "data");
+  view.setUint32(40, dataSize, true);
+
+  const channelData = [];
+  for (let ch = 0; ch < numChannels; ch++) channelData.push(audioBuffer.getChannelData(ch));
+
+  let offset = 44;
+  for (let i = 0; i < numFrames; i++) {
+    for (let ch = 0; ch < numChannels; ch++) {
+      const sample = Math.max(-1, Math.min(1, channelData[ch][i]));
+      const intSample = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+      view.setInt16(offset, intSample, true);
+      offset += 2;
+    }
+  }
+
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+function downloadBlob(blob, fileName) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// 書き出し区間のイベント列と長さを求める。loop があればその範囲だけにフィルタし、チックは区間始点基準の相対値にする。末尾には減衰・余音が切れないよう tailSec 秒のテールを足す。
+function wavExportRange(payload) {
+  const loop = payload.loop;
+  const baseTicks = loop ? loop.startTicks : 0;
+  const events = loop
+    ? payload.events.filter((e) => e.ticks + e.durationTicks > loop.startTicks && e.ticks < loop.endTicks)
+    : payload.events;
+  const endTicks = loop
+    ? loop.endTicks - loop.startTicks
+    : payload.events.reduce((acc, e) => Math.max(acc, e.ticks + e.durationTicks), 0);
+  const tailSec = 2;
+  const durationSec = ticksToSeconds(endTicks, payload.bpm, payload.ppq) + tailSec;
+  return { events, baseTicks, durationSec };
+}
+
+async function renderOffline(payload) {
+  const sampleRate = Tone.getContext().rawContext.sampleRate;
+  const { events, baseTicks, durationSec } = wavExportRange(payload);
+
+  const muteByTrack = {};
+  const volumeByTrack = {};
+  payload.tracks.forEach((t) => {
+    muteByTrack[t.id] = t.muted;
+    volumeByTrack[t.id] = t.volume ?? 100;
+  });
+
+  const renderJob = Tone.Offline(async ({ rawContext }) => {
+    const offlineSynth = new Tone.PolySynth(Tone.Synth).toDestination();
+    offlineSynth.maxPolyphony = 64;
+
+    const usedInstruments = [...new Set(events.map((e) => e.instrument))].filter((n) => n !== "synthLead");
+    const offlinePlayers = {};
+    const offlineDrumCache = {};
+    await Promise.all(
+      usedInstruments.map(async (name) => {
+        const inst = loaderFor(name, rawContext, { disableScheduler: true });
+        if (!inst) return;
+        offlinePlayers[name] = inst;
+        await inst.load;
+      })
+    );
+
+    events.forEach((e) => {
+      if (muteByTrack[e.trackId]) return;
+      const vol = volumeByTrack[e.trackId] ?? 100;
+      const vel = Math.round((e.velocity * vol) / 100);
+      if (vel <= 0) return;
+      const time = ticksToSeconds(e.ticks - baseTicks, payload.bpm, payload.ppq);
+      if (time < 0) return;
+      const dur = ticksToSeconds(e.durationTicks, payload.bpm, payload.ppq);
+      const player = offlinePlayers[e.instrument];
+      if (e.instrument === "synthLead" || !player) {
+        offlineSynth.triggerAttackRelease(Tone.Frequency(e.pitch, "midi"), dur, time, vel / 127);
+        return;
+      }
+      if (e.instrument === "drumKit") {
+        const sample = resolveDrumSampleForPlayer(player, e.pitch, offlineDrumCache);
+        if (sample) player.start({ note: sample, time, velocity: vel });
+        return;
+      }
+      player.start({ note: e.pitch, time, duration: dur, velocity: vel });
+    });
+  }, durationSec, 2, sampleRate);
+
+  const renderTimeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error("offline render timed out")), 30000)
+  );
+
+  const toneBuffer = await Promise.race([renderJob, renderTimeout]);
+  const audioBuffer = toneBuffer.get();
+  if (!audioBuffer) throw new Error("offline render produced no buffer");
+  return audioBuffer;
+}
+
+// オフラインレンダリングが失敗した場合のフォールバック。実際に再生しながら ScriptProcessorNode でキャプチャするので、曲の長さ分実時間を要する。
+async function renderRealtime(payload) {
+  await ensureAudio();
+  stopPlayback();
+  applyTrackMeta(payload.tracks);
+  currentPpq = payload.ppq;
+
+  const { events, baseTicks, durationSec } = wavExportRange(payload);
+
+  const usedInstruments = [...new Set(events.map((e) => e.instrument))];
+  await Promise.all(usedInstruments.map(loadInstrument));
+
+  const ctx = Tone.getContext().rawContext;
+  const channels = 2;
+  const bufferSize = 4096;
+  const proc = ctx.createScriptProcessor(bufferSize, channels, channels);
+  const chunks = [[], []];
+  proc.onaudioprocess = (ev) => {
+    for (let ch = 0; ch < channels; ch++) {
+      chunks[ch].push(new Float32Array(ev.inputBuffer.getChannelData(ch)));
+    }
+  };
+  const silentGain = ctx.createGain();
+  silentGain.gain.value = 0;
+  Tone.getDestination().connect(proc);
+  proc.connect(silentGain);
+  silentGain.connect(ctx.destination);
+
+  const t = Tone.getTransport();
+  t.PPQ = payload.ppq;
+  t.bpm.value = payload.bpm;
+  t.loop = false;
+  part = buildPart(events, payload.ppq);
+  t.start(undefined, `${baseTicks}i`);
+
+  await new Promise((resolve) => setTimeout(resolve, durationSec * 1000));
+
+  t.stop();
+  t.cancel();
+  if (part) {
+    part.dispose();
+    part = null;
+  }
+  Tone.getDestination().disconnect(proc);
+  proc.disconnect();
+  silentGain.disconnect();
+  proc.onaudioprocess = null;
+
+  const totalLength = chunks[0].reduce((acc, c) => acc + c.length, 0);
+  const outBuffer = ctx.createBuffer(channels, totalLength, ctx.sampleRate);
+  for (let ch = 0; ch < channels; ch++) {
+    const data = outBuffer.getChannelData(ch);
+    let offset = 0;
+    for (const c of chunks[ch]) {
+      data.set(c, offset);
+      offset += c.length;
+    }
+  }
+  return outBuffer;
+}
+
+async function renderWav(payload) {
+  send({ tag: "wavRenderStarted", payload: {} });
+  try {
+    const audioBuffer = await renderOffline(payload);
+    downloadBlob(encodeWavPCM16(audioBuffer), payload.fileName);
+    send({ tag: "wavRenderDone", payload: {} });
+  } catch (err) {
+    console.warn("[audio] offline render failed, falling back to realtime capture:", err);
+    try {
+      const audioBuffer = await renderRealtime(payload);
+      downloadBlob(encodeWavPCM16(audioBuffer), payload.fileName);
+      send({ tag: "wavRenderDone", payload: {} });
+    } catch (err2) {
+      console.error("[audio] realtime capture also failed:", err2);
+      send({ tag: "wavRenderFailed", payload: { message: String(err2) } });
+    }
+  }
+}
+
 export function handleCommand(msg) {
   switch (msg.tag) {
     case "play":
       play(msg.payload);
+      break;
+    case "renderWav":
+      renderWav(msg.payload);
       break;
     case "stop":
       stopPlayback();

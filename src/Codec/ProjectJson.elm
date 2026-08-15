@@ -1,4 +1,4 @@
-module Codec.ProjectJson exposing (decoder, encode)
+module Codec.ProjectJson exposing (decoder, encode, encodeWith, selectedTrackIdDecoder)
 
 import Data.ChordTrack exposing (ChordTrack)
 import Data.Key exposing (Key)
@@ -22,21 +22,33 @@ currentVersion =
 
 encode : Project -> Encode.Value
 encode project =
-    Encode.object
-        [ ( "version", Encode.int currentVersion )
-        , ( "name", Encode.string project.name )
-        , ( "bpm", Encode.float project.bpm )
-        , ( "tracks", Encode.list encodeTrack project.tracks )
-        , ( "chordTrack", encodeChordTrack project.chordTrack )
-        , ( "sections", Encode.list encodeSection project.sections )
-        , ( "scraps", Encode.list encodeScrap project.scraps )
-        , ( "referenceAudio", encodeReferenceAudio project.referenceAudio )
-        , ( "nextId", Encode.int project.nextId )
-        , ( "memo", Encode.string project.memo )
-        , ( "voicings", Encode.list encodeVoicing project.voicings )
-        , ( "voicingEnabled", Encode.bool project.voicingEnabled )
-        , ( "guitarFormEnabled", Encode.bool project.guitarFormEnabled )
-        ]
+    Encode.object (encodeFields project)
+
+
+{-| `selectedTrackId`（Model 側で管理する選択中トラック）を同梱して保存する版。`encode` と結果の互換性を保つため、
+共通フィールドは `encodeFields` に集約し、こちらは末尾に 1 フィールド足すだけ。
+-}
+encodeWith : { selectedTrackId : Int } -> Project -> Encode.Value
+encodeWith cfg project =
+    Encode.object (encodeFields project ++ [ ( "selectedTrackId", Encode.int cfg.selectedTrackId ) ])
+
+
+encodeFields : Project -> List ( String, Encode.Value )
+encodeFields project =
+    [ ( "version", Encode.int currentVersion )
+    , ( "name", Encode.string project.name )
+    , ( "bpm", Encode.float project.bpm )
+    , ( "tracks", Encode.list encodeTrack project.tracks )
+    , ( "chordTrack", encodeChordTrack project.chordTrack )
+    , ( "sections", Encode.list encodeSection project.sections )
+    , ( "scraps", Encode.list encodeScrap project.scraps )
+    , ( "referenceAudio", encodeReferenceAudio project.referenceAudio )
+    , ( "nextId", Encode.int project.nextId )
+    , ( "memo", Encode.string project.memo )
+    , ( "voicings", Encode.list encodeVoicing project.voicings )
+    , ( "voicingEnabled", Encode.bool project.voicingEnabled )
+    , ( "guitarFormEnabled", Encode.bool project.guitarFormEnabled )
+    ]
 
 
 encodeReferenceAudio : ReferenceAudio -> Encode.Value
@@ -122,6 +134,14 @@ encodeChordTrack ct =
         , ( "instrument", Encode.string (Data.Track.instrumentToString ct.instrument) )
         , ( "muted", Encode.bool ct.muted )
         , ( "volume", Encode.int ct.volume )
+        , ( "rhythm"
+          , case ct.rhythm of
+                Just name ->
+                    Encode.string name
+
+                Nothing ->
+                    Encode.null
+          )
         ]
 
 
@@ -169,6 +189,17 @@ decoder =
                 else
                     Decode.fail ("未対応のバージョン: " ++ String.fromInt version)
             )
+
+
+{-| 保存データに `selectedTrackId`（`encodeWith` 経由）が含まれていれば Just を、旧形式（フィールド欠落）なら Nothing を返す。
+project 本体の decoder（`projectDecoder`）は JSON の余剰フィールドを無視するので、このデコーダを別途呼ぶ必要がある。
+-}
+selectedTrackIdDecoder : Decode.Decoder (Maybe Int)
+selectedTrackIdDecoder =
+    Decode.oneOf
+        [ Decode.field "selectedTrackId" Decode.int |> Decode.map Just
+        , Decode.succeed Nothing
+        ]
 
 
 {-| `Project` は9フィールドあり Json.Decode の map 関数は map8 が上限なので、2つに分けて合成する。
@@ -360,13 +391,18 @@ scrapDecoder =
 
 chordTrackDecoder : Decode.Decoder ChordTrack
 chordTrackDecoder =
-    Decode.map4 ChordTrack
+    Decode.map5 ChordTrack
         (Decode.field "text" Decode.string)
         (Decode.field "instrument" instrumentDecoder)
         (Decode.field "muted" Decode.bool)
         (Decode.oneOf
             [ Decode.field "volume" Decode.int
             , Decode.succeed 100
+            ]
+        )
+        (Decode.oneOf
+            [ Decode.field "rhythm" (Decode.nullable Decode.string)
+            , Decode.succeed Nothing
             ]
         )
 

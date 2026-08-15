@@ -4,6 +4,7 @@ module View.PianoRoll exposing
     , RulerHandlers
     , RulerOpts
     , SectionSpan
+    , Tool(..)
     , chordTrackView
     , defaultPxPerSixteenth
     , maxPitch
@@ -63,6 +64,8 @@ type alias Config msg =
     , unhoveredNote : msg
     , scrolled : { scrollLeft : Float, clientWidth : Float } -> msg
     , pressedVelocityBar : Int -> { clientX : Float, clientY : Float } -> msg
+    , movedCutGuide : { offsetX : Float } -> msg
+    , clearedCutGuide : msg
     }
 
 
@@ -73,6 +76,13 @@ type ResizeHandle
     = NoResize
     | ResizeLeft
     | ResizeRight
+
+
+{-| ピアノロールの操作モード。PointerTool = 選択・移動・リサイズ（既定）、CutTool = クリック位置で選択ノートを分割する。
+-}
+type Tool
+    = PointerTool
+    | CutTool
 
 
 type alias SectionSpan =
@@ -98,6 +108,8 @@ type alias ViewOpts =
     , pxPerSixteenth : Int
     , gridUnit : Data.Time.GridUnit
     , chordSpans : List ChordSpan
+    , tool : Tool
+    , cutGuideTicks : Maybe Int
     }
 
 
@@ -327,6 +339,12 @@ chordTrackView config opts previewNotes chordLane =
                     [ rulerView config opts
                     , laneHtml ChordStrip.height
                     , chordTrackNoteGrid config opts notes
+                    , velocityLaneViewReadOnly
+                        { pxPerSixteenth = opts.pxPerSixteenth
+                        , totalBars = opts.totalBars
+                        , notes = notes
+                        , playheadTicks = opts.playheadTicks
+                        }
                     ]
                 ]
 
@@ -733,22 +751,67 @@ barNumbers pxPerSixteenth totalBars =
 gridView : Config msg -> ViewOpts -> Html msg
 gridView config opts =
     Svg.svg
-        [ SA.width (String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars))
-        , SA.height (String.fromInt gridHeight)
-        , SA.viewBox ("0 0 " ++ String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars) ++ " " ++ String.fromInt gridHeight)
-        , HA.style "display" "block"
-        , HA.style "cursor" "crosshair"
-        , Html.Events.on "mousedown" (Decode.map config.pressedEmpty emptyPressDecoder)
-        ]
+        ([ SA.width (String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars))
+         , SA.height (String.fromInt gridHeight)
+         , SA.viewBox ("0 0 " ++ String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars) ++ " " ++ String.fromInt gridHeight)
+         , HA.style "display" "block"
+         , HA.style "cursor"
+            (if opts.tool == CutTool then
+                "col-resize"
+
+             else
+                "crosshair"
+            )
+         , Html.Events.on "mousedown" (Decode.map config.pressedEmpty emptyPressDecoder)
+         ]
+            ++ (if opts.tool == CutTool then
+                    [ Html.Events.on "mousemove" (Decode.map config.movedCutGuide cutGuideMoveDecoder)
+                    , Html.Events.on "mouseleave" (Decode.succeed config.clearedCutGuide)
+                    ]
+
+                else
+                    []
+               )
+        )
         (rowBackgrounds opts.pxPerSixteenth opts.totalBars
             ++ List.concat (List.indexedMap (sectionTint opts.pxPerSixteenth) opts.sections)
             ++ verticalLines opts.gridUnit opts.pxPerSixteenth opts.totalBars
             ++ List.concat (List.indexedMap (\idx notes -> List.map (ghostNoteView opts.pxPerSixteenth idx) notes) opts.ghostNoteGroups)
-            ++ List.concatMap (noteView config opts.pxPerSixteenth opts.selectedIds) opts.notes
+            ++ List.concatMap (noteView config opts.pxPerSixteenth opts.selectedIds opts.tool) opts.notes
             ++ rubberBandView opts.rubberBand
             ++ loopLinesView opts.pxPerSixteenth gridHeight opts.loop
+            ++ cutGuideView opts.cutGuideTicks gridHeight opts.pxPerSixteenth
             ++ [ playheadLine opts.pxPerSixteenth gridHeight opts.playheadTicks ]
         )
+
+
+cutGuideMoveDecoder : Decode.Decoder { offsetX : Float }
+cutGuideMoveDecoder =
+    Decode.map (\ox -> { offsetX = ox }) (Decode.field "offsetX" Decode.float)
+
+
+{-| カットツール選択中、マウス位置（スナップ済み tick）に追従する薄い縦ガイド線。rubberBandView と同じく
+pointerEvents "none" の破線で、クリック判定には一切関与しない（あくまで視覚フィードバック）。
+-}
+cutGuideView : Maybe Int -> Int -> Int -> List (Svg.Svg msg)
+cutGuideView cutGuideTicks height pxPerSixteenth =
+    case cutGuideTicks of
+        Nothing ->
+            []
+
+        Just ticks ->
+            [ Svg.line
+                [ SA.x1 (String.fromFloat (ticksToPixels pxPerSixteenth ticks))
+                , SA.y1 "0"
+                , SA.x2 (String.fromFloat (ticksToPixels pxPerSixteenth ticks))
+                , SA.y2 (String.fromInt height)
+                , SA.stroke (Theme.withAlpha 0.5 Theme.primary)
+                , SA.strokeWidth "2"
+                , SA.strokeDasharray "4 2"
+                , SA.pointerEvents "none"
+                ]
+                []
+            ]
 
 
 {-| 各ノートの velocity を縦バーで表示・編集するレーン。gridView と同じ横座標系
@@ -838,6 +901,60 @@ velocityBarView handlers pxPerSixteenth selectedIds note =
             (Decode.map (\pos -> ( handlers.pressedVelocityBar note.id pos, True )) velocityPressDecoder)
         ]
         []
+
+
+{-| コードトラック用の読み取り専用ベロシティバー。velocityBarView からイベントハンドラと ns-resize カーソルを除いた版。
+選択状態を持たないため常に Theme.primary で塗り、pointerEvents "none" でピアノロール側のマウス操作を妨げない。
+-}
+velocityBarViewReadOnly : Int -> Note -> Svg.Svg msg
+velocityBarViewReadOnly pxPerSixteenth note =
+    let
+        x =
+            ticksToPixels pxPerSixteenth note.start
+
+        barW =
+            toFloat (clamp 3 9 (pxPerSixteenth // 2))
+
+        h =
+            Basics.max 2 (toFloat note.velocity / 127 * toFloat (velocityLaneHeight - 2))
+    in
+    Svg.rect
+        [ SA.x (String.fromFloat x)
+        , SA.y (String.fromFloat (toFloat velocityLaneHeight - h))
+        , SA.width (String.fromFloat barW)
+        , SA.height (String.fromFloat h)
+        , SA.fill Theme.primary
+        , SA.pointerEvents "none"
+        ]
+        []
+
+
+{-| velocityLaneViewWith の読み取り専用版。コードトラックのプレビューノート（previewNotes）を並べるだけで
+ハンドラ・選択強調は持たない。
+-}
+velocityLaneViewReadOnly :
+    { pxPerSixteenth : Int
+    , totalBars : Int
+    , notes : List Note
+    , playheadTicks : Int
+    }
+    -> Html msg
+velocityLaneViewReadOnly opts =
+    let
+        width =
+            gridWidth opts.pxPerSixteenth opts.totalBars
+    in
+    Svg.svg
+        [ SA.width (String.fromInt width)
+        , SA.height (String.fromInt velocityLaneHeight)
+        , SA.viewBox ("0 0 " ++ String.fromInt width ++ " " ++ String.fromInt velocityLaneHeight)
+        , HA.style "display" "block"
+        , HA.style "background" Theme.surfaceContainerLow
+        , HA.style "border-top" ("1px solid " ++ Theme.outlineVariant)
+        ]
+        (List.map (velocityBarViewReadOnly opts.pxPerSixteenth) opts.notes
+            ++ [ playheadLine opts.pxPerSixteenth velocityLaneHeight opts.playheadTicks ]
+        )
 
 
 velocityPressDecoder : Decode.Decoder { clientX : Float, clientY : Float }
@@ -1080,8 +1197,8 @@ hoverableGhostNoteView config pxPerSixteenth note =
         []
 
 
-noteView : Config msg -> Int -> Set Int -> Note -> List (Svg.Svg msg)
-noteView config pxPerSixteenth selectedIds note =
+noteView : Config msg -> Int -> Set Int -> Tool -> Note -> List (Svg.Svg msg)
+noteView config pxPerSixteenth selectedIds tool note =
     let
         x =
             ticksToPixels pxPerSixteenth note.start
@@ -1097,78 +1214,155 @@ noteView config pxPerSixteenth selectedIds note =
 
         selected =
             Set.member note.id selectedIds
+
+        interactive =
+            tool == PointerTool
+
+        cutOnlyAttrs =
+            if interactive then
+                []
+
+            else
+                [ SA.pointerEvents "none" ]
     in
     [ Svg.rect
-        [ SA.x (String.fromFloat x)
-        , SA.y (String.fromInt (y + 1))
-        , SA.width (String.fromFloat (Basics.max 2 (w - 1)))
-        , SA.height (String.fromInt (rowHeight - 2))
-        , SA.rx "2"
-        , SA.fill
+        ([ SA.x (String.fromFloat x)
+         , SA.y (String.fromInt (y + 1))
+         , SA.width (String.fromFloat (Basics.max 2 (w - 1)))
+         , SA.height (String.fromInt (rowHeight - 2))
+         , SA.rx "2"
+         , SA.fill
             (if selected then
                 Style.colorSelection
 
              else
-                Theme.primary
+                Theme.noteFill
             )
-        , SA.stroke
+         , SA.stroke
             (if selected then
                 Theme.selectionDeep
 
              else
-                "none"
+                Theme.primary
             )
-        , HA.style "cursor" "move"
-        , Html.Events.stopPropagationOn "mousedown"
-            (Decode.map (\pos -> ( config.pressedNote note.id NoResize pos, True )) notePressDecoder)
-        , Html.Events.stopPropagationOn "dblclick"
-            (Decode.succeed ( config.doubleClickedNote note.id, True ))
-        , Html.Events.preventDefaultOn "contextmenu"
-            (Decode.succeed ( config.rightClickedNote note.id, True ))
-        , Html.Events.on "mouseover"
-            (Decode.map (\pos -> config.hoveredNote note pos.clientX pos.clientY) noteHoverDecoder)
-        , Html.Events.on "mouseout" (Decode.succeed config.unhoveredNote)
-        ]
+         , SA.strokeWidth "1"
+         , SA.shapeRendering "crispEdges"
+         , HA.style "cursor"
+            (if interactive then
+                "move"
+
+             else
+                "inherit"
+            )
+         ]
+            ++ cutOnlyAttrs
+            ++ (if interactive then
+                    [ Html.Events.stopPropagationOn "mousedown"
+                        (Decode.map (\pos -> ( config.pressedNote note.id NoResize pos, True )) notePressDecoder)
+                    , Html.Events.stopPropagationOn "dblclick"
+                        (Decode.succeed ( config.doubleClickedNote note.id, True ))
+                    , Html.Events.preventDefaultOn "contextmenu"
+                        (Decode.succeed ( config.rightClickedNote note.id, True ))
+                    , Html.Events.on "mouseover"
+                        (Decode.map (\pos -> config.hoveredNote note pos.clientX pos.clientY) noteHoverDecoder)
+                    , Html.Events.on "mouseout" (Decode.succeed config.unhoveredNote)
+                    ]
+
+                else
+                    []
+               )
+        )
         []
     , Svg.rect
-        [ SA.x (String.fromFloat (x + w - handleWidth))
-        , SA.y (String.fromInt (y + 1))
-        , SA.width (String.fromFloat handleWidth)
-        , SA.height (String.fromInt (rowHeight - 2))
-        , SA.fill
-            (if selected then
-                Theme.selectionDeep
+        ([ SA.x
+            (String.fromFloat
+                (if w >= 3 * handleWidth then
+                    x + w - 1 - 1.5 - handleWidth
+
+                 else
+                    x + w - handleWidth
+                )
+            )
+         , SA.y
+            (String.fromFloat
+                (if w >= 3 * handleWidth then
+                    toFloat y + 2.5
+
+                 else
+                    toFloat y + 1
+                )
+            )
+         , SA.width (String.fromFloat handleWidth)
+         , SA.height
+            (String.fromFloat
+                (if w >= 3 * handleWidth then
+                    toFloat rowHeight - 5
+
+                 else
+                    toFloat rowHeight - 2
+                )
+            )
+         , SA.rx "1"
+         , SA.fill
+            (if w >= 3 * handleWidth then
+                if selected then
+                    Theme.selectionDeep
+
+                else
+                    Theme.primary
 
              else
-                Theme.primary
+                "transparent"
             )
-        , HA.style "cursor" "ew-resize"
-        , Html.Events.stopPropagationOn "mousedown"
-            (Decode.map (\pos -> ( config.pressedNote note.id ResizeRight pos, True )) notePressDecoder)
-        , Html.Events.preventDefaultOn "contextmenu"
-            (Decode.succeed ( config.rightClickedNote note.id, True ))
-        ]
+         , HA.style "cursor"
+            (if interactive then
+                "ew-resize"
+
+             else
+                "inherit"
+            )
+         ]
+            ++ cutOnlyAttrs
+            ++ (if interactive then
+                    [ Html.Events.stopPropagationOn "mousedown"
+                        (Decode.map (\pos -> ( config.pressedNote note.id ResizeRight pos, True )) notePressDecoder)
+                    , Html.Events.preventDefaultOn "contextmenu"
+                        (Decode.succeed ( config.rightClickedNote note.id, True ))
+                    ]
+
+                else
+                    []
+               )
+        )
         []
     ]
         ++ (if w >= 3 * handleWidth then
                 [ Svg.rect
-                    [ SA.x (String.fromFloat x)
-                    , SA.y (String.fromInt (y + 1))
-                    , SA.width (String.fromFloat handleWidth)
-                    , SA.height (String.fromInt (rowHeight - 2))
-                    , SA.fill
-                        (if selected then
-                            Theme.selectionDeep
+                    ([ SA.x (String.fromFloat x)
+                     , SA.y (String.fromInt (y + 1))
+                     , SA.width (String.fromFloat handleWidth)
+                     , SA.height (String.fromInt (rowHeight - 2))
+                     , SA.fill "transparent"
+                     , HA.style "cursor"
+                        (if interactive then
+                            "ew-resize"
 
                          else
-                            Theme.primary
+                            "inherit"
                         )
-                    , HA.style "cursor" "ew-resize"
-                    , Html.Events.stopPropagationOn "mousedown"
-                        (Decode.map (\pos -> ( config.pressedNote note.id ResizeLeft pos, True )) notePressDecoder)
-                    , Html.Events.preventDefaultOn "contextmenu"
-                        (Decode.succeed ( config.rightClickedNote note.id, True ))
-                    ]
+                     ]
+                        ++ cutOnlyAttrs
+                        ++ (if interactive then
+                                [ Html.Events.stopPropagationOn "mousedown"
+                                    (Decode.map (\pos -> ( config.pressedNote note.id ResizeLeft pos, True )) notePressDecoder)
+                                , Html.Events.preventDefaultOn "contextmenu"
+                                    (Decode.succeed ( config.rightClickedNote note.id, True ))
+                                ]
+
+                            else
+                                []
+                           )
+                    )
                     []
                 ]
 
@@ -1207,5 +1401,6 @@ playheadLine pxPerSixteenth height ticks =
         , SA.y2 (String.fromInt height)
         , SA.stroke Theme.playhead
         , SA.strokeWidth "2"
+        , SA.pointerEvents "none"
         ]
         []

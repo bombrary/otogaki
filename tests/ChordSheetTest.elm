@@ -215,7 +215,7 @@ integrationSuite =
                                 ChordSheet.toChordText blocks
 
                             track =
-                                { text = text, instrument = Piano, muted = False, volume = 100 }
+                                { text = text, instrument = Piano, muted = False, volume = 100, rhythm = Nothing }
                         in
                         ChordTrack.barCount track |> Expect.equal 4
 
@@ -230,7 +230,7 @@ integrationSuite =
                                 ChordSheet.toSections { firstId = 1, key = Data.Key.default, meter = Data.Meter.default } blocks
 
                             track =
-                                { text = ChordSheet.toChordText blocks, instrument = Piano, muted = False, volume = 100 }
+                                { text = ChordSheet.toChordText blocks, instrument = Piano, muted = False, volume = 100, rhythm = Nothing }
 
                             timeline =
                                 Data.Timeline.fromSections { minBars = 4 } sections
@@ -256,7 +256,7 @@ toSheetTextSuite =
                         [ { id = 1, name = "Aメロ", lengthBars = 2, memo = "", key = Data.Key.default, meter = Data.Meter.default } ]
 
                     track =
-                        { text = "C | G", instrument = Piano, muted = False, volume = 100 }
+                        { text = "C | G", instrument = Piano, muted = False, volume = 100, rhythm = Nothing }
                 in
                 ChordSheet.toSheetText sections track |> Expect.equal "Aメロ\nC | G |"
         , test "パディングされた空小節を含むセクション（デモ相当）" <|
@@ -268,7 +268,7 @@ toSheetTextSuite =
                         ]
 
                     track =
-                        { text = "C | G | Am | F", instrument = Piano, muted = False, volume = 100 }
+                        { text = "C | G | Am | F", instrument = Piano, muted = False, volume = 100, rhythm = Nothing }
                 in
                 ChordSheet.toSheetText sections track
                     |> Expect.equal "Aメロ\nC | G | Am | F |\n\nサビ\n|  |  |  |  |"
@@ -281,7 +281,7 @@ toSheetTextSuite =
                         ]
 
                     track =
-                        { text = "C | G | Am | F", instrument = Piano, muted = False, volume = 100 }
+                        { text = "C | G | Am | F", instrument = Piano, muted = False, volume = 100, rhythm = Nothing }
 
                     sheetText =
                         ChordSheet.toSheetText sections track
@@ -303,7 +303,7 @@ toSheetTextSuite =
                         [ { id = 1, name = "X", lengthBars = 3, memo = "", key = Data.Key.default, meter = Data.Meter.default } ]
 
                     track =
-                        { text = "| C |", instrument = Piano, muted = False, volume = 100 }
+                        { text = "| C |", instrument = Piano, muted = False, volume = 100, rhythm = Nothing }
 
                     sheetText =
                         ChordSheet.toSheetText sections track
@@ -321,7 +321,7 @@ toSheetTextSuite =
                         [ { id = 1, name = "Y", lengthBars = 2, memo = "", key = Data.Key.default, meter = Data.Meter.default } ]
 
                     track =
-                        { text = "C | G | Am", instrument = Piano, muted = False, volume = 100 }
+                        { text = "C | G | Am", instrument = Piano, muted = False, volume = 100, rhythm = Nothing }
                 in
                 ChordSheet.toSheetText sections track |> Expect.equal "Y\nC | G |"
         ]

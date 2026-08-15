@@ -1,4 +1,4 @@
-module Data.StrumExpand exposing (apply, formFor, previewNotes, soundingPitches, voicingFromForm)
+module Data.StrumExpand exposing (apply, expand, formFor, previewNotes, soundingPitches, voicingFromForm)
 
 import Data.Chord
 import Data.ChordTrack
@@ -120,34 +120,20 @@ withSlashBass maybeBass pitches =
             pitches
 
 
-{-| コード進行を実際にMIDI化（「→ MIDIトラック化」）した場合に鳴るはずのノート列を計算する。
-ピアノロールのMIDIプレビュー表示で使う。soundingPitches と同じギターフォーム判定を通すので、実際の再生（Codec.Performance）と一致する。
-id はプレビュー専用の連番（実際のPianoRollのノートとは不一致する）。
+{-| コード進行を実際にストローク展開して鳴らす場合のノート列を計算する純関数。`resolvedChords` は呼び出し側が
+`Data.ChordTrack.resolved` で求めて渡す（Project 全体を持たないので `apply` の Project 直接操作から独立してテストできる）。
+`apply`（MIDI トラックへの焼き込み）と `Codec.Performance.chordEvents` / `Data.StrumExpand.previewNotes`（実際の再生・プレビュー）が
+この関数を共有するので、鳴る音は常に一致する。
 -}
-previewNotes : Bool -> List Voicing -> Timeline -> Data.ChordTrack.ChordTrack -> List Note
-previewNotes guitarFormEnabled voicings timeline track =
-    Data.ChordTrack.resolved timeline track
-        |> List.concatMap
-            (\ev ->
-                soundingPitches guitarFormEnabled voicings ev.chord
-                    |> List.map (\p -> { pitch = p, start = ev.startTicks, duration = ev.durationTicks })
-            )
-        |> List.indexedMap
-            (\i n -> { id = i, pitch = n.pitch, start = n.start, duration = n.duration, velocity = 80 })
-
-
-{-| 選択範囲内の既存ノートを置換し、コード進行に沿ったストロークを展開する。
-`Data.DrumPattern.apply` と同じ形の Project 直接操作 API。
--}
-apply : { trackId : Int, startTicks : Int, endTicks : Int } -> Bool -> List Voicing -> Pattern -> Project -> Project
-apply cfg guitarFormEnabled voicings pattern project =
+expand :
+    { startTicks : Int, endTicks : Int }
+    -> Bool
+    -> List Voicing
+    -> Pattern
+    -> List Data.ChordTrack.ResolvedChord
+    -> List { pitch : Int, start : Int, duration : Int, velocity : Int }
+expand cfg guitarFormEnabled voicings pattern resolvedChords =
     let
-        timeline =
-            Data.Project.timeline project
-
-        resolvedChords =
-            Data.ChordTrack.resolved timeline project.chordTrack
-
         chordAt ticks =
             resolvedChords
                 |> List.filter (\rc -> ticks >= rc.startTicks && ticks < rc.startTicks + rc.durationTicks)
@@ -197,7 +183,7 @@ apply cfg guitarFormEnabled voicings pattern project =
                                             pitches
 
                                         Up ->
-                                            pitches |> List.drop 2 |> List.reverse
+                                            List.reverse pitches
 
                                 StringIndex i ->
                                     case List.length pitches of
@@ -211,12 +197,7 @@ apply cfg guitarFormEnabled voicings pattern project =
                             Basics.max 1 (eventEnd index start - start)
 
                         velocity =
-                            case s.direction of
-                                Down ->
-                                    s.velocity
-
-                                Up ->
-                                    Basics.max 1 (s.velocity - 20)
+                            s.velocity
                     in
                     ordered
                         |> List.indexedMap
@@ -227,9 +208,58 @@ apply cfg guitarFormEnabled voicings pattern project =
                                 , velocity = velocity
                                 }
                             )
+    in
+    strumStarts |> List.indexedMap notesForEvent |> List.concat
+
+
+{-| コード進行を実際にMIDI化（「→ MIDIトラック化」）した場合に鳴るはずのノート列を計算する。
+ピアノロールのMIDIプレビュー表示で使う。soundingPitches と同じギターフォーム判定を通すので、実際の再生（Codec.Performance）と一致する。
+`track.rhythm` が Just ならストロークパターンで刻み、Nothing なら従来どおりベタうち。
+id はプレビュー専用の連番（実際のPianoRollのノートとは不一致する）。
+-}
+previewNotes : Bool -> List Voicing -> Timeline -> Data.ChordTrack.ChordTrack -> List Note
+previewNotes guitarFormEnabled voicings timeline track =
+    let
+        resolvedChords =
+            Data.ChordTrack.resolved timeline track
+
+        rawNotes =
+            case track.rhythm |> Maybe.andThen Data.StrumPattern.byName of
+                Just pattern ->
+                    case ( List.map .startTicks resolvedChords |> List.minimum, resolvedChords |> List.map (\rc -> rc.startTicks + rc.durationTicks) |> List.maximum ) of
+                        ( Just startTicks, Just endTicks ) ->
+                            expand { startTicks = startTicks, endTicks = endTicks } guitarFormEnabled voicings pattern resolvedChords
+
+                        _ ->
+                            []
+
+                Nothing ->
+                    resolvedChords
+                        |> List.concatMap
+                            (\ev ->
+                                soundingPitches guitarFormEnabled voicings ev.chord
+                                    |> List.map (\p -> { pitch = p, start = ev.startTicks, duration = ev.durationTicks, velocity = 80 })
+                            )
+    in
+    rawNotes
+        |> List.indexedMap
+            (\i n -> { id = i, pitch = n.pitch, start = n.start, duration = n.duration, velocity = n.velocity })
+
+
+{-| 選択範囲内の既存ノートを置換し、コード進行に沿ったストロークを展開する。
+`Data.DrumPattern.apply` と同じ形の Project 直接操作 API。ノート列の計算そのものは `expand` に委譲する。
+-}
+apply : { trackId : Int, startTicks : Int, endTicks : Int } -> Bool -> List Voicing -> Pattern -> Project -> Project
+apply cfg guitarFormEnabled voicings pattern project =
+    let
+        timeline =
+            Data.Project.timeline project
+
+        resolvedChords =
+            Data.ChordTrack.resolved timeline project.chordTrack
 
         allNotesNoId =
-            strumStarts |> List.indexedMap notesForEvent |> List.concat
+            expand { startTicks = cfg.startTicks, endTicks = cfg.endTicks } guitarFormEnabled voicings pattern resolvedChords
 
         ( newNotesRev, finalNextId ) =
             List.foldl

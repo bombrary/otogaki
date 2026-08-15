@@ -41,6 +41,7 @@ type alias ChordTrack =
     , instrument : Instrument
     , muted : Bool
     , volume : Int
+    , rhythm : Maybe String
     }
 
 
@@ -58,6 +59,7 @@ empty =
     , instrument = Piano
     , muted = False
     , volume = 100
+    , rhythm = Nothing
     }
 
 

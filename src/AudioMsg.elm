@@ -11,6 +11,9 @@ type AudioEvent
     | InstrumentLoaded String
     | InstrumentLoadFailed String
     | RefAudioReady { name : String, peaks : Array Float, peakDt : Float, durationSecs : Float }
+    | WavRenderStarted
+    | WavRenderDone
+    | WavRenderFailed String
     | Unknown
 
 
@@ -48,6 +51,15 @@ decoder =
                             (Decode.at [ "payload", "peaks" ] (Decode.array Decode.float))
                             (Decode.at [ "payload", "peakDt" ] Decode.float)
                             (Decode.at [ "payload", "duration" ] Decode.float)
+
+                    "wavRenderStarted" ->
+                        Decode.succeed WavRenderStarted
+
+                    "wavRenderDone" ->
+                        Decode.succeed WavRenderDone
+
+                    "wavRenderFailed" ->
+                        Decode.map WavRenderFailed (Decode.at [ "payload", "message" ] Decode.string)
 
                     _ ->
                         Decode.succeed Unknown
