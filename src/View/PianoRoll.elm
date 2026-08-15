@@ -51,7 +51,7 @@ import View.Theme as Theme
 
 type alias Config msg =
     { pressedEmpty : { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, seekMod : Bool } -> msg
-    , pressedNote : Int -> ResizeHandle -> { clientX : Float, clientY : Float, shift : Bool } -> msg
+    , pressedNote : Int -> ResizeHandle -> { clientX : Float, clientY : Float, shift : Bool, isTouch : Bool, timeStamp : Float } -> msg
     , draggedWhilePressingNote : { clientX : Float, clientY : Float, alt : Bool } -> msg
     , releasedNotePress : msg
     , doubleClickedNote : Int -> msg
@@ -1112,16 +1112,18 @@ noteMoveDecoder =
 想定）でも pointerdown が先に発火し、dragState がJustになってviewDragOverlayが画面を覆うため、
 後続のcontextmenuイベントがノート要素まで届かず右クリック削除が動かなくなる。
 -}
-notePressDecoder : Decode.Decoder { clientX : Float, clientY : Float, shift : Bool }
+notePressDecoder : Decode.Decoder { clientX : Float, clientY : Float, shift : Bool, isTouch : Bool, timeStamp : Float }
 notePressDecoder =
     Decode.field "button" Decode.int
         |> Decode.andThen
             (\button ->
                 if button == 0 then
-                    Decode.map3 (\cx cy sh -> { clientX = cx, clientY = cy, shift = sh })
+                    Decode.map5 (\cx cy sh touch ts -> { clientX = cx, clientY = cy, shift = sh, isTouch = touch, timeStamp = ts })
                         (Decode.field "clientX" Decode.float)
                         (Decode.field "clientY" Decode.float)
                         (Decode.field "shiftKey" Decode.bool)
+                        (Decode.field "pointerType" Decode.string |> Decode.map ((==) "touch"))
+                        (Decode.field "timeStamp" Decode.float)
 
                 else
                     Decode.fail "not left button"

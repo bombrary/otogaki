@@ -16,7 +16,7 @@ import View.Theme as Theme
 
 
 type alias Config msg =
-    { pressedCell : { pitch : Int, tick : Int, offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool } -> msg
+    { pressedCell : { pitch : Int, tick : Int, offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, isTouch : Bool, timeStamp : Float } -> msg
     , rightClickedCell : { pitch : Int, tick : Int } -> msg
     , doubleClickedCell : { pitch : Int, tick : Int } -> msg
     , pressedVelocityBar : Int -> { clientX : Float, clientY : Float } -> msg
@@ -125,25 +125,27 @@ buttonフィルタを必ず入れる: これがないと右クリック（contex
 cellPressDecoder :
     Data.Time.GridUnit
     -> Int
-    -> Decode.Decoder { pitch : Int, tick : Int, offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool }
+    -> Decode.Decoder { pitch : Int, tick : Int, offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, isTouch : Bool, timeStamp : Float }
 cellPressDecoder gridUnit pxPerSixteenth =
     Decode.field "button" Decode.int
         |> Decode.andThen
             (\button ->
                 if button == 0 then
-                    Decode.map5
-                        (\ox oy cx cy sh ->
+                    Decode.map7
+                        (\ox oy cx cy sh touch ts ->
                             let
                                 cell =
                                     cellAt gridUnit pxPerSixteenth ox oy
                             in
-                            { pitch = cell.pitch, tick = cell.tick, offsetX = ox, offsetY = oy, clientX = cx, clientY = cy, shift = sh }
+                            { pitch = cell.pitch, tick = cell.tick, offsetX = ox, offsetY = oy, clientX = cx, clientY = cy, shift = sh, isTouch = touch, timeStamp = ts }
                         )
                         (Decode.field "offsetX" Decode.float)
                         (Decode.field "offsetY" Decode.float)
                         (Decode.field "clientX" Decode.float)
                         (Decode.field "clientY" Decode.float)
                         (Decode.field "shiftKey" Decode.bool)
+                        (Decode.field "pointerType" Decode.string |> Decode.map ((==) "touch"))
+                        (Decode.field "timeStamp" Decode.float)
 
                 else
                     Decode.fail "not left button"

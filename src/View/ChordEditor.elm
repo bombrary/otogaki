@@ -30,7 +30,7 @@ type alias Config msg =
     , clickedAddVoicing : String -> msg
     , clickedVoicingRow : Int -> msg
     , changedVoicingName : Int -> String -> msg
-    , pressedVoicingOffset : Int -> Int -> { clientX : Float, clientY : Float, shift : Bool } -> msg
+    , pressedVoicingOffset : Int -> Int -> { clientX : Float, clientY : Float, shift : Bool, isTouch : Bool, timeStamp : Float } -> msg
     , draggedWhilePressingVoicingOffset : { clientX : Float, clientY : Float, alt : Bool } -> msg
     , releasedVoicingOffsetPress : msg
     , doubleClickedVoicingOffset : Int -> Int -> msg

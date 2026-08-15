@@ -11,7 +11,7 @@ import View.Theme as Theme
 
 
 type alias Config msg =
-    { pressedOffset : Int -> { clientX : Float, clientY : Float, shift : Bool } -> msg
+    { pressedOffset : Int -> { clientX : Float, clientY : Float, shift : Bool, isTouch : Bool, timeStamp : Float } -> msg
     , doubleClickedOffset : Int -> msg
     , pressedKey : Int -> msg
     , draggedWhilePressingOffset : { clientX : Float, clientY : Float, alt : Bool } -> msg
@@ -86,16 +86,18 @@ offsetLabel displayRootPitch pitch =
 想定）でも mousedown が先に発火し、「追加してから削除」→ドラッグ状態が残って直後のマウス移動で
 削除したノートが復活する、というバグになる。
 -}
-pressDecoder : Decode.Decoder { clientX : Float, clientY : Float, shift : Bool }
+pressDecoder : Decode.Decoder { clientX : Float, clientY : Float, shift : Bool, isTouch : Bool, timeStamp : Float }
 pressDecoder =
     Decode.field "button" Decode.int
         |> Decode.andThen
             (\button ->
                 if button == 0 then
-                    Decode.map3 (\cx cy sh -> { clientX = cx, clientY = cy, shift = sh })
+                    Decode.map5 (\cx cy sh touch ts -> { clientX = cx, clientY = cy, shift = sh, isTouch = touch, timeStamp = ts })
                         (Decode.field "clientX" Decode.float)
                         (Decode.field "clientY" Decode.float)
                         (Decode.field "shiftKey" Decode.bool)
+                        (Decode.field "pointerType" Decode.string |> Decode.map ((==) "touch"))
+                        (Decode.field "timeStamp" Decode.float)
 
                 else
                     Decode.fail "not left button"
