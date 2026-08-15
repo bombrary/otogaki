@@ -1397,10 +1397,10 @@ releasedDragNoteOrRubberBand model =
                         _ ->
                             let
                                 pLow =
-                                    PianoRoll.yToPitch y1
+                                    PianoRoll.yToPitch (isNarrowLayout model) y1
 
                                 pHigh =
-                                    PianoRoll.yToPitch y0
+                                    PianoRoll.yToPitch (isNarrowLayout model) y0
                             in
                             trackNotes model
                                 |> List.filter
@@ -2638,7 +2638,7 @@ updateCore msg model =
                         PianoRoll.pixelsToTicks model1.pianoRollZoom pos.offsetX
 
                     hitPitch =
-                        PianoRoll.yToPitch pos.offsetY
+                        PianoRoll.yToPitch (isNarrowLayout model1) pos.offsetY
 
                     hit =
                         trackNotes model1
@@ -4749,7 +4749,7 @@ dragMove pos d model =
         MoveNote ->
             let
                 dpitch =
-                    negate (Basics.round ((pos.clientY - d.startClientY) / toFloat PianoRoll.rowHeight))
+                    negate (Basics.round ((pos.clientY - d.startClientY) / toFloat (PianoRoll.rowHeight (isNarrowLayout model))))
 
                 project2 =
                     List.foldl
@@ -5108,6 +5108,7 @@ view model =
                     , chordSpans = chordSpans
                     , tool = model.tool
                     , cutGuideTicks = model.cutGuideTicks
+                    , isNarrow = isNarrowLayout model
                     }
 
                 toolToggle =

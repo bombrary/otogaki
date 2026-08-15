@@ -112,6 +112,7 @@ type alias ViewOpts =
     , chordSpans : List ChordSpan
     , tool : Tool
     , cutGuideTicks : Maybe Int
+    , isNarrow : Bool
     }
 
 
@@ -134,9 +135,15 @@ velocityLaneHeight =
     60
 
 
-rowHeight : Int
-rowHeight =
-    14
+{-| ノート1行の高さ(px)。狭画面（isNarrow）時はタップしやすさのため拡大する。
+-}
+rowHeight : Bool -> Int
+rowHeight isNarrow =
+    if isNarrow then
+        20
+
+    else
+        14
 
 
 {-| ズーム機構導入前のデフォルト値。`pianoRollZoom` の初期値に使う。
@@ -219,9 +226,9 @@ visibleTickRange pxPerSixteenth vp =
     }
 
 
-yToPitch : Float -> Int
-yToPitch y =
-    maxPitch - floor (y / toFloat rowHeight)
+yToPitch : Bool -> Float -> Int
+yToPitch isNarrow y =
+    maxPitch - floor (y / toFloat (rowHeight isNarrow))
 
 
 gridWidth : Int -> Int -> Int
@@ -229,9 +236,9 @@ gridWidth pxPerSixteenth totalBars =
     totalBars * barWidth pxPerSixteenth
 
 
-gridHeight : Int
-gridHeight =
-    (maxPitch - minPitch + 1) * rowHeight
+gridHeight : Bool -> Int
+gridHeight isNarrow =
+    (maxPitch - minPitch + 1) * rowHeight isNarrow
 
 
 view : Config msg -> ViewOpts -> Html msg
@@ -241,7 +248,7 @@ view config opts =
         , HA.style "margin-top" "1rem"
         , HA.style "border" ("1px solid " ++ Theme.outlineVariant)
         ]
-        [ keyColumn config (opts.waveform /= Nothing) (not (List.isEmpty opts.chordSpans)) True opts.highlightedPitch opts.scalePitchClasses
+        [ keyColumn config (opts.waveform /= Nothing) (not (List.isEmpty opts.chordSpans)) True opts.highlightedPitch opts.scalePitchClasses opts.isNarrow
         , Html.div
             [ HA.id pianoRollScrollId
             , HA.style "overflow-x" "auto"
@@ -329,7 +336,7 @@ chordTrackView config opts previewNotes chordLane =
                 , HA.style "border" ("1px solid " ++ Theme.outlineVariant)
                 , HA.style "display" "flex"
                 ]
-                [ keyColumn config False True False opts.highlightedPitch opts.scalePitchClasses
+                [ keyColumn config False True False opts.highlightedPitch opts.scalePitchClasses opts.isNarrow
                 , Html.div
                     [ HA.id pianoRollScrollId
                     , HA.style "overflow-x" "auto"
@@ -359,16 +366,16 @@ chordTrackNoteGrid : Config msg -> ViewOpts -> List Note -> Html msg
 chordTrackNoteGrid config opts previewNotesList =
     Svg.svg
         [ SA.width (String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars))
-        , SA.height (String.fromInt gridHeight)
-        , SA.viewBox ("0 0 " ++ String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars) ++ " " ++ String.fromInt gridHeight)
+        , SA.height (String.fromInt (gridHeight opts.isNarrow))
+        , SA.viewBox ("0 0 " ++ String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars) ++ " " ++ String.fromInt (gridHeight opts.isNarrow))
         , HA.style "display" "block"
         ]
-        (rowBackgrounds opts.pxPerSixteenth opts.totalBars
-            ++ List.concat (List.indexedMap (sectionTint opts.pxPerSixteenth) opts.sections)
-            ++ verticalLines opts.gridUnit opts.pxPerSixteenth opts.totalBars
-            ++ List.map (hoverableGhostNoteView config opts.pxPerSixteenth) previewNotesList
-            ++ loopLinesView opts.pxPerSixteenth gridHeight opts.loop
-            ++ [ playheadLine opts.pxPerSixteenth gridHeight opts.playheadTicks ]
+        (rowBackgrounds opts.isNarrow opts.pxPerSixteenth opts.totalBars
+            ++ List.concat (List.indexedMap (sectionTint opts.isNarrow opts.pxPerSixteenth) opts.sections)
+            ++ verticalLines opts.isNarrow opts.gridUnit opts.pxPerSixteenth opts.totalBars
+            ++ List.map (hoverableGhostNoteView config opts.isNarrow opts.pxPerSixteenth) previewNotesList
+            ++ loopLinesView opts.pxPerSixteenth (gridHeight opts.isNarrow) opts.loop
+            ++ [ playheadLine opts.pxPerSixteenth (gridHeight opts.isNarrow) opts.playheadTicks ]
         )
 
 
@@ -449,8 +456,8 @@ waveStrip peaks peakDt secsPerTick offsetMs totalBars pxPerSixteenth =
         )
 
 
-keyColumn : Config msg -> Bool -> Bool -> Bool -> Set Int -> Set Int -> Html msg
-keyColumn config hasWave hasChords hasVelocityLane highlightedPitch scalePitchClasses =
+keyColumn : Config msg -> Bool -> Bool -> Bool -> Set Int -> Set Int -> Bool -> Html msg
+keyColumn config hasWave hasChords hasVelocityLane highlightedPitch scalePitchClasses isNarrow =
     let
         spacerHeight =
             rulerHeight
@@ -474,7 +481,7 @@ keyColumn config hasWave hasChords hasVelocityLane highlightedPitch scalePitchCl
         ((Html.div [ HA.style "height" (String.fromInt spacerHeight ++ "px"), HA.style "box-sizing" "border-box", HA.style "border-bottom" ("1px solid " ++ Theme.outlineVariant) ] []
             :: (List.range minPitch maxPitch
                     |> List.reverse
-                    |> List.map (keyRow config highlightedPitch scalePitchClasses)
+                    |> List.map (keyRow config highlightedPitch scalePitchClasses isNarrow)
                )
          )
             ++ (if hasVelocityLane then
@@ -496,8 +503,8 @@ keyColumn config hasWave hasChords hasVelocityLane highlightedPitch scalePitchCl
         )
 
 
-keyRow : Config msg -> Set Int -> Set Int -> Int -> Html msg
-keyRow config highlightedPitch scalePitchClasses pitch =
+keyRow : Config msg -> Set Int -> Set Int -> Bool -> Int -> Html msg
+keyRow config highlightedPitch scalePitchClasses isNarrow pitch =
     let
         isBlack =
             List.member (modBy 12 pitch) [ 1, 3, 6, 8, 10 ]
@@ -516,7 +523,7 @@ keyRow config highlightedPitch scalePitchClasses pitch =
                 ""
     in
     Html.div
-        [ HA.style "height" (String.fromInt rowHeight ++ "px")
+        [ HA.style "height" (String.fromInt (rowHeight isNarrow) ++ "px")
         , HA.style "box-sizing" "border-box"
         , HA.style "position" "relative"
         , HA.style "background"
@@ -541,7 +548,7 @@ keyRow config highlightedPitch scalePitchClasses pitch =
             )
         , HA.style "border-bottom" ("1px solid " ++ Theme.outlineVariant)
         , HA.style "font-size" "9px"
-        , HA.style "line-height" (String.fromInt (rowHeight - 1) ++ "px")
+        , HA.style "line-height" (String.fromInt (rowHeight isNarrow - 1) ++ "px")
         , HA.style "text-align" "right"
         , HA.style "padding-right" "3px"
         , HA.style "cursor" "pointer"
@@ -777,8 +784,8 @@ gridView : Config msg -> ViewOpts -> Html msg
 gridView config opts =
     Svg.svg
         ([ SA.width (String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars))
-         , SA.height (String.fromInt gridHeight)
-         , SA.viewBox ("0 0 " ++ String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars) ++ " " ++ String.fromInt gridHeight)
+         , SA.height (String.fromInt (gridHeight opts.isNarrow))
+         , SA.viewBox ("0 0 " ++ String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars) ++ " " ++ String.fromInt (gridHeight opts.isNarrow))
          , HA.style "display" "block"
          , HA.style "cursor"
             (if opts.tool == CutTool then
@@ -799,15 +806,15 @@ gridView config opts =
                     []
                )
         )
-        (rowBackgrounds opts.pxPerSixteenth opts.totalBars
-            ++ List.concat (List.indexedMap (sectionTint opts.pxPerSixteenth) opts.sections)
-            ++ verticalLines opts.gridUnit opts.pxPerSixteenth opts.totalBars
-            ++ List.concat (List.indexedMap (\idx notes -> List.map (ghostNoteView opts.pxPerSixteenth idx) notes) opts.ghostNoteGroups)
-            ++ List.concatMap (noteView config opts.pxPerSixteenth opts.selectedIds opts.tool) opts.notes
+        (rowBackgrounds opts.isNarrow opts.pxPerSixteenth opts.totalBars
+            ++ List.concat (List.indexedMap (sectionTint opts.isNarrow opts.pxPerSixteenth) opts.sections)
+            ++ verticalLines opts.isNarrow opts.gridUnit opts.pxPerSixteenth opts.totalBars
+            ++ List.concat (List.indexedMap (\idx notes -> List.map (ghostNoteView opts.isNarrow opts.pxPerSixteenth idx) notes) opts.ghostNoteGroups)
+            ++ List.concatMap (noteView opts.isNarrow config opts.pxPerSixteenth opts.selectedIds opts.tool) opts.notes
             ++ rubberBandView opts.rubberBand
-            ++ loopLinesView opts.pxPerSixteenth gridHeight opts.loop
-            ++ cutGuideView opts.cutGuideTicks gridHeight opts.pxPerSixteenth
-            ++ [ playheadLine opts.pxPerSixteenth gridHeight opts.playheadTicks ]
+            ++ loopLinesView opts.pxPerSixteenth (gridHeight opts.isNarrow) opts.loop
+            ++ cutGuideView opts.cutGuideTicks (gridHeight opts.isNarrow) opts.pxPerSixteenth
+            ++ [ playheadLine opts.pxPerSixteenth (gridHeight opts.isNarrow) opts.playheadTicks ]
         )
 
 
@@ -1048,9 +1055,9 @@ sectionTintWithHeight height pxPerSixteenth idx span =
     ]
 
 
-sectionTint : Int -> Int -> SectionSpan -> List (Svg.Svg msg)
-sectionTint pxPerSixteenth idx span =
-    sectionTintWithHeight gridHeight pxPerSixteenth idx span
+sectionTint : Bool -> Int -> Int -> SectionSpan -> List (Svg.Svg msg)
+sectionTint isNarrow pxPerSixteenth idx span =
+    sectionTintWithHeight (gridHeight isNarrow) pxPerSixteenth idx span
 
 
 {-| pointerdown 用デコーダ。button フィルタを必ず入れる: これがないと空セルの右クリック（コンテキストメニューを
@@ -1139,14 +1146,14 @@ noteHoverDecoder =
         (Decode.field "clientY" Decode.float)
 
 
-rowBackgrounds : Int -> Int -> List (Svg.Svg msg)
-rowBackgrounds pxPerSixteenth totalBars =
+rowBackgrounds : Bool -> Int -> Int -> List (Svg.Svg msg)
+rowBackgrounds isNarrow pxPerSixteenth totalBars =
     List.range minPitch maxPitch
         |> List.map
             (\pitch ->
                 let
                     y =
-                        (maxPitch - pitch) * rowHeight
+                        (maxPitch - pitch) * rowHeight isNarrow
 
                     isBlack =
                         List.member (modBy 12 pitch) [ 1, 3, 6, 8, 10 ]
@@ -1155,7 +1162,7 @@ rowBackgrounds pxPerSixteenth totalBars =
                     [ SA.x "0"
                     , SA.y (String.fromInt y)
                     , SA.width (String.fromInt (gridWidth pxPerSixteenth totalBars))
-                    , SA.height (String.fromInt rowHeight)
+                    , SA.height (String.fromInt (rowHeight isNarrow))
                     , SA.fill
                         (if isBlack then
                             Theme.surfaceContainerHigh
@@ -1170,8 +1177,8 @@ rowBackgrounds pxPerSixteenth totalBars =
             )
 
 
-verticalLines : Data.Time.GridUnit -> Int -> Int -> List (Svg.Svg msg)
-verticalLines gridUnit pxPerSixteenth totalBars =
+verticalLines : Bool -> Data.Time.GridUnit -> Int -> Int -> List (Svg.Svg msg)
+verticalLines isNarrow gridUnit pxPerSixteenth totalBars =
     let
         grid =
             Data.Time.gridTicks gridUnit
@@ -1199,7 +1206,7 @@ verticalLines gridUnit pxPerSixteenth totalBars =
                     [ SA.x1 (String.fromFloat x)
                     , SA.y1 "0"
                     , SA.x2 (String.fromFloat x)
-                    , SA.y2 (String.fromInt gridHeight)
+                    , SA.y2 (String.fromInt (gridHeight isNarrow))
                     , SA.stroke
                         (if isBar then
                             Theme.outline
@@ -1225,14 +1232,14 @@ verticalLines gridUnit pxPerSixteenth totalBars =
 {-| 他トラック・コードトラックを透けて重ね表示する用のノート。クリック・ドラッグ不可で、
 自分のノート（`noteView`）より下のレイヤーに描画される。idx はグループ（トラック）ごとの色分けに使う。
 -}
-ghostNoteView : Int -> Int -> Note -> Svg.Svg msg
-ghostNoteView pxPerSixteenth idx note =
+ghostNoteView : Bool -> Int -> Int -> Note -> Svg.Svg msg
+ghostNoteView isNarrow pxPerSixteenth idx note =
     let
         x =
             ticksToPixels pxPerSixteenth note.start
 
         y =
-            (maxPitch - note.pitch) * rowHeight
+            (maxPitch - note.pitch) * rowHeight isNarrow
 
         w =
             ticksToPixels pxPerSixteenth note.duration
@@ -1241,7 +1248,7 @@ ghostNoteView pxPerSixteenth idx note =
         [ SA.x (String.fromFloat x)
         , SA.y (String.fromInt (y + 1))
         , SA.width (String.fromFloat (Basics.max 2 (w - 1)))
-        , SA.height (String.fromInt (rowHeight - 2))
+        , SA.height (String.fromInt (rowHeight isNarrow - 2))
         , SA.rx "2"
         , SA.fill (Palette.sectionColor idx)
         , SA.fillOpacity "0.35"
@@ -1253,14 +1260,14 @@ ghostNoteView pxPerSixteenth idx note =
 {-| ghostNoteView にホバーのみを追加した読み取り専用版。コード進行トラックのMIDIプレビュー（chordTrackNoteGrid）で使う。
 ghostNoteView と違い pointerEvents を有効にしてmouseover/mouseoutだけを受け取るが、mousedown等の編集系ハンドラーは一切付けない（編集不可）。
 -}
-hoverableGhostNoteView : Config msg -> Int -> Note -> Svg.Svg msg
-hoverableGhostNoteView config pxPerSixteenth note =
+hoverableGhostNoteView : Config msg -> Bool -> Int -> Note -> Svg.Svg msg
+hoverableGhostNoteView config isNarrow pxPerSixteenth note =
     let
         x =
             ticksToPixels pxPerSixteenth note.start
 
         y =
-            (maxPitch - note.pitch) * rowHeight
+            (maxPitch - note.pitch) * rowHeight isNarrow
 
         w =
             ticksToPixels pxPerSixteenth note.duration
@@ -1269,7 +1276,7 @@ hoverableGhostNoteView config pxPerSixteenth note =
         [ SA.x (String.fromFloat x)
         , SA.y (String.fromInt (y + 1))
         , SA.width (String.fromFloat (Basics.max 2 (w - 1)))
-        , SA.height (String.fromInt (rowHeight - 2))
+        , SA.height (String.fromInt (rowHeight isNarrow - 2))
         , SA.rx "2"
         , SA.fill Theme.primary
         , SA.fillOpacity "0.55"
@@ -1302,14 +1309,14 @@ notePointerListeners config =
     ]
 
 
-noteView : Config msg -> Int -> Set Int -> Tool -> Note -> List (Svg.Svg msg)
-noteView config pxPerSixteenth selectedIds tool note =
+noteView : Bool -> Config msg -> Int -> Set Int -> Tool -> Note -> List (Svg.Svg msg)
+noteView isNarrow config pxPerSixteenth selectedIds tool note =
     let
         x =
             ticksToPixels pxPerSixteenth note.start
 
         y =
-            (maxPitch - note.pitch) * rowHeight
+            (maxPitch - note.pitch) * rowHeight isNarrow
 
         w =
             ticksToPixels pxPerSixteenth note.duration
@@ -1334,7 +1341,7 @@ noteView config pxPerSixteenth selectedIds tool note =
         ([ SA.x (String.fromFloat x)
          , SA.y (String.fromInt (y + 1))
          , SA.width (String.fromFloat (Basics.max 2 (w - 1)))
-         , SA.height (String.fromInt (rowHeight - 2))
+         , SA.height (String.fromInt (rowHeight isNarrow - 2))
          , SA.rx "2"
          , SA.fill
             (if selected then
@@ -1410,10 +1417,10 @@ noteView config pxPerSixteenth selectedIds tool note =
          , SA.height
             (String.fromFloat
                 (if w >= 3 * handleWidth then
-                    toFloat rowHeight - 5
+                    toFloat (rowHeight isNarrow) - 5
 
                  else
-                    toFloat rowHeight - 2
+                    toFloat (rowHeight isNarrow) - 2
                 )
             )
          , SA.rx "1"
@@ -1464,7 +1471,7 @@ noteView config pxPerSixteenth selectedIds tool note =
                     ([ SA.x (String.fromFloat x)
                      , SA.y (String.fromInt (y + 1))
                      , SA.width (String.fromFloat handleWidth)
-                     , SA.height (String.fromInt (rowHeight - 2))
+                     , SA.height (String.fromInt (rowHeight isNarrow - 2))
                      , SA.fill "transparent"
                      , HA.style "cursor"
                         (if interactive then
