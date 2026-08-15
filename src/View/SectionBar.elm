@@ -570,7 +570,10 @@ blockView config pxPerBar selectedId resizePreview extras idx section =
         , HA.style "font-size" "0.85rem"
         , HA.style "overflow" "hidden"
         , HA.style "white-space" "nowrap"
-        , HA.style "touch-action" "none"
+        , {- pan-xにすることで、タッチの横スワイプだけはブラウザにスクロールとして任せる。touch-actionはマウスのPointer Eventsには
+           影響しないのでPCのドラッグ並べ替えは無影響。タッチでの並べ替えはできなくなるが、pointercancelが
+           viewDragOverlay経由でReleasedDragに接続済みなので状態は固着しない。 -}
+          HA.style "touch-action" "pan-x"
         , HE.on "pointerdown" (Decode.map (config.pressedBlock section.id) (Decode.field "clientX" Decode.float))
         , HA.title baseTitle
         ]
