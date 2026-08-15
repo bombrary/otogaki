@@ -3,6 +3,7 @@ module View.Keyboard exposing (Config, view)
 import Html exposing (Html, button, div, span, text)
 import Html.Attributes as HA
 import Html.Events as HE
+import Json.Decode as Decode
 import Set exposing (Set)
 import View.Style as Style
 import View.Theme as Theme
@@ -97,7 +98,8 @@ pianoView config highlighted =
                 , HA.style "justify-content" "center"
                 , HA.style "font-size" "9px"
                 , HA.style "color" Theme.outline
-                , HE.onMouseDown (config.pressedKey pitch)
+                , HA.style "touch-action" "none"
+                , HE.on "pointerdown" (Decode.succeed (config.pressedKey pitch))
                 ]
                 [ text
                     (if modBy 12 pitch == 0 then
@@ -127,7 +129,8 @@ pianoView config highlighted =
                 , HA.style "box-sizing" "border-box"
                 , HA.style "cursor" "pointer"
                 , HA.style "z-index" "2"
-                , HE.onMouseDown (config.pressedKey pitch)
+                , HA.style "touch-action" "none"
+                , HE.on "pointerdown" (Decode.succeed (config.pressedKey pitch))
                 ]
                 []
     in

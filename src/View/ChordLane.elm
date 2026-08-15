@@ -44,7 +44,8 @@ view config opts spans =
         , HA.style "background" Theme.surfaceContainerLow
         , HA.style "border-bottom" ("1px solid " ++ Theme.outlineVariant)
         , HA.style "cursor" "crosshair"
-        , Html.Events.on "mousedown" (Decode.map config.pressedLane laneEmptyPressDecoder)
+        , HA.style "touch-action" "none"
+        , Html.Events.on "pointerdown" (Decode.map config.pressedLane laneEmptyPressDecoder)
         ]
         (List.concatMap (tokenView config opts) spans
             ++ rubberBandView opts.height opts.rubberBand
@@ -124,8 +125,9 @@ tokenView config opts span =
         , SA.stroke borderColor
         , SA.strokeWidth "1"
         , HA.style "cursor" "move"
+        , HA.style "touch-action" "none"
         , HA.title span.token
-        , Html.Events.stopPropagationOn "mousedown"
+        , Html.Events.stopPropagationOn "pointerdown"
             (Decode.map (\pos -> ( config.pressedToken span.key pos, True )) tokenPressDecoder)
         , Html.Events.onDoubleClick (config.doubleClickedToken span.key)
         ]

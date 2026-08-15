@@ -56,3 +56,13 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
   }
 });
+
+// マウスには Pointer Events の暗黙キャプチャがないため、明示キャプチャで
+// ノート要素外に出てもpointermove/pointerupが届くようにする。
+// data-pointer-capture を持つ要素に限定（オーバーレイ方式の他ドラッグと干渉させない）。
+document.addEventListener("pointerdown", (e) => {
+  const el = e.target.closest?.("[data-pointer-capture]");
+  if (el && e.button === 0) {
+    try { el.setPointerCapture(e.pointerId); } catch (_) {}
+  }
+}, { capture: true });

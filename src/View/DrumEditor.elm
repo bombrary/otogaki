@@ -117,26 +117,37 @@ cellAt gridUnit pxPerSixteenth ox oy =
     { pitch = pitch, tick = tick }
 
 
-{-| mousedown用。pitch/tickに加えてshift判定とドラッグ開始点（rubber band用）を持つ。
+{-| pointerdown用。pitch/tickに加えてshift判定とドラッグ開始点（rubber band用）を持つ。
+buttonフィルタを必ず入れる: これがないと右クリック（contextmenuで削除する想定）でもpointerdownが先に
+発火し、rubberBandがJustになってviewDragOverlayが画面を覆うため、後続のcontextmenuイベントが
+セル要素まで届かず右クリック削除が動かなくなる。
 -}
 cellPressDecoder :
     Data.Time.GridUnit
     -> Int
     -> Decode.Decoder { pitch : Int, tick : Int, offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool }
 cellPressDecoder gridUnit pxPerSixteenth =
-    Decode.map5
-        (\ox oy cx cy sh ->
-            let
-                cell =
-                    cellAt gridUnit pxPerSixteenth ox oy
-            in
-            { pitch = cell.pitch, tick = cell.tick, offsetX = ox, offsetY = oy, clientX = cx, clientY = cy, shift = sh }
-        )
-        (Decode.field "offsetX" Decode.float)
-        (Decode.field "offsetY" Decode.float)
-        (Decode.field "clientX" Decode.float)
-        (Decode.field "clientY" Decode.float)
-        (Decode.field "shiftKey" Decode.bool)
+    Decode.field "button" Decode.int
+        |> Decode.andThen
+            (\button ->
+                if button == 0 then
+                    Decode.map5
+                        (\ox oy cx cy sh ->
+                            let
+                                cell =
+                                    cellAt gridUnit pxPerSixteenth ox oy
+                            in
+                            { pitch = cell.pitch, tick = cell.tick, offsetX = ox, offsetY = oy, clientX = cx, clientY = cy, shift = sh }
+                        )
+                        (Decode.field "offsetX" Decode.float)
+                        (Decode.field "offsetY" Decode.float)
+                        (Decode.field "clientX" Decode.float)
+                        (Decode.field "clientY" Decode.float)
+                        (Decode.field "shiftKey" Decode.bool)
+
+                else
+                    Decode.fail "not left button"
+            )
 
 
 {-| dblclick / contextmenu 用。pitch/tickだけあればよい。
@@ -255,7 +266,8 @@ gridView config opts =
         , SA.viewBox ("0 0 " ++ String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars) ++ " " ++ String.fromInt gridHeight)
         , HA.style "display" "block"
         , HA.style "cursor" "pointer"
-        , Html.Events.on "mousedown"
+        , HA.style "touch-action" "none"
+        , Html.Events.on "pointerdown"
             (Decode.map config.pressedCell (cellPressDecoder opts.gridUnit opts.pxPerSixteenth))
         , Html.Events.on "dblclick"
             (Decode.map config.doubleClickedCell (cellClickDecoder opts.gridUnit opts.pxPerSixteenth))

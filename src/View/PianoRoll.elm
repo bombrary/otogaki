@@ -52,6 +52,8 @@ import View.Theme as Theme
 type alias Config msg =
     { pressedEmpty : { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, seekMod : Bool } -> msg
     , pressedNote : Int -> ResizeHandle -> { clientX : Float, clientY : Float, shift : Bool } -> msg
+    , draggedWhilePressingNote : { clientX : Float, clientY : Float, alt : Bool } -> msg
+    , releasedNotePress : msg
     , doubleClickedNote : Int -> msg
     , rightClickedNote : Int -> msg
     , pressedRuler : { offsetX : Float, clientX : Float, shift : Bool } -> msg
@@ -544,7 +546,8 @@ keyRow config highlightedPitch scalePitchClasses pitch =
         , HA.style "padding-right" "3px"
         , HA.style "cursor" "pointer"
         , HA.style "user-select" "none"
-        , Html.Events.onMouseDown (config.pressedKey pitch)
+        , HA.style "touch-action" "none"
+        , Html.Events.on "pointerdown" (Decode.succeed (config.pressedKey pitch))
         ]
         (Html.text label
             :: (if inScale then
@@ -596,8 +599,9 @@ rulerViewWith handlers opts =
         , SA.viewBox ("0 0 " ++ String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars) ++ " " ++ String.fromInt rulerHeight)
         , HA.style "display" "block"
         , HA.style "cursor" "pointer"
+        , HA.style "touch-action" "none"
         , HA.title "クリックで再生位置を移動。shift + ドラッグでループ区間を作成。マウスホイールでズーム"
-        , Html.Events.on "mousedown" (Decode.map handlers.pressedRuler rulerPressDecoder)
+        , Html.Events.on "pointerdown" (Decode.map handlers.pressedRuler rulerPressDecoder)
         , Html.Events.preventDefaultOn "wheel" (Decode.map (\w -> ( handlers.wheelZoomedRuler w, True )) wheelDecoder)
         ]
         (Svg.rect
@@ -631,12 +635,23 @@ rulerView config opts =
         }
 
 
+{-| button フィルタを入れ、右クリックでは発火させない。入れないと右クリックでも pressedRuler が呼ばれ seek/loop ドラッグが始まり、
+contextmenu 発火後にボタンを離しても状態がホールドされる。
+-}
 rulerPressDecoder : Decode.Decoder { offsetX : Float, clientX : Float, shift : Bool }
 rulerPressDecoder =
-    Decode.map3 (\ox cx sh -> { offsetX = ox, clientX = cx, shift = sh })
-        (Decode.field "offsetX" Decode.float)
-        (Decode.field "clientX" Decode.float)
-        (Decode.field "shiftKey" Decode.bool)
+    Decode.field "button" Decode.int
+        |> Decode.andThen
+            (\button ->
+                if button == 0 then
+                    Decode.map3 (\ox cx sh -> { offsetX = ox, clientX = cx, shift = sh })
+                        (Decode.field "offsetX" Decode.float)
+                        (Decode.field "clientX" Decode.float)
+                        (Decode.field "shiftKey" Decode.bool)
+
+                else
+                    Decode.fail "not left button"
+            )
 
 
 wheelDecoder : Decode.Decoder { deltaY : Float, offsetX : Float }
@@ -695,8 +710,18 @@ loopHandle pressedLoopHandle isEnd x =
         , SA.height "18"
         , SA.fill Style.colorLoopHandle
         , SA.cursor "ew-resize"
-        , Html.Events.stopPropagationOn "mousedown"
-            (Decode.map (\cx -> ( pressedLoopHandle isEnd cx, True )) (Decode.field "clientX" Decode.float))
+        , HA.style "touch-action" "none"
+        , Html.Events.stopPropagationOn "pointerdown"
+            (Decode.field "button" Decode.int
+                |> Decode.andThen
+                    (\button ->
+                        if button == 0 then
+                            Decode.map (\cx -> ( pressedLoopHandle isEnd cx, True )) (Decode.field "clientX" Decode.float)
+
+                        else
+                            Decode.fail "not left button"
+                    )
+            )
         ]
         []
 
@@ -762,7 +787,8 @@ gridView config opts =
              else
                 "crosshair"
             )
-         , Html.Events.on "mousedown" (Decode.map config.pressedEmpty emptyPressDecoder)
+         , HA.style "touch-action" "none"
+         , Html.Events.on "pointerdown" (Decode.map config.pressedEmpty emptyPressDecoder)
          ]
             ++ (if opts.tool == CutTool then
                     [ Html.Events.on "mousemove" (Decode.map config.movedCutGuide cutGuideMoveDecoder)
@@ -897,7 +923,8 @@ velocityBarView handlers pxPerSixteenth selectedIds note =
                 "none"
             )
         , HA.style "cursor" "ns-resize"
-        , Html.Events.stopPropagationOn "mousedown"
+        , HA.style "touch-action" "none"
+        , Html.Events.stopPropagationOn "pointerdown"
             (Decode.map (\pos -> ( handlers.pressedVelocityBar note.id pos, True )) velocityPressDecoder)
         ]
         []
@@ -957,11 +984,22 @@ velocityLaneViewReadOnly opts =
         )
 
 
+{-| button フィルタを入れ、右クリックでは発火させない。入れないと右クリックでも pressedVelocityBar が呼ばれ velocity ドラッグが始まり、
+contextmenu 発火後にボタンを離しても状態がホールドされる。
+-}
 velocityPressDecoder : Decode.Decoder { clientX : Float, clientY : Float }
 velocityPressDecoder =
-    Decode.map2 (\cx cy -> { clientX = cx, clientY = cy })
-        (Decode.field "clientX" Decode.float)
-        (Decode.field "clientY" Decode.float)
+    Decode.field "button" Decode.int
+        |> Decode.andThen
+            (\button ->
+                if button == 0 then
+                    Decode.map2 (\cx cy -> { clientX = cx, clientY = cy })
+                        (Decode.field "clientX" Decode.float)
+                        (Decode.field "clientY" Decode.float)
+
+                else
+                    Decode.fail "not left button"
+            )
 
 
 {-| グリッド上にループ区間の開始・終了を縦の破線で示す。面を塗るとスケールガイドや sectionTint と層が重なって見づらくなるので線のみにする。
@@ -1015,34 +1053,79 @@ sectionTint pxPerSixteenth idx span =
     sectionTintWithHeight gridHeight pxPerSixteenth idx span
 
 
+{-| pointerdown 用デコーダ。button フィルタを必ず入れる: これがないと空セルの右クリック（コンテキストメニューを
+出す想定）でも PressedEmptyCell が発火し、「押したまま伸ばして配置する」ためのリサイズ状態が始まってしまう。
+右ボタンを離しても contextmenu 発火後はイベント配送が止まるため状態がホールドされ続ける。
+-}
 emptyPressDecoder : Decode.Decoder { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, seekMod : Bool }
 emptyPressDecoder =
-    Decode.map8
-        (\ox oy cx cy sh ctrl meta alt ->
-            { offsetX = ox
-            , offsetY = oy
-            , clientX = cx
-            , clientY = cy
-            , shift = sh
-            , seekMod = ctrl || meta || alt
-            }
-        )
-        (Decode.field "offsetX" Decode.float)
-        (Decode.field "offsetY" Decode.float)
-        (Decode.field "clientX" Decode.float)
-        (Decode.field "clientY" Decode.float)
-        (Decode.field "shiftKey" Decode.bool)
-        (Decode.field "ctrlKey" Decode.bool)
-        (Decode.field "metaKey" Decode.bool)
-        (Decode.field "altKey" Decode.bool)
+    Decode.field "button" Decode.int
+        |> Decode.andThen
+            (\button ->
+                if button == 0 then
+                    Decode.map8
+                        (\ox oy cx cy sh ctrl meta alt ->
+                            { offsetX = ox
+                            , offsetY = oy
+                            , clientX = cx
+                            , clientY = cy
+                            , shift = sh
+                            , seekMod = ctrl || meta || alt
+                            }
+                        )
+                        (Decode.field "offsetX" Decode.float)
+                        (Decode.field "offsetY" Decode.float)
+                        (Decode.field "clientX" Decode.float)
+                        (Decode.field "clientY" Decode.float)
+                        (Decode.field "shiftKey" Decode.bool)
+                        (Decode.field "ctrlKey" Decode.bool)
+                        (Decode.field "metaKey" Decode.bool)
+                        (Decode.field "altKey" Decode.bool)
+
+                else
+                    Decode.fail "not left button"
+            )
 
 
+{-| ノートを押している間のpointermove用。buttons ガードを入れ、ボタンを押していない（ホバーだけの）
+pointermoveでは発火しないようにする。これにより、残留したpendingNoteDragが別ノート上のホバーで誤って
+Draggingに昇格することが構造的に不可能になる。altKey も同時に読み、Alt押しながらドラッグしてスナップを
+無効化する機能に渡す。
+-}
+noteMoveDecoder : Decode.Decoder { clientX : Float, clientY : Float, alt : Bool }
+noteMoveDecoder =
+    Decode.field "buttons" Decode.int
+        |> Decode.andThen
+            (\buttons ->
+                if buttons > 0 then
+                    Decode.map3 (\cx cy alt -> { clientX = cx, clientY = cy, alt = alt })
+                        (Decode.field "clientX" Decode.float)
+                        (Decode.field "clientY" Decode.float)
+                        (Decode.field "altKey" Decode.bool)
+
+                else
+                    Decode.fail "no button pressed"
+            )
+
+
+{-| pointerdown 用デコーダ。button フィルタを必ず入れる: これがないと右クリック（contextmenu で削除する
+想定）でも pointerdown が先に発火し、dragState がJustになってviewDragOverlayが画面を覆うため、
+後続のcontextmenuイベントがノート要素まで届かず右クリック削除が動かなくなる。
+-}
 notePressDecoder : Decode.Decoder { clientX : Float, clientY : Float, shift : Bool }
 notePressDecoder =
-    Decode.map3 (\cx cy sh -> { clientX = cx, clientY = cy, shift = sh })
-        (Decode.field "clientX" Decode.float)
-        (Decode.field "clientY" Decode.float)
-        (Decode.field "shiftKey" Decode.bool)
+    Decode.field "button" Decode.int
+        |> Decode.andThen
+            (\button ->
+                if button == 0 then
+                    Decode.map3 (\cx cy sh -> { clientX = cx, clientY = cy, shift = sh })
+                        (Decode.field "clientX" Decode.float)
+                        (Decode.field "clientY" Decode.float)
+                        (Decode.field "shiftKey" Decode.bool)
+
+                else
+                    Decode.fail "not left button"
+            )
 
 
 {-| ノートホバー時のマウス座標取得用デコーダ。ツールチップの位置決めに使う。
@@ -1197,6 +1280,26 @@ hoverableGhostNoteView config pxPerSixteenth note =
         []
 
 
+{-| ノート本体・左右リサイズハンドルの3要素に共通で付与するpointer系リスナーと属性。
+
+pointerdown後の強制ポインターキャプチャ（js/main.js の data-pointer-capture リスナー）と対になっている:
+マウスには Pointer Events の暗黙キャプチャがないため、setPointerCapture を明示呼びしない限り、
+ポインターが要素外に出た瞬間 pointermove/pointerup が届かなくなる。data-pointer-capture 属性で
+限定することで、他のオーバーレイ方式のドラッグと干渉せずに共存できる。
+pointercancelも pointerup と同じ扱いにする（ドラッグ中のスクロールジェスチャ等で中断された場合に状態を残さないため）。
+-}
+notePointerListeners : Config msg -> List (Html.Attribute msg)
+notePointerListeners config =
+    [ HA.attribute "data-pointer-capture" ""
+    , Html.Events.stopPropagationOn "pointermove"
+        (Decode.map (\pos -> ( config.draggedWhilePressingNote pos, True )) noteMoveDecoder)
+    , Html.Events.stopPropagationOn "pointerup"
+        (Decode.succeed ( config.releasedNotePress, True ))
+    , Html.Events.stopPropagationOn "pointercancel"
+        (Decode.succeed ( config.releasedNotePress, True ))
+    ]
+
+
 noteView : Config msg -> Int -> Set Int -> Tool -> Note -> List (Svg.Svg msg)
 noteView config pxPerSixteenth selectedIds tool note =
     let
@@ -1266,14 +1369,16 @@ noteView config pxPerSixteenth selectedIds tool note =
             ++ (if interactive then
                     [ Html.Events.stopPropagationOn "pointerdown"
                         (Decode.map (\pos -> ( config.pressedNote note.id NoResize pos, True )) notePressDecoder)
-                    , Html.Events.stopPropagationOn "dblclick"
-                        (Decode.succeed ( config.doubleClickedNote note.id, True ))
-                    , Html.Events.preventDefaultOn "contextmenu"
-                        (Decode.succeed ( config.rightClickedNote note.id, True ))
-                    , Html.Events.on "mouseover"
-                        (Decode.map (\pos -> config.hoveredNote note pos.clientX pos.clientY) noteHoverDecoder)
-                    , Html.Events.on "mouseout" (Decode.succeed config.unhoveredNote)
                     ]
+                        ++ notePointerListeners config
+                        ++ [ Html.Events.stopPropagationOn "dblclick"
+                                (Decode.succeed ( config.doubleClickedNote note.id, True ))
+                           , Html.Events.preventDefaultOn "contextmenu"
+                                (Decode.succeed ( config.rightClickedNote note.id, True ))
+                           , Html.Events.on "mouseover"
+                                (Decode.map (\pos -> config.hoveredNote note pos.clientX pos.clientY) noteHoverDecoder)
+                           , Html.Events.on "mouseout" (Decode.succeed config.unhoveredNote)
+                           ]
 
                 else
                     []
@@ -1340,9 +1445,11 @@ noteView config pxPerSixteenth selectedIds tool note =
             ++ (if interactive then
                     [ Html.Events.stopPropagationOn "pointerdown"
                         (Decode.map (\pos -> ( config.pressedNote note.id ResizeRight pos, True )) notePressDecoder)
-                    , Html.Events.preventDefaultOn "contextmenu"
-                        (Decode.succeed ( config.rightClickedNote note.id, True ))
                     ]
+                        ++ notePointerListeners config
+                        ++ [ Html.Events.preventDefaultOn "contextmenu"
+                                (Decode.succeed ( config.rightClickedNote note.id, True ))
+                           ]
 
                 else
                     []
@@ -1376,9 +1483,11 @@ noteView config pxPerSixteenth selectedIds tool note =
                         ++ (if interactive then
                                 [ Html.Events.stopPropagationOn "pointerdown"
                                     (Decode.map (\pos -> ( config.pressedNote note.id ResizeLeft pos, True )) notePressDecoder)
-                                , Html.Events.preventDefaultOn "contextmenu"
-                                    (Decode.succeed ( config.rightClickedNote note.id, True ))
                                 ]
+                                    ++ notePointerListeners config
+                                    ++ [ Html.Events.preventDefaultOn "contextmenu"
+                                            (Decode.succeed ( config.rightClickedNote note.id, True ))
+                                       ]
 
                             else
                                 []

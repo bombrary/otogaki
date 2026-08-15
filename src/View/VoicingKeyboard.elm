@@ -189,7 +189,8 @@ keyRow config displayRootPitch rootPitch pitch =
         , HA.style "padding-right" "3px"
         , HA.style "user-select" "none"
         , HA.style "cursor" "pointer"
-        , HE.onMouseDown (config.pressedKey pitch)
+        , HA.style "touch-action" "none"
+        , HE.on "pointerdown" (Decode.succeed (config.pressedKey pitch))
         ]
         [ text label ]
 
@@ -237,7 +238,8 @@ laneRow config hover displayRootPitch rootPitch placed selectedPitches pitch =
         , HA.style "cursor" "pointer"
         , HA.style "user-select" "none"
         , HA.style "position" "relative"
-        , HE.stopPropagationOn "mousedown"
+        , HA.style "touch-action" "none"
+        , HE.stopPropagationOn "pointerdown"
             (Decode.map (\pos -> ( config.pressedOffset pitch pos, True )) pressDecoder)
         , HE.stopPropagationOn "dblclick"
             (Decode.succeed ( config.doubleClickedOffset pitch, True ))

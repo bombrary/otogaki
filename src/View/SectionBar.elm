@@ -466,8 +466,9 @@ regionRulerView config pxPerBar loopEditable loop ticksToPx playheadTicks viewRa
         , SA.height (String.fromInt regionRulerHeight)
         , HA.style "display" "block"
         , HA.style "cursor" "pointer"
+        , HA.style "touch-action" "none"
         , HA.title "クリックで再生位置を移動。shift + ドラッグでループ区間を作成。マウスホイールでズーム"
-        , HE.on "mousedown" (Decode.map config.pressedRuler rulerPressDecoder)
+        , HE.on "pointerdown" (Decode.map config.pressedRuler rulerPressDecoder)
         , HE.preventDefaultOn "wheel" (Decode.map (\w -> ( config.wheelZoomed w, True )) wheelDecoder)
         ]
         (List.map tick (List.range 0 totalBars)
@@ -505,7 +506,8 @@ regionLoopHandle config isEnd x =
         , SA.height "12"
         , SA.fill Style.colorLoopHandle
         , SA.cursor "ew-resize"
-        , HE.stopPropagationOn "mousedown"
+        , HA.style "touch-action" "none"
+        , HE.stopPropagationOn "pointerdown"
             (Decode.map (\cx -> ( config.pressedLoopHandle isEnd cx, True )) (Decode.field "clientX" Decode.float))
         ]
         []
@@ -568,7 +570,8 @@ blockView config pxPerBar selectedId resizePreview extras idx section =
         , HA.style "font-size" "0.85rem"
         , HA.style "overflow" "hidden"
         , HA.style "white-space" "nowrap"
-        , HE.on "mousedown" (Decode.map (config.pressedBlock section.id) (Decode.field "clientX" Decode.float))
+        , HA.style "touch-action" "none"
+        , HE.on "pointerdown" (Decode.map (config.pressedBlock section.id) (Decode.field "clientX" Decode.float))
         , HA.title baseTitle
         ]
         [ text section.name
@@ -586,7 +589,8 @@ blockView config pxPerBar selectedId resizePreview extras idx section =
             , HA.style "cursor" "ew-resize"
             , HA.style "background" (Palette.sectionColor idx)
             , HA.style "border-radius" "0 3px 3px 0"
-            , HE.stopPropagationOn "mousedown"
+            , HA.style "touch-action" "none"
+            , HE.stopPropagationOn "pointerdown"
                 (Decode.map (\cx -> ( config.pressedResizeHandle section.id cx, True )) (Decode.field "clientX" Decode.float))
             ]
             []
