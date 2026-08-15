@@ -305,7 +305,24 @@ view config rulerData chordSpans waveform extras selectedId sections pendingDele
             List.sum (List.map .lengthBars sections)
     in
     div [ HA.style "margin-top" "1rem" ]
-        [ div
+        [ div [ HA.style "display" "flex", HA.style "align-items" "center", HA.style "gap" "0.3rem", HA.style "margin-bottom" "0.2rem" ]
+            [ span [ HA.style "font-size" "0.85rem" ] [ text "ズーム: " ]
+            , button
+                (Style.baseButton
+                    ++ [ HE.onClick (config.wheelZoomed { deltaY = 100, offsetX = 0 })
+                       , HA.title "セクションバーを縮小"
+                       ]
+                )
+                [ text "🔍－" ]
+            , button
+                (Style.baseButton
+                    ++ [ HE.onClick (config.wheelZoomed { deltaY = -100, offsetX = 0 })
+                       , HA.title "セクションバーを拡大"
+                       ]
+                )
+                [ text "🔍＋" ]
+            ]
+        , div
             [ HA.id sectionBarScrollId
             , HA.style "overflow-x" "auto"
             ]
