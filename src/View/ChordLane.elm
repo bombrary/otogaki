@@ -21,6 +21,8 @@ type alias Config msg =
     { pressedToken : TokenKey -> { clientX : Float, clientY : Float, shift : Bool } -> msg
     , pressedLane : { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, seekMod : Bool } -> msg
     , doubleClickedToken : TokenKey -> msg
+    , draggedWhilePressingToken : { clientX : Float, clientY : Float, alt : Bool } -> msg
+    , releasedTokenPress : msg
     }
 
 
@@ -127,8 +129,15 @@ tokenView config opts span =
         , HA.style "cursor" "move"
         , HA.style "touch-action" "none"
         , HA.title span.token
+        , HA.attribute "data-pointer-capture" ""
         , Html.Events.stopPropagationOn "pointerdown"
             (Decode.map (\pos -> ( config.pressedToken span.key pos, True )) tokenPressDecoder)
+        , Html.Events.stopPropagationOn "pointermove"
+            (Decode.map (\pos -> ( config.draggedWhilePressingToken pos, True )) tokenMoveDecoder)
+        , Html.Events.stopPropagationOn "pointerup"
+            (Decode.succeed ( config.releasedTokenPress, True ))
+        , Html.Events.stopPropagationOn "pointercancel"
+            (Decode.succeed ( config.releasedTokenPress, True ))
         , Html.Events.onDoubleClick (config.doubleClickedToken span.key)
         ]
         []
@@ -199,9 +208,39 @@ laneEmptyPressDecoder =
         (Decode.field "altKey" Decode.bool)
 
 
+{-| button フィルタを入れ、右クリックでは発火させない。js/main.js の pointer capture リスナーが button 0 限定なので、
+入れないと右ボタンで pendingChordDrag が残留する。
+-}
 tokenPressDecoder : Decode.Decoder { clientX : Float, clientY : Float, shift : Bool }
 tokenPressDecoder =
-    Decode.map3 (\cx cy sh -> { clientX = cx, clientY = cy, shift = sh })
-        (Decode.field "clientX" Decode.float)
-        (Decode.field "clientY" Decode.float)
-        (Decode.field "shiftKey" Decode.bool)
+    Decode.field "button" Decode.int
+        |> Decode.andThen
+            (\button ->
+                if button == 0 then
+                    Decode.map3 (\cx cy sh -> { clientX = cx, clientY = cy, shift = sh })
+                        (Decode.field "clientX" Decode.float)
+                        (Decode.field "clientY" Decode.float)
+                        (Decode.field "shiftKey" Decode.bool)
+
+                else
+                    Decode.fail "not left button"
+            )
+
+
+{-| トークンを押している間のpointermove用。buttonsガードでホバーのみの発火を防ぎ、altKeyも同時に読む。
+PianoRoll.elm の noteMoveDecoder と同型。
+-}
+tokenMoveDecoder : Decode.Decoder { clientX : Float, clientY : Float, alt : Bool }
+tokenMoveDecoder =
+    Decode.field "buttons" Decode.int
+        |> Decode.andThen
+            (\buttons ->
+                if buttons > 0 then
+                    Decode.map3 (\cx cy alt -> { clientX = cx, clientY = cy, alt = alt })
+                        (Decode.field "clientX" Decode.float)
+                        (Decode.field "clientY" Decode.float)
+                        (Decode.field "altKey" Decode.bool)
+
+                else
+                    Decode.fail "no button pressed"
+            )

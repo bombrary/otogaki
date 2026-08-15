@@ -14,6 +14,8 @@ type alias Config msg =
     { pressedOffset : Int -> { clientX : Float, clientY : Float, shift : Bool } -> msg
     , doubleClickedOffset : Int -> msg
     , pressedKey : Int -> msg
+    , draggedWhilePressingOffset : { clientX : Float, clientY : Float, alt : Bool } -> msg
+    , releasedOffsetPress : msg
     }
 
 
@@ -108,6 +110,25 @@ keyHoverDecoder =
     Decode.map2 (\cx cy -> { clientX = cx, clientY = cy })
         (Decode.field "clientX" Decode.float)
         (Decode.field "clientY" Decode.float)
+
+
+{-| レーン行を押している間のpointermove用。buttonsガードでホバーのみの発火を防ぎ、altKeyも同時に読む。
+PianoRoll.elm の noteMoveDecoder と同型。
+-}
+laneMoveDecoder : Decode.Decoder { clientX : Float, clientY : Float, alt : Bool }
+laneMoveDecoder =
+    Decode.field "buttons" Decode.int
+        |> Decode.andThen
+            (\buttons ->
+                if buttons > 0 then
+                    Decode.map3 (\cx cy alt -> { clientX = cx, clientY = cy, alt = alt })
+                        (Decode.field "clientX" Decode.float)
+                        (Decode.field "clientY" Decode.float)
+                        (Decode.field "altKey" Decode.bool)
+
+                else
+                    Decode.fail "no button pressed"
+            )
 
 
 view : Config msg -> HoverConfig msg -> { rootPitch : Int, displayRootPitch : Int, placed : Set Int, selectedPitches : Set Int } -> Html msg
@@ -239,8 +260,15 @@ laneRow config hover displayRootPitch rootPitch placed selectedPitches pitch =
         , HA.style "user-select" "none"
         , HA.style "position" "relative"
         , HA.style "touch-action" "none"
+        , HA.attribute "data-pointer-capture" ""
         , HE.stopPropagationOn "pointerdown"
             (Decode.map (\pos -> ( config.pressedOffset pitch pos, True )) pressDecoder)
+        , HE.stopPropagationOn "pointermove"
+            (Decode.map (\pos -> ( config.draggedWhilePressingOffset pos, True )) laneMoveDecoder)
+        , HE.stopPropagationOn "pointerup"
+            (Decode.succeed ( config.releasedOffsetPress, True ))
+        , HE.stopPropagationOn "pointercancel"
+            (Decode.succeed ( config.releasedOffsetPress, True ))
         , HE.stopPropagationOn "dblclick"
             (Decode.succeed ( config.doubleClickedOffset pitch, True ))
         , HE.preventDefaultOn "contextmenu"

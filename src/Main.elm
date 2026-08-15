@@ -107,15 +107,19 @@ type alias ChordDrag =
     }
 
 
+type alias VoicingDragInfo =
+    { index : Int
+    , startClientX : Float
+    , startClientY : Float
+    , origOffsets : List Int
+    , origSelected : Set Int
+    , origPicks : Data.GuitarForm.StringPicks
+    }
+
+
 type VoicingDragState
     = NoVoicingDrag
-    | DraggingVoicingOffsets
-        { index : Int
-        , startClientY : Float
-        , origOffsets : List Int
-        , origSelected : Set Int
-        , origPicks : Data.GuitarForm.StringPicks
-        }
+    | DraggingVoicingOffsets VoicingDragInfo
 
 
 {-| ベロシティレーンのバードラッグ中の状態。origVelocities はドラッグ開始時の
@@ -187,6 +191,7 @@ type alias Model =
     , voicingPresetShape : String
     , voicingSelectedOffsets : Set Int
     , voicingDragState : VoicingDragState
+    , pendingVoicingDrag : Maybe VoicingDragInfo
     , pianoRollZoom : Int
     , gridUnit : Data.Time.GridUnit
     , pianoRollScrollX : Float
@@ -203,6 +208,7 @@ type alias Model =
     , hoveredFretCell : Maybe { pitch : Int, interval : Int, x : Float, y : Float }
     , selectedChordKeys : Set ( Int, Int )
     , chordDrag : Maybe ChordDrag
+    , pendingChordDrag : Maybe ChordDrag
     , chordRubberBand : Maybe RubberBand
     , formPicker : Maybe { key : Data.ChordTrack.TokenKey, draft : String, tab : FormPicker.Tab }
     , velocityDrag : Maybe VelocityDrag
@@ -212,6 +218,7 @@ type alias Model =
     , cutGuideTicks : Maybe Int
     , themePreference : Theme.ThemePreference
     , guideKeyOverride : Maybe Data.Key.Key
+    , windowSize : { width : Int, height : Int }
     }
 
 
@@ -263,7 +270,7 @@ type Msg
     | ClickedAddTrack
     | ScrolledPianoRoll { scrollLeft : Float, clientWidth : Float }
     | GotPianoRollViewportMeasured (Result Browser.Dom.Error Browser.Dom.Viewport)
-    | ResizedWindow
+    | ResizedWindow Int Int
     | ClickedRemoveTrack Int
     | ToggledMute Int
     | ChangedInstrument Int String
@@ -445,6 +452,7 @@ init flags =
       , voicingPresetShape = "クローズド"
       , voicingSelectedOffsets = Set.empty
       , voicingDragState = NoVoicingDrag
+      , pendingVoicingDrag = Nothing
       , pianoRollZoom = PianoRoll.defaultPxPerSixteenth
       , gridUnit = Data.Time.Sixteenth
       , pianoRollScrollX = 0
@@ -461,6 +469,7 @@ init flags =
       , hoveredFretCell = Nothing
       , selectedChordKeys = Set.empty
       , chordDrag = Nothing
+      , pendingChordDrag = Nothing
       , chordRubberBand = Nothing
       , formPicker = Nothing
       , velocityDrag = Nothing
@@ -470,8 +479,9 @@ init flags =
       , cutGuideTicks = Nothing
       , themePreference = restoredThemePreference
       , guideKeyOverride = Nothing
+      , windowSize = { width = 0, height = 0 }
       }
-    , Cmd.none
+    , Task.perform (\vp -> ResizedWindow (round vp.viewport.width) (round vp.viewport.height)) Browser.Dom.getViewport
     )
 
 
@@ -565,6 +575,27 @@ findNote model noteId =
     trackNotes model
         |> List.filter (\n -> n.id == noteId)
         |> List.head
+
+
+{-| ポインターダウンを即座にドラッグ状態（と全画面オーバーレイ）にすると、ダブルクリック/右クリックと
+同一要素で共存する操作が壊れるため、pendingNoteDragと同じ考え方で保留状態を経由してしきい値判定を行う。
+ノート以外のpendingXxxDragもこの判定を共有する。
+-}
+dragThreshold : Float
+dragThreshold =
+    3
+
+
+exceedsDragThreshold : { r | startClientX : Float, startClientY : Float } -> { p | clientX : Float, clientY : Float } -> Bool
+exceedsDragThreshold info pos =
+    let
+        dx =
+            pos.clientX - info.startClientX
+
+        dy =
+            pos.clientY - info.startClientY
+    in
+    sqrt (dx * dx + dy * dy) >= dragThreshold
 
 
 {-| ノートをドラッグ移動/リサイズ状態にする共通処理。PressedNote の非Shift分岐と、PressedEmptyCell が
@@ -1675,6 +1706,7 @@ resetToProject project maybeSelectedTrackId model =
                 , hoveredFretCell = Nothing
                 , selectedChordKeys = Set.empty
                 , chordDrag = Nothing
+                , pendingChordDrag = Nothing
                 , chordRubberBand = Nothing
                 , pianoRollScrollX = 0
             }
@@ -2215,6 +2247,7 @@ openEditTab index model =
         , editingVoicingIndex = Just index
         , voicingSelectedOffsets = Set.empty
         , voicingDragState = NoVoicingDrag
+        , pendingVoicingDrag = Nothing
         , pendingVoicingDelete = Nothing
       }
     , voicingKeyboardScrollCmd model index
@@ -2681,14 +2714,19 @@ updateCore msg model =
             )
 
         PressedChordToken key pos ->
+            let
+                {- 残留したpendingChordDragがあっても、次のクリックで必ず健全化するように先頭でリセットする。 -}
+                model1 =
+                    { model | pendingChordDrag = Nothing }
+            in
             if pos.shift then
-                ( { model
+                ( { model1
                     | selectedChordKeys =
-                        if Set.member key model.selectedChordKeys then
-                            Set.remove key model.selectedChordKeys
+                        if Set.member key model1.selectedChordKeys then
+                            Set.remove key model1.selectedChordKeys
 
                         else
-                            Set.insert key model.selectedChordKeys
+                            Set.insert key model1.selectedChordKeys
                   }
                 , Cmd.none
                 )
@@ -2696,31 +2734,31 @@ updateCore msg model =
             else
                 let
                     sel =
-                        if Set.member key model.selectedChordKeys then
-                            model.selectedChordKeys
+                        if Set.member key model1.selectedChordKeys then
+                            model1.selectedChordKeys
 
                         else
                             Set.singleton key
 
                     timeline =
-                        Data.Project.timeline model.project
+                        Data.Project.timeline model1.project
 
                     anchorStartTicks =
-                        Data.ChordTrack.tokenSpans timeline model.project.chordTrack
+                        Data.ChordTrack.tokenSpans timeline model1.project.chordTrack
                             |> List.filter (\s -> s.key == key)
                             |> List.head
                             |> Maybe.map .startTicks
                             |> Maybe.withDefault 0
                 in
-                ( { model
+                ( { model1
                     | selectedChordKeys = sel
-                    , chordDrag =
+                    , pendingChordDrag =
                         Just
                             { anchorKey = key
                             , anchorStartTicks = anchorStartTicks
                             , startClientX = pos.clientX
                             , startClientY = pos.clientY
-                            , origText = model.project.chordTrack.text
+                            , origText = model1.project.chordTrack.text
                             , origKeys = sel
                             , lastDeltaBars = 0
                             }
@@ -2729,11 +2767,15 @@ updateCore msg model =
                 )
 
         PressedChordLane pos ->
+            let
+                model1 =
+                    { model | pendingChordDrag = Nothing }
+            in
             if pos.seekMod then
-                seekTo (snapFloor model (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX)) model
+                seekTo (snapFloor model1 (PianoRoll.pixelsToTicks model1.pianoRollZoom pos.offsetX)) model1
 
             else
-                ( { model
+                ( { model1
                     | chordRubberBand =
                         Just
                             { originX = pos.offsetX
@@ -2787,7 +2829,25 @@ updateCore msg model =
                         ( { model | pendingNoteDrag = Nothing, dragState = Dragging info }, Cmd.none )
 
                 Nothing ->
-                    legacyDraggedTo pos model
+                    case model.pendingChordDrag of
+                        Just cd ->
+                            if exceedsDragThreshold cd pos then
+                                ( { model | pendingChordDrag = Nothing, chordDrag = Just cd }, Cmd.none )
+
+                            else
+                                ( model, Cmd.none )
+
+                        Nothing ->
+                            case model.pendingVoicingDrag of
+                                Just vd ->
+                                    if exceedsDragThreshold vd pos then
+                                        ( { model | pendingVoicingDrag = Nothing, voicingDragState = DraggingVoicingOffsets vd }, Cmd.none )
+
+                                    else
+                                        ( model, Cmd.none )
+
+                                Nothing ->
+                                    legacyDraggedTo pos model
 
         ReleasedDrag ->
             case model.pendingNoteDrag of
@@ -2795,7 +2855,17 @@ updateCore msg model =
                     ( { model | pendingNoteDrag = Nothing }, Cmd.none )
 
                 Nothing ->
-                    legacyReleasedDrag model
+                    case model.pendingChordDrag of
+                        Just _ ->
+                            ( { model | pendingChordDrag = Nothing }, Cmd.none )
+
+                        Nothing ->
+                            case model.pendingVoicingDrag of
+                                Just _ ->
+                                    ( { model | pendingVoicingDrag = Nothing }, Cmd.none )
+
+                                Nothing ->
+                                    legacyReleasedDrag model
 
         PressedRuler pos ->
             if pos.shift then
@@ -2895,6 +2965,7 @@ updateCore msg model =
                 , editingVoicingIndex = Nothing
                 , voicingSelectedOffsets = Set.empty
                 , voicingDragState = NoVoicingDrag
+                , pendingVoicingDrag = Nothing
                 , pendingVoicingDelete = Nothing
               }
             , Cmd.none
@@ -2952,6 +3023,7 @@ updateCore msg model =
                     , editingVoicingIndex = Nothing
                     , voicingSelectedOffsets = Set.empty
                     , voicingDragState = NoVoicingDrag
+                    , pendingVoicingDrag = Nothing
                     , pendingVoicingDelete = Nothing
                   }
                 , Cmd.none
@@ -2978,6 +3050,7 @@ updateCore msg model =
                         , editingVoicingIndex = Nothing
                         , voicingSelectedOffsets = Set.empty
                         , voicingDragState = NoVoicingDrag
+                        , pendingVoicingDrag = Nothing
                         , pendingVoicingDelete = Nothing
                       }
                     , Cmd.none
@@ -3514,6 +3587,7 @@ updateCore msg model =
                 | project = Data.Project.addVoicing name model.project
                 , voicingSelectedOffsets = Set.empty
                 , voicingDragState = NoVoicingDrag
+                , pendingVoicingDrag = Nothing
               }
             , Cmd.none
             )
@@ -3540,6 +3614,7 @@ updateCore msg model =
                 , pendingVoicingDelete = Nothing
                 , voicingSelectedOffsets = Set.empty
                 , voicingDragState = NoVoicingDrag
+                , pendingVoicingDrag = Nothing
               }
             , scrollCmd
             )
@@ -3549,81 +3624,87 @@ updateCore msg model =
 
         PressedVoicingOffset index pitch pos ->
             let
+                {- 残留したpendingVoicingDragがあっても、次のクリックで必ず健全化するように先頭でリセットする。 -}
+                model1 =
+                    { model | pendingVoicingDrag = Nothing }
+
                 rootPitch =
-                    Data.Voicing.anchorPitch + model.voicingPreviewRoot
+                    Data.Voicing.anchorPitch + model1.voicingPreviewRoot
 
                 offset =
                     pitch - rootPitch
 
                 currentOffsets =
-                    List.drop index model.project.voicings |> List.head |> Maybe.map .offsets |> Maybe.withDefault []
+                    List.drop index model1.project.voicings |> List.head |> Maybe.map .offsets |> Maybe.withDefault []
             in
             if offset < 0 && not (List.member offset currentOffsets) then
                 -- root より低い空き行。offsets は常に 0 以上の不変式なので新規追加できない
-                ( model, Cmd.none )
+                ( model1, Cmd.none )
 
             else if pos.shift && List.member offset currentOffsets then
                 -- 埋まっている行を shift クリック: 複数選択のトグルのみ。ドラッグは開始しない
-                ( { model
+                ( { model1
                     | voicingSelectedOffsets =
-                        if Set.member offset model.voicingSelectedOffsets then
-                            Set.remove offset model.voicingSelectedOffsets
+                        if Set.member offset model1.voicingSelectedOffsets then
+                            Set.remove offset model1.voicingSelectedOffsets
 
                         else
-                            Set.insert offset model.voicingSelectedOffsets
+                            Set.insert offset model1.voicingSelectedOffsets
                   }
                 , Cmd.none
                 )
 
             else if List.member offset currentOffsets then
-                -- 埋まっている行を素クリック: 選択を維持 or 単独選択に置き換えてドラッグ開始
+                -- 埋まっている行を素クリック: 選択を維持 or 単独選択に置き換えて保留状態でドラッグ開始を待つ
                 let
                     sel =
-                        if Set.member offset model.voicingSelectedOffsets then
-                            model.voicingSelectedOffsets
+                        if Set.member offset model1.voicingSelectedOffsets then
+                            model1.voicingSelectedOffsets
 
                         else
                             Set.singleton offset
 
                     currentPicks =
-                        List.drop index model.project.voicings |> List.head |> Maybe.map .stringPicks |> Maybe.withDefault Set.empty
+                        List.drop index model1.project.voicings |> List.head |> Maybe.map .stringPicks |> Maybe.withDefault Set.empty
                 in
-                ( { model
+                ( { model1
                     | voicingSelectedOffsets = sel
-                    , voicingDragState =
-                        DraggingVoicingOffsets
+                    , pendingVoicingDrag =
+                        Just
                             { index = index
+                            , startClientX = pos.clientX
                             , startClientY = pos.clientY
                             , origOffsets = currentOffsets
                             , origSelected = sel
                             , origPicks = currentPicks
                             }
                   }
-                , Ports.toAudio (Performance.encodePreviewNote (Data.Track.instrumentToString model.project.chordTrack.instrument) pitch)
+                , Ports.toAudio (Performance.encodePreviewNote (Data.Track.instrumentToString model1.project.chordTrack.instrument) pitch)
                 )
 
             else
-                -- 空いている行をクリック: offset を追加して単独選択にし、その場でドラッグを開始
+                -- 空いている行をクリック: offset を追加して単独選択にし、その場で保留状態でドラッグ開始を待つ（ノートのPressedEmptyCellと同様、追加自体は1クリックで完結させる）
                 let
                     newOffsets =
                         offset :: currentOffsets
 
                     currentPicks =
-                        List.drop index model.project.voicings |> List.head |> Maybe.map .stringPicks |> Maybe.withDefault Set.empty
+                        List.drop index model1.project.voicings |> List.head |> Maybe.map .stringPicks |> Maybe.withDefault Set.empty
                 in
-                ( { model
-                    | project = Data.Project.updateVoicing index (\v -> { v | offsets = newOffsets }) model.project
+                ( { model1
+                    | project = Data.Project.updateVoicing index (\v -> { v | offsets = newOffsets }) model1.project
                     , voicingSelectedOffsets = Set.singleton offset
-                    , voicingDragState =
-                        DraggingVoicingOffsets
+                    , pendingVoicingDrag =
+                        Just
                             { index = index
+                            , startClientX = pos.clientX
                             , startClientY = pos.clientY
                             , origOffsets = newOffsets
                             , origSelected = Set.singleton offset
                             , origPicks = currentPicks
                             }
                   }
-                , Ports.toAudio (Performance.encodePreviewNote (Data.Track.instrumentToString model.project.chordTrack.instrument) pitch)
+                , Ports.toAudio (Performance.encodePreviewNote (Data.Track.instrumentToString model1.project.chordTrack.instrument) pitch)
                 )
 
         DoubleClickedVoicingOffset index pitch ->
@@ -3779,6 +3860,7 @@ updateCore msg model =
                 | project = Data.Project.updateVoicing index (\v -> { v | offsets = [], stringPicks = Set.empty }) model.project
                 , voicingSelectedOffsets = Set.empty
                 , voicingDragState = NoVoicingDrag
+                , pendingVoicingDrag = Nothing
               }
             , Cmd.none
             )
@@ -3795,6 +3877,7 @@ updateCore msg model =
                         , editingVoicingIndex = Nothing
                         , voicingSelectedOffsets = Set.empty
                         , voicingDragState = NoVoicingDrag
+                        , pendingVoicingDrag = Nothing
                       }
                     , Cmd.none
                     )
@@ -4430,12 +4513,16 @@ updateCore msg model =
                 Err _ ->
                     ( model, Cmd.none )
 
-        ResizedWindow ->
-            if pianoRollScrollMounted model then
-                ( model, Task.attempt GotPianoRollViewportMeasured (Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId) )
+        ResizedWindow w h ->
+            let
+                model1 =
+                    { model | windowSize = { width = w, height = h } }
+            in
+            if pianoRollScrollMounted model1 then
+                ( model1, Task.attempt GotPianoRollViewportMeasured (Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId) )
 
             else
-                ( model, Cmd.none )
+                ( model1, Cmd.none )
 
         NoOp ->
             ( model, Cmd.none )
@@ -4618,6 +4705,8 @@ view model =
             , clickedVoicingRow = ClickedVoicingRow
             , changedVoicingName = ChangedVoicingName
             , pressedVoicingOffset = PressedVoicingOffset
+            , draggedWhilePressingVoicingOffset = DraggedTo
+            , releasedVoicingOffsetPress = ReleasedDrag
             , doubleClickedVoicingOffset = DoubleClickedVoicingOffset
             , pressedVoicingKeyboardKey = PressedVoicingKeyboardKey
             , pressedFretboardCell = PressedFretboardCell
@@ -5144,6 +5233,8 @@ view model =
                                         { pressedToken = PressedChordToken
                                         , pressedLane = PressedChordLane
                                         , doubleClickedToken = DoubleClickedChordToken
+                                        , draggedWhilePressingToken = DraggedTo
+                                        , releasedTokenPress = ReleasedDrag
                                         }
                                     , tokenSpans = Data.ChordTrack.tokenSpans timeline model.project.chordTrack
                                     , selectedKeys = model.selectedChordKeys
@@ -5468,7 +5559,7 @@ subscriptions model =
         [ Ports.fromAudio (AudioMsg.decode >> GotAudio)
         , Browser.Events.onKeyDown (Decode.map GotKey keyEventDecoder)
         , Browser.Events.onKeyUp (Decode.map ReleasedKey (Decode.field "key" Decode.string))
-        , Browser.Events.onResize (\_ _ -> ResizedWindow)
+        , Browser.Events.onResize ResizedWindow
         ]
 
 

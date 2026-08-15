@@ -31,6 +31,8 @@ type alias Config msg =
     , clickedVoicingRow : Int -> msg
     , changedVoicingName : Int -> String -> msg
     , pressedVoicingOffset : Int -> Int -> { clientX : Float, clientY : Float, shift : Bool } -> msg
+    , draggedWhilePressingVoicingOffset : { clientX : Float, clientY : Float, alt : Bool } -> msg
+    , releasedVoicingOffsetPress : msg
     , doubleClickedVoicingOffset : Int -> Int -> msg
     , pressedVoicingKeyboardKey : Int -> msg
     , pressedFretboardCell : Int -> Int -> Int -> msg
@@ -354,6 +356,8 @@ voicingEditorView config voicingState index voicing =
                 { pressedOffset = config.pressedVoicingOffset index
                 , doubleClickedOffset = config.doubleClickedVoicingOffset index
                 , pressedKey = config.pressedVoicingKeyboardKey
+                , draggedWhilePressingOffset = config.draggedWhilePressingVoicingOffset
+                , releasedOffsetPress = config.releasedVoicingOffsetPress
                 }
                 { hoveredKey = config.hoveredFretCell, unhoveredKey = config.unhoveredFretCell }
                 { rootPitch = rootPitch
