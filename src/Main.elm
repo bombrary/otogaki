@@ -221,6 +221,11 @@ type alias Model =
     , windowSize : { width : Int, height : Int }
     , narrowPane : NarrowPane
     , headerMenuOpen : Bool
+    , touchMode : TouchMode
+    , touchSnapOff : Bool
+    , longPressToken : Int
+    , longPress : Maybe { token : Int, target : LongPressTarget }
+    , touchTooltipToken : Int
     }
 
 
@@ -230,6 +235,25 @@ NarrowSide = 左ペイン（トラック一覧・コード編集・素材）相�
 type NarrowPane
     = NarrowMain
     | NarrowSide
+
+
+{-| タッチ環境ではShift/Ctrlなどの修飾キーを物理ボタンで押せないので、グローバルな代替モードとして持たせる。
+seekModとshiftは既存コードで常に排他分岐なので、この型も排他にする。Altのスナップ無効化は独立なので
+touchSnapOff（Modelの別フィールド）で持つ。
+-}
+type TouchMode
+    = TouchNormal
+    | TouchSelect
+    | TouchSeek
+
+
+{-| 長押し削除の対象。既存の削除ロジック（RightClickedNote/DoubleClickedVoicingOffset/removeDrumNoteAt）を
+引き継ぐのに必要な最小限の情報だけを持たせる。
+-}
+type LongPressTarget
+    = LongPressNote Int
+    | LongPressVoicingOffset Int Int
+    | LongPressDrumNote { pitch : Int, tick : Int }
 
 
 {-| ループ範囲ドラッグの進行状態。fixedTicks = 動かさない側の端、
@@ -264,7 +288,7 @@ type Msg
     | BlurredBpm
     | GotAudio AudioEvent
     | PressedEmptyCell { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, seekMod : Bool }
-    | PressedNote Int PianoRoll.ResizeHandle { clientX : Float, clientY : Float, shift : Bool }
+    | PressedNote Int PianoRoll.ResizeHandle { clientX : Float, clientY : Float, shift : Bool, isTouch : Bool, timeStamp : Float }
     | PressedChordToken ( Int, Int ) { clientX : Float, clientY : Float, shift : Bool }
     | PressedChordLane { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, seekMod : Bool }
     | DoubleClickedNote Int
@@ -308,7 +332,7 @@ type Msg
     | ChangedVoicingPresetShape String
     | AppliedVoicingPreset Int
     | ClickedResetVoicing Int
-    | PressedVoicingOffset Int Int { clientX : Float, clientY : Float, shift : Bool }
+    | PressedVoicingOffset Int Int { clientX : Float, clientY : Float, shift : Bool, isTouch : Bool, timeStamp : Float }
     | DoubleClickedVoicingOffset Int Int
     | PressedFretboardCell Int Int Int
     | DoubleClickedFretboardCell Int Int Int
@@ -322,7 +346,7 @@ type Msg
     | ChangedSectionBars Int String
     | ChangedSectionMemo Int String
     | MovedSection Int Int
-    | PressedDrumCell { pitch : Int, tick : Int, offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool }
+    | PressedDrumCell { pitch : Int, tick : Int, offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, isTouch : Bool, timeStamp : Float }
     | RightClickedDrumCell { pitch : Int, tick : Int }
     | DoubleClickedDrumCell { pitch : Int, tick : Int }
     | AppliedDrumPreset String
@@ -391,6 +415,10 @@ type Msg
     | MovedCutGuide { offsetX : Float }
     | ClearedCutGuide
     | SelectedTool PianoRoll.Tool
+    | SelectedTouchMode TouchMode
+    | ToggledTouchSnapOff
+    | LongPressFired Int
+    | ExpiredTouchTooltip Int
     | ClickedThemeToggle
     | ChangedGuideKeyTonic String
     | ChangedGuideKeyMode String
@@ -494,6 +522,11 @@ init flags =
       , windowSize = { width = 0, height = 0 }
       , narrowPane = NarrowMain
       , headerMenuOpen = False
+      , touchMode = TouchNormal
+      , touchSnapOff = False
+      , longPressToken = 0
+      , longPress = Nothing
+      , touchTooltipToken = 0
       }
     , Task.perform (\vp -> ResizedWindow (round vp.viewport.width) (round vp.viewport.height)) Browser.Dom.getViewport
     )
@@ -610,6 +643,20 @@ exceedsDragThreshold info pos =
             pos.clientY - info.startClientY
     in
     sqrt (dx * dx + dy * dy) >= dragThreshold
+
+
+{-| タッチでの長押し削除用タイマーを開始する。500ms後にLongPressFiredが発火し、その時点でlongPressのトークンが
+一致していれば（disarmされていなければ）削除を実行する。ResetCopyFeedbackと同型のProcess.sleep+Task.performパターン。
+-}
+armLongPress : LongPressTarget -> Model -> ( Model, Cmd Msg )
+armLongPress target model =
+    let
+        newToken =
+            model.longPressToken + 1
+    in
+    ( { model | longPressToken = newToken, longPress = Just { token = newToken, target = target } }
+    , Task.perform (\_ -> LongPressFired newToken) (Process.sleep 500)
+    )
 
 
 {-| ノートをドラッグ移動/リサイズ状態にする共通処理。PressedNote の非Shift分岐と、PressedEmptyCell が
@@ -2579,10 +2626,10 @@ updateCore msg model =
                 model1 =
                     { model | pendingNoteDrag = Nothing }
             in
-            if pos.seekMod then
+            if pos.seekMod || model1.touchMode == TouchSeek then
                 seekTo (snapFloor model1 (PianoRoll.pixelsToTicks model1.pianoRollZoom pos.offsetX)) model1
 
-            else if pos.shift then
+            else if pos.shift || model1.touchMode == TouchSelect then
                 ( startRubberBand pos model1, Cmd.none )
 
             else
@@ -2645,7 +2692,7 @@ updateCore msg model =
             in
             case findNote model1 noteId of
                 Just note ->
-                    if pos.shift then
+                    if pos.shift || model1.touchMode == TouchSelect then
                         ( { model1
                             | selectedNoteIds =
                                 if Set.member noteId model1.selectedNoteIds then
@@ -2659,13 +2706,102 @@ updateCore msg model =
                         )
 
                     else
-                        pressNoteForDrag note handle pos model1
+                        let
+                            ( model2, cmd ) =
+                                pressNoteForDrag note handle pos model1
+                        in
+                        if pos.isTouch then
+                            let
+                                ( model3, armCmd ) =
+                                    armLongPress (LongPressNote note.id) model2
+
+                                newTooltipToken =
+                                    model3.touchTooltipToken + 1
+
+                                model4 =
+                                    { model3
+                                        | hoveredNote = Just { note = note, x = pos.clientX, y = pos.clientY }
+                                        , touchTooltipToken = newTooltipToken
+                                    }
+
+                                tooltipCmd =
+                                    Task.perform (\_ -> ExpiredTouchTooltip newTooltipToken) (Process.sleep 1500)
+                            in
+                            ( model4, Cmd.batch [ cmd, armCmd, tooltipCmd ] )
+
+                        else
+                            ( model2, cmd )
 
                 Nothing ->
                     ( model1, Cmd.none )
 
         SelectedTool t ->
             ( { model | tool = t, cutGuideTicks = Nothing }, Cmd.none )
+
+        SelectedTouchMode m ->
+            ( { model | touchMode = m }, Cmd.none )
+
+        ToggledTouchSnapOff ->
+            ( { model | touchSnapOff = not model.touchSnapOff }, Cmd.none )
+
+        LongPressFired token ->
+            case model.longPress of
+                Just lp ->
+                    if lp.token == token then
+                        let
+                            model1 =
+                                { model | longPress = Nothing }
+                        in
+                        case lp.target of
+                            LongPressNote noteId ->
+                                ( { model1
+                                    | project = Data.Project.removeNote model1.selectedTrackId noteId model1.project
+                                    , selectedNoteIds = Set.remove noteId model1.selectedNoteIds
+                                    , hoveredNote = clearHoveredNote noteId model1.hoveredNote
+                                    , pendingNoteDrag = Nothing
+                                  }
+                                , Cmd.none
+                                )
+
+                            LongPressVoicingOffset index pitch ->
+                                let
+                                    rootPitch =
+                                        Data.Voicing.anchorPitch + model1.voicingPreviewRoot
+
+                                    offset =
+                                        pitch - rootPitch
+                                in
+                                ( { model1
+                                    | project =
+                                        Data.Project.updateVoicing index
+                                            (\v ->
+                                                { v
+                                                    | offsets = List.filter ((/=) offset) v.offsets
+                                                    , stringPicks = Data.GuitarForm.removePicks (Set.singleton offset) v.stringPicks
+                                                }
+                                            )
+                                            model1.project
+                                    , voicingSelectedOffsets = Set.remove offset model1.voicingSelectedOffsets
+                                    , pendingVoicingDrag = Nothing
+                                  }
+                                , Cmd.none
+                                )
+
+                            LongPressDrumNote target ->
+                                removeDrumNoteAt target model1
+
+                    else
+                        ( model, Cmd.none )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        ExpiredTouchTooltip token ->
+            if model.touchTooltipToken == token then
+                ( { model | hoveredNote = Nothing, hoveredFretCell = Nothing }, Cmd.none )
+
+            else
+                ( model, Cmd.none )
 
         MovedCutGuide pos ->
             let
@@ -2682,10 +2818,10 @@ updateCore msg model =
             ( { model | cutGuideTicks = Nothing }, Cmd.none )
 
         PressedCutAt pos ->
-            if pos.seekMod then
+            if pos.seekMod || model.touchMode == TouchSeek then
                 seekTo (snapFloor model (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX)) model
 
-            else if pos.shift then
+            else if pos.shift || model.touchMode == TouchSelect then
                 ( startRubberBand pos model, Cmd.none )
 
             else
@@ -2733,7 +2869,7 @@ updateCore msg model =
                 model1 =
                     { model | pendingChordDrag = Nothing }
             in
-            if pos.shift then
+            if pos.shift || model1.touchMode == TouchSelect then
                 ( { model1
                     | selectedChordKeys =
                         if Set.member key model1.selectedChordKeys then
@@ -2785,7 +2921,7 @@ updateCore msg model =
                 model1 =
                     { model | pendingChordDrag = Nothing }
             in
-            if pos.seekMod then
+            if pos.seekMod || model1.touchMode == TouchSeek then
                 seekTo (snapFloor model1 (PianoRoll.pixelsToTicks model1.pianoRollZoom pos.offsetX)) model1
 
             else
@@ -2840,7 +2976,7 @@ updateCore msg model =
                         ( model, Cmd.none )
 
                     else
-                        ( { model | pendingNoteDrag = Nothing, dragState = Dragging info }, Cmd.none )
+                        ( { model | pendingNoteDrag = Nothing, dragState = Dragging info, longPress = Nothing }, Cmd.none )
 
                 Nothing ->
                     case model.pendingChordDrag of
@@ -2855,7 +2991,7 @@ updateCore msg model =
                             case model.pendingVoicingDrag of
                                 Just vd ->
                                     if exceedsDragThreshold vd pos then
-                                        ( { model | pendingVoicingDrag = Nothing, voicingDragState = DraggingVoicingOffsets vd }, Cmd.none )
+                                        ( { model | pendingVoicingDrag = Nothing, voicingDragState = DraggingVoicingOffsets vd, longPress = Nothing }, Cmd.none )
 
                                     else
                                         ( model, Cmd.none )
@@ -2866,23 +3002,23 @@ updateCore msg model =
         ReleasedDrag ->
             case model.pendingNoteDrag of
                 Just _ ->
-                    ( { model | pendingNoteDrag = Nothing }, Cmd.none )
+                    ( { model | pendingNoteDrag = Nothing, longPress = Nothing }, Cmd.none )
 
                 Nothing ->
                     case model.pendingChordDrag of
                         Just _ ->
-                            ( { model | pendingChordDrag = Nothing }, Cmd.none )
+                            ( { model | pendingChordDrag = Nothing, longPress = Nothing }, Cmd.none )
 
                         Nothing ->
                             case model.pendingVoicingDrag of
                                 Just _ ->
-                                    ( { model | pendingVoicingDrag = Nothing }, Cmd.none )
+                                    ( { model | pendingVoicingDrag = Nothing, longPress = Nothing }, Cmd.none )
 
                                 Nothing ->
-                                    legacyReleasedDrag model
+                                    legacyReleasedDrag { model | longPress = Nothing }
 
         PressedRuler pos ->
-            if pos.shift then
+            if pos.shift || model.touchMode == TouchSelect then
                 let
                     anchor =
                         snapRound model (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX)
@@ -2921,7 +3057,7 @@ updateCore msg model =
                     else
                         False
             in
-            if pos.shift then
+            if pos.shift || model.touchMode == TouchSelect then
                 ( { model | sectionLoopDrag = Just { fixedTicks = pressTicks, baseTicks = pressTicks, startClientX = pos.clientX, curTicks = pressTicks } }, Cmd.none )
 
             else if insideViewRange then
@@ -3300,6 +3436,7 @@ updateCore msg model =
                     , pendingNewProject = False
                     , tool = PianoRoll.PointerTool
                     , cutGuideTicks = Nothing
+                    , touchMode = TouchNormal
                   }
                 , Cmd.none
                 )
@@ -3655,7 +3792,7 @@ updateCore msg model =
                 -- root より低い空き行。offsets は常に 0 以上の不変式なので新規追加できない
                 ( model1, Cmd.none )
 
-            else if pos.shift && List.member offset currentOffsets then
+            else if (pos.shift || model1.touchMode == TouchSelect) && List.member offset currentOffsets then
                 -- 埋まっている行を shift クリック: 複数選択のトグルのみ。ドラッグは開始しない
                 ( { model1
                     | voicingSelectedOffsets =
@@ -3681,20 +3818,44 @@ updateCore msg model =
                     currentPicks =
                         List.drop index model1.project.voicings |> List.head |> Maybe.map .stringPicks |> Maybe.withDefault Set.empty
                 in
-                ( { model1
-                    | voicingSelectedOffsets = sel
-                    , pendingVoicingDrag =
-                        Just
-                            { index = index
-                            , startClientX = pos.clientX
-                            , startClientY = pos.clientY
-                            , origOffsets = currentOffsets
-                            , origSelected = sel
-                            , origPicks = currentPicks
+                let
+                    ( model2, cmd ) =
+                        ( { model1
+                            | voicingSelectedOffsets = sel
+                            , pendingVoicingDrag =
+                                Just
+                                    { index = index
+                                    , startClientX = pos.clientX
+                                    , startClientY = pos.clientY
+                                    , origOffsets = currentOffsets
+                                    , origSelected = sel
+                                    , origPicks = currentPicks
+                                    }
+                          }
+                        , Ports.toAudio (Performance.encodePreviewNote (Data.Track.instrumentToString model1.project.chordTrack.instrument) pitch)
+                        )
+                in
+                if pos.isTouch then
+                    let
+                        ( model3, armCmd ) =
+                            armLongPress (LongPressVoicingOffset index pitch) model2
+
+                        newTooltipToken =
+                            model3.touchTooltipToken + 1
+
+                        model4 =
+                            { model3
+                                | hoveredFretCell = Just { pitch = pitch, interval = modBy 12 offset, x = pos.clientX, y = pos.clientY }
+                                , touchTooltipToken = newTooltipToken
                             }
-                  }
-                , Ports.toAudio (Performance.encodePreviewNote (Data.Track.instrumentToString model1.project.chordTrack.instrument) pitch)
-                )
+
+                        tooltipCmd =
+                            Task.perform (\_ -> ExpiredTouchTooltip newTooltipToken) (Process.sleep 1500)
+                    in
+                    ( model4, Cmd.batch [ cmd, armCmd, tooltipCmd ] )
+
+                else
+                    ( model2, cmd )
 
             else
                 -- 空いている行をクリック: offset を追加して単独選択にし、その場で保留状態でドラッグ開始を待つ（ノートのPressedEmptyCellと同様、追加自体は1クリックで完結させる）
@@ -4057,8 +4218,12 @@ updateCore msg model =
         MovedSection sectionId delta ->
             ( { model | project = Data.Project.moveSection sectionId delta model.project }, Cmd.none )
 
-        PressedDrumCell { pitch, tick, offsetX, offsetY, clientX, clientY, shift } ->
-            case ( findDrumNoteAt { pitch = pitch, tick = tick } model, shift ) of
+        PressedDrumCell { pitch, tick, offsetX, offsetY, clientX, clientY, shift, isTouch } ->
+            let
+                effShift =
+                    shift || model.touchMode == TouchSelect
+            in
+            case ( findDrumNoteAt { pitch = pitch, tick = tick } model, effShift ) of
                 ( Just note, True ) ->
                     ( { model
                         | selectedNoteIds =
@@ -4087,7 +4252,11 @@ updateCore msg model =
                     )
 
                 ( Just note, False ) ->
-                    ( { model | selectedNoteIds = Set.singleton note.id }, Cmd.none )
+                    if isTouch then
+                        armLongPress (LongPressDrumNote { pitch = pitch, tick = tick }) { model | selectedNoteIds = Set.singleton note.id }
+
+                    else
+                        ( { model | selectedNoteIds = Set.singleton note.id }, Cmd.none )
 
                 ( Nothing, False ) ->
                     let
@@ -4563,14 +4732,14 @@ dragMove pos d model =
             PianoRoll.pixelsToTicks model.pianoRollZoom (pos.clientX - d.startClientX)
 
         snapIfNotAlt ticks =
-            if pos.alt then
+            if pos.alt || model.touchSnapOff then
                 ticks
 
             else
                 snapRound model ticks
 
         minDuration =
-            if pos.alt then
+            if pos.alt || model.touchSnapOff then
                 1
 
             else
@@ -4960,8 +5129,29 @@ view model =
                             [ text "✂ カット" ]
                         ]
 
+                {- ホイールが使えないタッチ環境向けのズームボタン。既存のWheelZoomedRulerを直接呼び、offsetXは0（左端を基準にズーム）。
+                   デスクトップでも無害なので常時表示。 -}
+                pianoRollZoomButtons =
+                    div [ style "margin-top" "0.3rem", style "display" "flex", style "align-items" "center", style "gap" "0.3rem" ]
+                        [ span [ style "font-size" "0.85rem" ] [ text "ズーム: " ]
+                        , button
+                            (Style.baseButton
+                                ++ [ onClick (WheelZoomedRuler { deltaY = 100, offsetX = 0 })
+                                   , Html.Attributes.title "ピアノロールを縮小"
+                                   ]
+                            )
+                            [ text "🔍－" ]
+                        , button
+                            (Style.baseButton
+                                ++ [ onClick (WheelZoomedRuler { deltaY = -100, offsetX = 0 })
+                                   , Html.Attributes.title "ピアノロールを拡大"
+                                   ]
+                            )
+                            [ text "🔍＋" ]
+                        ]
+
                 pianoRollView =
-                    div [] [ durationSelect, gridSelect, toolToggle, PianoRoll.view pianoRollConfig pianoRollOpts ]
+                    div [] [ durationSelect, gridSelect, toolToggle, pianoRollZoomButtons, touchModeToggleView model, PianoRoll.view pianoRollConfig pianoRollOpts ]
 
                 chordParseErrors =
                     Data.ChordTrack.cells timeline model.project.chordTrack
@@ -5070,6 +5260,7 @@ view model =
                           else
                             div []
                                 [ gridSelect
+                                , touchModeToggleView model
                                 , DrumEditor.view
                                     { pressedCell = PressedDrumCell
                                     , rightClickedCell = RightClickedDrumCell
@@ -5635,6 +5826,45 @@ view内で都度計算する派生値として扱う（ResizedWindowとの同期
 isNarrowLayout : Model -> Bool
 isNarrowLayout model =
     model.windowSize.width > 0 && model.windowSize.width < 800
+
+
+{-| Shift/Alt/Ctrlなどの物理修飾キーを押せないタッチ環境向けの代替モード切替ボタン。
+グローバルなModel状態なので、複数のエディタに同じものを複数回描画しても安全。
+デスクトップでも便利なので常時表示。
+-}
+touchModeToggleView : Model -> Html Msg
+touchModeToggleView model =
+    div [ style "margin-top" "0.3rem", style "display" "flex", style "align-items" "center", style "gap" "0.3rem", style "flex-wrap" "wrap" ]
+        [ span [ style "font-size" "0.85rem" ] [ text "タッチ修飾: " ]
+        , button
+            (Style.toggleButton (model.touchMode == TouchNormal)
+                ++ [ onClick (SelectedTouchMode TouchNormal)
+                   , Html.Attributes.title "通常操作"
+                   ]
+            )
+            [ text "通常" ]
+        , button
+            (Style.toggleButton (model.touchMode == TouchSelect)
+                ++ [ onClick (SelectedTouchMode TouchSelect)
+                   , Html.Attributes.title "タップで複数選択・ドラッグでループ/矩形選択（Shift相当）"
+                   ]
+            )
+            [ text "選択" ]
+        , button
+            (Style.toggleButton (model.touchMode == TouchSeek)
+                ++ [ onClick (SelectedTouchMode TouchSeek)
+                   , Html.Attributes.title "空白タップでシーク（Ctrl相当）"
+                   ]
+            )
+            [ text "シーク" ]
+        , button
+            (Style.toggleButton model.touchSnapOff
+                ++ [ onClick ToggledTouchSnapOff
+                   , Html.Attributes.title "ドラッグ中のスナップを無効化（Alt相当）"
+                   ]
+            )
+            [ text "スナップOFF" ]
+        ]
 
 
 {-| 狭画面でのタブ切替バー。「編集」（NarrowMain、右ペイン相当）と「トラック・素材」（NarrowSide、左ペイン相当）の2つを
