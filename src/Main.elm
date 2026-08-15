@@ -219,7 +219,17 @@ type alias Model =
     , themePreference : Theme.ThemePreference
     , guideKeyOverride : Maybe Data.Key.Key
     , windowSize : { width : Int, height : Int }
+    , narrowPane : NarrowPane
+    , headerMenuOpen : Bool
     }
+
+
+{-| 狭画面（isNarrowLayout）でどちらのペインを全幅表示するかのタブ選択。NarrowMain = 右ペイン（ピアノロール等の編集エリア）相当でデフォルト、
+NarrowSide = 左ペイン（トラック一覧・コード編集・素材）相当。
+-}
+type NarrowPane
+    = NarrowMain
+    | NarrowSide
 
 
 {-| ループ範囲ドラッグの進行状態。fixedTicks = 動かさない側の端、
@@ -271,6 +281,8 @@ type Msg
     | ScrolledPianoRoll { scrollLeft : Float, clientWidth : Float }
     | GotPianoRollViewportMeasured (Result Browser.Dom.Error Browser.Dom.Viewport)
     | ResizedWindow Int Int
+    | SelectedNarrowPane NarrowPane
+    | ToggledHeaderMenu
     | ClickedRemoveTrack Int
     | ToggledMute Int
     | ChangedInstrument Int String
@@ -480,6 +492,8 @@ init flags =
       , themePreference = restoredThemePreference
       , guideKeyOverride = Nothing
       , windowSize = { width = 0, height = 0 }
+      , narrowPane = NarrowMain
+      , headerMenuOpen = False
       }
     , Task.perform (\vp -> ResizedWindow (round vp.viewport.width) (round vp.viewport.height)) Browser.Dom.getViewport
     )
@@ -4517,12 +4531,26 @@ updateCore msg model =
             let
                 model1 =
                     { model | windowSize = { width = w, height = h } }
+
+                {- 狭画面に遷移した時は、進行中のペイン幅ドラッグをリセットする（ディバイダーを描画しなくなるための保険）。 -}
+                model2 =
+                    if isNarrowLayout model1 then
+                        { model1 | paneDividerDrag = Nothing }
+
+                    else
+                        model1
             in
-            if pianoRollScrollMounted model1 then
-                ( model1, Task.attempt GotPianoRollViewportMeasured (Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId) )
+            if pianoRollScrollMounted model2 then
+                ( model2, Task.attempt GotPianoRollViewportMeasured (Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId) )
 
             else
-                ( model1, Cmd.none )
+                ( model2, Cmd.none )
+
+        SelectedNarrowPane pane ->
+            ( { model | narrowPane = pane }, Cmd.none )
+
+        ToggledHeaderMenu ->
+            ( { model | headerMenuOpen = not model.headerMenuOpen }, Cmd.none )
 
         NoOp ->
             ( model, Cmd.none )
@@ -4749,6 +4777,502 @@ view model =
                     , secsPerTick = 60 / (model.project.bpm * toFloat Data.Time.ppq)
                     , offsetMs = model.project.referenceAudio.offsetMs
                     }
+
+        leftPaneChildren =
+            [ textarea
+                [ value model.project.memo
+                , onInput ChangedMemo
+                , Html.Attributes.placeholder "曲全体メモ：雰囲気、参考曲、やりたいことなど"
+                , style "width" "98%"
+                , style "min-height" "2.4rem"
+                , style "margin-top" "0.4rem"
+                , style "font-family" "inherit"
+                , style "font-size" "0.85rem"
+                ]
+                []
+            , Arrange.view
+                { selectTrack = SelectedTrack
+                , addTrack = ClickedAddTrack
+                , removeTrack = ClickedRemoveTrack
+                , toggleMute = ToggledMute
+                , changeInstrument = ChangedInstrument
+                , changeVolume = ChangedVolume
+                , renameTrack = ChangedTrackName
+                , toggledGhost = ToggledGhostTrack
+                , chordRow =
+                    { select = SelectedTrack Data.ChordTrack.trackId
+                    , toggleMute = ToggledChordMute
+                    , changeInstrument = ChangedChordInstrument
+                    , changeVolume = ChangedChordVolume
+                    , toggledGhost = ToggledGhostTrack Data.ChordTrack.trackId
+                    }
+                }
+                (totalBarsFor model.project)
+                model.selectedTrackId
+                model.instrumentLoad
+                model.ghostTrackIds
+                model.pendingTrackDelete
+                model.project.chordTrack
+                model.project.tracks
+            , ChordEditor.view
+                chordEditorConfig
+                timeline
+                model.playheadTicks
+                voicingState
+                model.project.chordTrack
+            , ScaleGuide.view
+                { changedTonic = ChangedGuideKeyTonic
+                , changedMode = ChangedGuideKeyMode
+                }
+                { effectiveKey = effectiveGuideKey model
+                , override = model.guideKeyOverride
+                }
+            , RefAudio.view
+                { changedOffset = ChangedRefOffset
+                , blurredOffset = BlurredRefOffset
+                , changedVolume = ChangedRefVolume
+                , toggledMute = ToggledRefMute
+                }
+                model.refOffsetInput
+                model.refLoaded
+                model.project.referenceAudio
+            , ScrapShelf.view
+                { addFromSelection = ClickedAddScrap
+                , place = ClickedPlaceScrap
+                , remove = ClickedRemoveScrap
+                , rename = ChangedScrapName
+                }
+                (Set.size model.selectedNoteIds)
+                model.project.scraps
+                model.pendingScrapDelete
+            , div [ style "font-size" "0.75rem", style "color" Theme.onSurfaceVariant, style "margin-top" "0.6rem" ]
+                [ text "Space: 再生/停止（ボタンのEnterは別） ・ Ctrl/Cmd+Z: 元に戻す（Shiftでやり直し） ・ ルーラーか Ctrl/Cmd+クリック・コードをクリック: 再生位置移動 ・ Home/End: 曲頭/曲末へシーク ・ ⏮⏪⏩ かセクション編集欄の「先頭へ」: セクション/曲頭へ移動 ・ Shift+ドラッグ: 矩形選択 ・ Ctrl/Cmd+Shift+A: 選択中セクション内のノートを全選択 ・ ルーラーをshift+ドラッグ: ループ範囲を作成、ハンドルをドラッグで伸縮、[/]: ループの開始/終了を再生位置に設定 ・ ↑↓: 半音移動（Shiftでオクターブ） ・ ←→: 隣のノートを選択（Ctrl/Cmdで横移動、+Shiftで1小節） ・ n: 再生位置にノートを追加（鍵盤表示中は無効） ・ Ctrl/Cmd+C・X・V: コピー・カット・貼付 ・ Delete: 削除 ・ ダブルクリック/右クリック: ノート削除 ・ c: 選択↔カットツール切替 ・ Escape: 選択解除・ツールを選択に戻す（削除確認待ちも解除）" ]
+            ]
+
+        rightPaneChildren =
+            [ div [ style "margin-top" "0", style "font-size" "0.9rem" ]
+                [ text ("編集中: " ++ selectedTrackName ++ selectionInfo) ]
+            , let
+                durationSelect =
+                    div [ style "margin-top" "0.5rem", style "display" "flex", style "align-items" "center", style "gap" "0.4rem" ]
+                        [ span [ style "font-size" "0.85rem" ] [ text "音価（新規配置時の長さ）: " ]
+                        , Html.select [ onInput ChangedDefaultDuration ]
+                            (List.map
+                                (\( ticks, label_ ) ->
+                                    Html.option
+                                        [ value (String.fromInt ticks)
+                                        , Html.Attributes.selected (ticks == model.defaultNoteDuration)
+                                        ]
+                                        [ text label_ ]
+                                )
+                                [ ( Data.Time.gridTicks Data.Time.SixteenthTriplet, "三連 16分音符" )
+                                , ( Data.Time.ticksPerSixteenth, "16分音符" )
+                                , ( Data.Time.gridTicks Data.Time.EighthTriplet, "三連 8分音符" )
+                                , ( Data.Time.ticksPerSixteenth * 2, "8分音符" )
+                                , ( Data.Time.ppq * 2 // 3, "三連 4分音符" )
+                                , ( Data.Time.ticksPerSixteenth * 3, "付点8分音符" )
+                                , ( Data.Time.ticksPerSixteenth * 4, "4分音符" )
+                                , ( Data.Time.ticksPerSixteenth * 8, "2分音符" )
+                                , ( Data.Time.ticksPerSixteenth * 16, "全音符" )
+                                ]
+                            )
+                        ]
+
+                gridSelect =
+                    div [ style "margin-top" "0.3rem", style "display" "flex", style "align-items" "center", style "gap" "0.4rem" ]
+                        [ span [ style "font-size" "0.85rem" ] [ text "グリッド: " ]
+                        , Html.select [ onInput ChangedGridUnit ]
+                            (List.map
+                                (\unit ->
+                                    Html.option
+                                        [ value (Data.Time.gridUnitToString unit)
+                                        , Html.Attributes.selected (unit == model.gridUnit)
+                                        ]
+                                        [ text (Data.Time.gridLabel unit) ]
+                                )
+                                [ Data.Time.Sixteenth, Data.Time.EighthTriplet, Data.Time.SixteenthTriplet ]
+                            )
+                        ]
+
+                pianoRollConfig =
+                    { pressedEmpty =
+                        case model.tool of
+                            PianoRoll.PointerTool ->
+                                PressedEmptyCell
+
+                            PianoRoll.CutTool ->
+                                PressedCutAt
+                    , pressedNote = PressedNote
+                    , draggedWhilePressingNote = \pos -> DraggedTo { clientX = pos.clientX, clientY = pos.clientY, alt = pos.alt }
+                    , releasedNotePress = ReleasedDrag
+                    , doubleClickedNote = DoubleClickedNote
+                    , rightClickedNote = RightClickedNote
+                    , pressedRuler = PressedRuler
+                    , pressedLoopHandle = PressedLoopHandle
+                    , pressedKey = PressedPianoKey
+                    , wheelZoomedRuler = WheelZoomedRuler
+                    , clickedChord = ClickedChordAt
+                    , doubleClickedChord = DoubleClickedChordStripAt
+                    , hoveredNote = HoveredNote
+                    , unhoveredNote = UnhoveredNote
+                    , scrolled = ScrolledPianoRoll
+                    , pressedVelocityBar = PressedVelocityBar
+                    , movedCutGuide = MovedCutGuide
+                    , clearedCutGuide = ClearedCutGuide
+                    }
+
+                pianoRollOpts =
+                    { notes = trackNotes model
+                    , selectedIds = model.selectedNoteIds
+                    , playheadTicks = model.playheadTicks
+                    , sections = sectionSpans model.project
+                    , totalBars = totalBarsFor model.project
+                    , rubberBand = rubberBandRect model.rubberBand
+                    , highlightedPitch = Set.union model.highlightedPitches model.heldKeyPitches
+                    , scalePitchClasses = Data.Key.scalePitchClasses (Data.Timeline.keyAt (scaleReferenceTicks model) timeline)
+                    , loop = displayedLoop model.loopDrag model
+                    , loopEditable = model.loopMode == LoopRange
+                    , waveform = refWaveform
+                    , ghostNoteGroups = ghostNoteGroups model timeline
+                    , pxPerSixteenth = model.pianoRollZoom
+                    , gridUnit = model.gridUnit
+                    , chordSpans = chordSpans
+                    , tool = model.tool
+                    , cutGuideTicks = model.cutGuideTicks
+                    }
+
+                toolToggle =
+                    div [ style "margin-top" "0.3rem", style "display" "flex", style "align-items" "center", style "gap" "0.4rem" ]
+                        [ span [ style "font-size" "0.85rem" ] [ text "ツール: " ]
+                        , button
+                            (Style.toggleButton (model.tool == PianoRoll.PointerTool)
+                                ++ [ onClick (SelectedTool PianoRoll.PointerTool)
+                                   , Html.Attributes.title "選択・移動・リサイズ（c でカットと切替、Escape でも戻る）"
+                                   ]
+                            )
+                            [ text "🖱 選択" ]
+                        , button
+                            (Style.toggleButton (model.tool == PianoRoll.CutTool)
+                                ++ [ onClick (SelectedTool PianoRoll.CutTool)
+                                   , Html.Attributes.title "クリック位置でノートを分割（c で切替）"
+                                   ]
+                            )
+                            [ text "✂ カット" ]
+                        ]
+
+                pianoRollView =
+                    div [] [ durationSelect, gridSelect, toolToggle, PianoRoll.view pianoRollConfig pianoRollOpts ]
+
+                chordParseErrors =
+                    Data.ChordTrack.cells timeline model.project.chordTrack
+                        |> List.concatMap
+                            (\cell ->
+                                cell.chords
+                                    |> List.filterMap
+                                        (\c ->
+                                            case c.result of
+                                                Err reason ->
+                                                    Just ("小節" ++ String.fromInt (cell.barIndex + 1) ++ ": \"" ++ c.token ++ "\" を解釈できません（" ++ reason ++ "）")
+
+                                                Ok _ ->
+                                                    Nothing
+                                        )
+                            )
+
+                chordTrackMainView =
+                    div []
+                        [ div [ style "margin-top" "0.5rem", style "display" "flex", style "align-items" "center", style "flex-wrap" "wrap", style "gap" "0.3rem" ]
+                            [ button
+                                (Style.baseButton
+                                    ++ [ onClick ToggledChordProgressionModal
+                                       , Html.Attributes.title "表示/非表示を切替え"
+                                       ]
+                                )
+                                [ text
+                                    (if model.chordProgressionModalOpen then
+                                        "✦ コード進行を閉じる"
+
+                                     else
+                                        "✦ コード進行を編集"
+                                    )
+                                ]
+                            , button
+                                (Style.baseButton
+                                    ++ [ onClick ToggledChordBlockView
+                                       , style "margin-left" "0.4rem"
+                                       , Html.Attributes.title "ブロック表示とライン表示を切り替え"
+                                       ]
+                                )
+                                [ text
+                                    (if model.chordBlockView then
+                                        "📈 ライン表示に切替"
+
+                                     else
+                                        "📦 ブロック表示に切替"
+                                    )
+                                ]
+                            , Style.divider
+                            , span [ style "font-size" "0.75rem", style "color" Theme.onSurfaceVariant ] [ text "リズム:" ]
+                            , ChordEditor.rhythmSelect chordEditorConfig model.project.chordTrack.rhythm
+                            ]
+                        , if model.chordProgressionModalOpen then
+                            ChordEditor.progressionEditorView chordEditorConfig (Maybe.withDefault "" model.chordSheetDraft)
+
+                          else
+                            text ""
+                        , if List.isEmpty chordParseErrors then
+                            text ""
+
+                          else
+                            div [ style "margin-top" "0.4rem", style "font-size" "0.75rem", style "color" Theme.error ]
+                                (List.map (\msg -> div [] [ text msg ]) chordParseErrors)
+                        , if model.chordBlockView then
+                            ChordBlocks.view
+                                { clickedChord = pianoRollConfig.clickedChord, doubleClickedToken = DoubleClickedChordToken }
+                                timeline
+                                model.playheadTicks
+                                model.project.chordTrack
+
+                          else
+                            PianoRoll.chordTrackView pianoRollConfig
+                                pianoRollOpts
+                                (Just (Data.StrumExpand.previewNotes model.project.guitarFormEnabled (effectiveVoicings model) timeline model.project.chordTrack))
+                                { config =
+                                    { pressedToken = PressedChordToken
+                                    , pressedLane = PressedChordLane
+                                    , doubleClickedToken = DoubleClickedChordToken
+                                    , draggedWhilePressingToken = DraggedTo
+                                    , releasedTokenPress = ReleasedDrag
+                                    }
+                                , tokenSpans = Data.ChordTrack.tokenSpans timeline model.project.chordTrack
+                                , selectedKeys = model.selectedChordKeys
+                                , rubberBand =
+                                    model.chordRubberBand
+                                        |> Maybe.map (\crb -> { x = Basics.min crb.originX crb.curX, w = abs (crb.curX - crb.originX) })
+                                }
+                        ]
+              in
+              if model.selectedTrackId == Data.ChordTrack.trackId then chordTrackMainView else case selectedTrackKind model of
+                Just (DrumTrack _) ->
+                    div []
+                        [ button (Style.baseButton ++ [ onClick ToggledDrumView, style "margin-top" "0.5rem" ])
+                            [ text
+                                (if model.drumViewRoll then
+                                    "🥁 ステップグリッドで編集"
+
+                                 else
+                                    "🎹 ピアノロールで編集（選択・移動・コピペ）"
+                                )
+                            ]
+                        , if model.drumViewRoll then
+                            pianoRollView
+
+                          else
+                            div []
+                                [ gridSelect
+                                , DrumEditor.view
+                                    { pressedCell = PressedDrumCell
+                                    , rightClickedCell = RightClickedDrumCell
+                                    , doubleClickedCell = DoubleClickedDrumCell
+                                    , pressedVelocityBar = PressedVelocityBar
+                                    , appliedPreset = AppliedDrumPreset
+                                    , changedFillBars = ChangedDrumFillBars
+                                    , pressedRuler = PressedRuler
+                                    , pressedLoopHandle = PressedLoopHandle
+                                    , wheelZoomedRuler = WheelZoomedRuler
+                                    , scrolled = ScrolledPianoRoll
+                                    }
+                                    { sections = sectionSpans model.project
+                                    , totalBars = totalBarsFor model.project
+                                    , fillBars = model.drumFillBars
+                                    , notes = trackNotes model
+                                    , selectedIds = model.selectedNoteIds
+                                    , playheadTicks = model.playheadTicks
+                                    , pxPerSixteenth = model.pianoRollZoom
+                                    , gridUnit = model.gridUnit
+                                    , loop = displayedLoop model.loopDrag model
+                                    , loopEditable = model.loopMode == LoopRange
+                                    , rubberBand = rubberBandRect model.rubberBand
+                                    }
+                                ]
+                        ]
+
+                _ ->
+                    pianoRollView
+            , Keyboard.view
+                { pressedKey = PressedPianoKey
+                , toggled = ToggledKeyboard
+                }
+                (Set.union model.highlightedPitches model.heldKeyPitches)
+                model.showKeyboard
+            ]
+
+        headerMenuToggle =
+            button
+                (Style.toggleButton model.headerMenuOpen
+                    ++ [ onClick ToggledHeaderMenu
+                       , Html.Attributes.title "その他の操作（テーマ・ループ・BPM・小節・ファイル）"
+                       , Html.Attributes.attribute "aria-label" "その他の操作メニュー"
+                       ]
+                )
+                [ text "☰" ]
+
+        transportGroup =
+            div groupStyle
+                [ button (Style.baseButton ++ [ onClick (SeekTo 0), Html.Attributes.title "曲の先頭へ", Html.Attributes.attribute "aria-label" "曲の先頭へ" ]) [ text "⏮" ]
+                , button (Style.baseButton ++ [ onClick SeekPrevSection, Html.Attributes.title "このセクションの頭へ（連打で前へ遡る）", Html.Attributes.attribute "aria-label" "前のセクションへ" ]) [ text "⏪" ]
+                , button (Style.baseButton ++ [ onClick ClickedPlay, Html.Attributes.title "再生 (Space)" ]) [ text "▶ 再生" ]
+                , button (Style.baseButton ++ [ onClick ClickedStop, Html.Attributes.title "停止 (Space)" ]) [ text "■ 停止" ]
+                , button (Style.baseButton ++ [ onClick SeekNextSection, Html.Attributes.title "次のセクションの頭へ", Html.Attributes.attribute "aria-label" "次のセクションへ" ]) [ text "⏩" ]
+                ]
+
+        undoGroup =
+            div groupStyle
+                [ button
+                    (Style.baseButton
+                        ++ [ onClick ClickedUndo
+                           , disabled (List.isEmpty model.undoStack)
+                           , Html.Attributes.attribute "aria-label" "元に戻す"
+                           , Html.Attributes.title
+                                ("元に戻す (Ctrl/Cmd+Z)"
+                                    ++ (if List.isEmpty model.undoStack then
+                                            ""
+
+                                        else
+                                            ": " ++ model.lastEditLabel
+                                       )
+                                )
+                           ]
+                    )
+                    [ text "↩" ]
+                , button
+                    (Style.baseButton
+                        ++ [ onClick ClickedRedo
+                           , disabled (List.isEmpty model.redoStack)
+                           , Html.Attributes.title "やり直し (Ctrl/Cmd+Shift+Z)"
+                           , Html.Attributes.attribute "aria-label" "やり直し"
+                           ]
+                    )
+                    [ text "↪" ]
+                ]
+
+        themeGroup =
+            div groupStyle
+                [ button
+                    (Style.baseButton
+                        ++ [ onClick ClickedThemeToggle
+                           , Html.Attributes.title "テーマ切替（OS設定→ライト→ダーク→OS設定）"
+                           , Html.Attributes.attribute "aria-label" "テーマ切替"
+                           ]
+                    )
+                    [ text (themeToggleLabel model.themePreference) ]
+                ]
+
+        loopGroup =
+            div groupStyle
+                [ label []
+                    [ text "🔁 ループ: "
+                    , Html.select [ onInput ChangedLoopMode ]
+                        [ Html.option [ value "off", Html.Attributes.selected (model.loopMode == NoLoop) ] [ text "オフ" ]
+                        , Html.option [ value "song", Html.Attributes.selected (model.loopMode == LoopSong) ] [ text "全体" ]
+                        , Html.option [ value "section", Html.Attributes.selected (model.loopMode == LoopSection) ] [ text "セクション" ]
+                        , Html.option [ value "range", Html.Attributes.selected (model.loopMode == LoopRange) ] [ text "範囲" ]
+                        ]
+                    ]
+                , button
+                    (Style.toggleButton model.followPlayhead
+                        ++ [ onClick ToggledFollowPlayhead
+                           , Html.Attributes.title "プレイヘッドが画面外に出たら自動でスクロールする"
+                           ]
+                    )
+                    [ text "📌 追従" ]
+                ]
+
+        bpmGroup =
+            div groupStyle
+                [ label []
+                    [ text " BPM: "
+                    , input
+                        [ type_ "number"
+                        , Html.Attributes.step "0.1"
+                        , value model.bpmInput
+                        , onInput ChangedBpm
+                        , onBlur BlurredBpm
+                        , style "width" "4.5rem"
+                        ]
+                        []
+                    ]
+                , label []
+                    [ text "移調: "
+                    , button (Style.baseButton ++ [ onClick (TransposedSong -12), Html.Attributes.title "1オクターブ下げる" ]) [ text "-12" ]
+                    , button (Style.baseButton ++ [ onClick (TransposedSong -1), Html.Attributes.title "半音下げる" ]) [ text "-1" ]
+                    , button (Style.baseButton ++ [ onClick (TransposedSong 1), Html.Attributes.title "半音上げる" ]) [ text "+1" ]
+                    , button (Style.baseButton ++ [ onClick (TransposedSong 12), Html.Attributes.title "1オクターブ上げる" ]) [ text "+12" ]
+                    ]
+                ]
+
+        barsGroup =
+            div groupStyle
+                [ label []
+                    [ text "小節: "
+                    , input
+                        [ type_ "number"
+                        , value model.insertCountInput
+                        , onInput ChangedInsertCount
+                        , style "width" "3.5rem"
+                        ]
+                        []
+                    ]
+                , button
+                    (Style.baseButton
+                        ++ [ onClick InsertedBarsAtPlayhead
+                           , Html.Attributes.title "再生位置のある小節の前に指定数の小節を挿入する（コード進行の改行は崩れることがあります）"
+                           ]
+                    )
+                    [ text "+ 挿入" ]
+                , button
+                    (Style.dangerButton
+                        ++ [ onClick RemovedBarsAtPlayhead
+                           , Html.Attributes.title "再生位置のある小節から指定数の小節を削除する（Ctrl/Cmd+Zで戻せます）"
+                           , Html.Attributes.attribute "aria-label" "再生位置から小節を削除"
+                           ]
+                    )
+                    [ text "✂ 小節削除" ]
+                ]
+
+        fileGroup =
+            div groupStyle
+                [ button
+                    (Style.baseButton
+                        ++ [ onClick ClickedNewProject
+                           , Html.Attributes.title "現在の内容を破棄して新規作成（もう一度押すと確定。Ctrl/Cmd+Zで戻せます）"
+                           , Html.Attributes.style "min-width" "6.5rem"
+                           , Html.Attributes.style "text-align" "center"
+                           ]
+                        ++ (if model.pendingNewProject then
+                                [ Html.Attributes.attribute "aria-label" "もう一度押すと新規作成を確定" ]
+
+                            else
+                                []
+                           )
+                    )
+                    [ text
+                        (if model.pendingNewProject then
+                            "本当に新規？"
+
+                         else
+                            "新規"
+                        )
+                    ]
+                , button (Style.baseButton ++ [ onClick ClickedExport ]) [ text "JSON書出" ]
+                , button (Style.baseButton ++ [ onClick ClickedImport ]) [ text "JSON読込" ]
+                , button (Style.baseButton ++ [ onClick ClickedExportMidi ]) [ text "MIDI書出" ]
+                , button (Style.baseButton ++ [ onClick ClickedExportWav ]) [ text "WAV書出" ]
+                ]
+
+        statusGroup =
+            div (groupStyle ++ Style.labelText)
+                [ text (stateLabel ++ " — " ++ String.fromInt barBeat.bar ++ " 小節 " ++ String.fromInt barBeat.beat ++ " 拍目") ]
     in
     div [ style "display" "flex", style "flex-direction" "column", style "height" "100vh", style "font-family" "sans-serif" ]
         [ Style.focusCss
@@ -4756,155 +5280,46 @@ view model =
         , div [ style "padding" "0.5rem 1rem 0 1rem", style "flex" "0 0 auto" ]
             [ h1 [ style "font-size" "1.3rem", style "margin" "0 0 0.3rem 0" ] [ text "音書き otogaki" ]
             , div [ style "display" "flex", style "flex-wrap" "wrap", style "gap" "0.5rem", style "align-items" "center" ]
-                [ div groupStyle
-                    [ button (Style.baseButton ++ [ onClick (SeekTo 0), Html.Attributes.title "曲の先頭へ", Html.Attributes.attribute "aria-label" "曲の先頭へ" ]) [ text "⏮" ]
-                    , button (Style.baseButton ++ [ onClick SeekPrevSection, Html.Attributes.title "このセクションの頭へ（連打で前へ遡る）", Html.Attributes.attribute "aria-label" "前のセクションへ" ]) [ text "⏪" ]
-                    , button (Style.baseButton ++ [ onClick ClickedPlay, Html.Attributes.title "再生 (Space)" ]) [ text "▶ 再生" ]
-                    , button (Style.baseButton ++ [ onClick ClickedStop, Html.Attributes.title "停止 (Space)" ]) [ text "■ 停止" ]
-                    , button (Style.baseButton ++ [ onClick SeekNextSection, Html.Attributes.title "次のセクションの頭へ", Html.Attributes.attribute "aria-label" "次のセクションへ" ]) [ text "⏩" ]
+                (if isNarrowLayout model then
+                    [ transportGroup
+                    , Style.divider
+                    , undoGroup
+                    , Style.divider
+                    , headerMenuToggle
+                    , statusGroup
                     ]
-                , Style.divider
-                , div groupStyle
-                    [ button
-                        (Style.baseButton
-                            ++ [ onClick ClickedUndo
-                               , disabled (List.isEmpty model.undoStack)
-                               , Html.Attributes.attribute "aria-label" "元に戻す"
-                               , Html.Attributes.title
-                                    ("元に戻す (Ctrl/Cmd+Z)"
-                                        ++ (if List.isEmpty model.undoStack then
-                                                ""
+                        ++ (if model.headerMenuOpen then
+                                [ div [ style "display" "flex", style "flex-direction" "column", style "gap" "0.5rem", style "flex" "1 1 100%", style "padding" "0.5rem", style "background" Theme.surfaceContainerHigh, style "border-radius" Theme.shapeS ]
+                                    [ themeGroup
+                                    , loopGroup
+                                    , bpmGroup
+                                    , barsGroup
+                                    , fileGroup
+                                    ]
+                                ]
 
-                                            else
-                                                ": " ++ model.lastEditLabel
-                                           )
-                                    )
-                               ]
-                        )
-                        [ text "↩" ]
-                    , button
-                        (Style.baseButton
-                            ++ [ onClick ClickedRedo
-                               , disabled (List.isEmpty model.redoStack)
-                               , Html.Attributes.title "やり直し (Ctrl/Cmd+Shift+Z)"
-                               , Html.Attributes.attribute "aria-label" "やり直し"
-                               ]
-                        )
-                        [ text "↪" ]
-                    ]
-                , Style.divider
-                , div groupStyle
-                    [ button
-                        (Style.baseButton
-                            ++ [ onClick ClickedThemeToggle
-                               , Html.Attributes.title "テーマ切替（OS設定→ライト→ダーク→OS設定）"
-                               , Html.Attributes.attribute "aria-label" "テーマ切替"
-                               ]
-                        )
-                        [ text (themeToggleLabel model.themePreference) ]
-                    ]
-                , Style.divider
-                , div groupStyle
-                    [ label []
-                        [ text "🔁 ループ: "
-                        , Html.select [ onInput ChangedLoopMode ]
-                            [ Html.option [ value "off", Html.Attributes.selected (model.loopMode == NoLoop) ] [ text "オフ" ]
-                            , Html.option [ value "song", Html.Attributes.selected (model.loopMode == LoopSong) ] [ text "全体" ]
-                            , Html.option [ value "section", Html.Attributes.selected (model.loopMode == LoopSection) ] [ text "セクション" ]
-                            , Html.option [ value "range", Html.Attributes.selected (model.loopMode == LoopRange) ] [ text "範囲" ]
-                            ]
-                        ]
-                    , button
-                        (Style.toggleButton model.followPlayhead
-                            ++ [ onClick ToggledFollowPlayhead
-                               , Html.Attributes.title "プレイヘッドが画面外に出たら自動でスクロールする"
-                               ]
-                        )
-                        [ text "📌 追従" ]
-                    ]
-                , Style.divider
-                , div groupStyle
-                    [ label []
-                        [ text " BPM: "
-                        , input
-                            [ type_ "number"
-                            , Html.Attributes.step "0.1"
-                            , value model.bpmInput
-                            , onInput ChangedBpm
-                            , onBlur BlurredBpm
-                            , style "width" "4.5rem"
-                            ]
-                            []
-                        ]
-                    , label []
-                        [ text "移調: "
-                        , button (Style.baseButton ++ [ onClick (TransposedSong -12), Html.Attributes.title "1オクターブ下げる" ]) [ text "-12" ]
-                        , button (Style.baseButton ++ [ onClick (TransposedSong -1), Html.Attributes.title "半音下げる" ]) [ text "-1" ]
-                        , button (Style.baseButton ++ [ onClick (TransposedSong 1), Html.Attributes.title "半音上げる" ]) [ text "+1" ]
-                        , button (Style.baseButton ++ [ onClick (TransposedSong 12), Html.Attributes.title "1オクターブ上げる" ]) [ text "+12" ]
-                        ]
-                    ]
-                , Style.divider
-                , div groupStyle
-                    [ label []
-                        [ text "小節: "
-                        , input
-                            [ type_ "number"
-                            , value model.insertCountInput
-                            , onInput ChangedInsertCount
-                            , style "width" "3.5rem"
-                            ]
-                            []
-                        ]
-                    , button
-                        (Style.baseButton
-                            ++ [ onClick InsertedBarsAtPlayhead
-                               , Html.Attributes.title "再生位置のある小節の前に指定数の小節を挿入する（コード進行の改行は崩れることがあります）"
-                               ]
-                        )
-                        [ text "+ 挿入" ]
-                    , button
-                        (Style.dangerButton
-                            ++ [ onClick RemovedBarsAtPlayhead
-                               , Html.Attributes.title "再生位置のある小節から指定数の小節を削除する（Ctrl/Cmd+Zで戻せます）"
-                               , Html.Attributes.attribute "aria-label" "再生位置から小節を削除"
-                               ]
-                        )
-                        [ text "✂ 小節削除" ]
-                    ]
-                , Style.divider
-                , div groupStyle
-                    [ button
-                        (Style.baseButton
-                            ++ [ onClick ClickedNewProject
-                               , Html.Attributes.title "現在の内容を破棄して新規作成（もう一度押すと確定。Ctrl/Cmd+Zで戻せます）"
-                               , Html.Attributes.style "min-width" "6.5rem"
-                               , Html.Attributes.style "text-align" "center"
-                               ]
-                            ++ (if model.pendingNewProject then
-                                    [ Html.Attributes.attribute "aria-label" "もう一度押すと新規作成を確定" ]
+                            else
+                                []
+                           )
 
-                                else
-                                    []
-                               )
-                        )
-                        [ text
-                            (if model.pendingNewProject then
-                                "本当に新規？"
-
-                             else
-                                "新規"
-                            )
-                        ]
-                    , button (Style.baseButton ++ [ onClick ClickedExport ]) [ text "JSON書出" ]
-                    , button (Style.baseButton ++ [ onClick ClickedImport ]) [ text "JSON読込" ]
-                    , button (Style.baseButton ++ [ onClick ClickedExportMidi ]) [ text "MIDI書出" ]
-                    , button (Style.baseButton ++ [ onClick ClickedExportWav ]) [ text "WAV書出" ]
+                 else
+                    [ transportGroup
+                    , Style.divider
+                    , undoGroup
+                    , Style.divider
+                    , themeGroup
+                    , Style.divider
+                    , loopGroup
+                    , Style.divider
+                    , bpmGroup
+                    , Style.divider
+                    , barsGroup
+                    , Style.divider
+                    , fileGroup
+                    , Style.divider
+                    , statusGroup
                     ]
-                , Style.divider
-                , div (groupStyle ++ Style.labelText)
-                    [ text (stateLabel ++ " — " ++ String.fromInt barBeat.bar ++ " 小節 " ++ String.fromInt barBeat.beat ++ " 拍目") ]
-                ]
+                )
             , SectionBar.view
                 { select = SelectedSection
                 , add = ClickedAddSection
@@ -4948,357 +5363,48 @@ view model =
                 model.pendingSectionDelete
                 (model.sectionResizeDrag |> Maybe.map (\d -> { sectionId = d.sectionId, lengthBars = d.curLengthBars }))
             ]
-        , div [ style "flex" "1 1 auto", style "min-height" "0", style "display" "flex", style "overflow" "hidden" ]
-            [ div
-                [ style "width" (String.fromInt model.leftPaneWidth ++ "px")
-                , style "flex" "0 0 auto"
-                , style "overflow-y" "auto"
-                , style "overflow-x" "auto"
-                , style "padding" "0 1rem 1rem 1rem"
-                , style "box-sizing" "border-box"
+        , if isNarrowLayout model then
+            div [ style "flex" "1 1 auto", style "min-height" "0", style "display" "flex", style "flex-direction" "column", style "overflow" "hidden" ]
+                [ narrowTabBar model.narrowPane
+                , div [ style "flex" "1 1 auto", style "min-height" "0", style "overflow-y" "auto", style "padding" "0.5rem 1rem 1rem 1rem", style "box-sizing" "border-box" ]
+                    (case model.narrowPane of
+                        NarrowSide ->
+                            leftPaneChildren
+
+                        NarrowMain ->
+                            rightPaneChildren
+                    )
                 ]
-                [ textarea
-                    [ value model.project.memo
-                    , onInput ChangedMemo
-                    , Html.Attributes.placeholder "曲全体メモ：雰囲気、参考曲、やりたいことなど"
-                    , style "width" "98%"
-                    , style "min-height" "2.4rem"
-                    , style "margin-top" "0.4rem"
-                    , style "font-family" "inherit"
-                    , style "font-size" "0.85rem"
+
+          else
+            div [ style "flex" "1 1 auto", style "min-height" "0", style "display" "flex", style "overflow" "hidden" ]
+                [ div
+                    [ style "width" (String.fromInt model.leftPaneWidth ++ "px")
+                    , style "flex" "0 0 auto"
+                    , style "overflow-y" "auto"
+                    , style "overflow-x" "auto"
+                    , style "padding" "0 1rem 1rem 1rem"
+                    , style "box-sizing" "border-box"
+                    ]
+                    leftPaneChildren
+                , div
+                    [ style "width" "6px"
+                    , style "flex" "0 0 auto"
+                    , style "cursor" "col-resize"
+                    , style "background" Theme.outlineVariant
+                    , style "touch-action" "none"
+                    , Html.Events.on "pointerdown" (Decode.map PressedPaneDivider (Decode.field "clientX" Decode.float))
                     ]
                     []
-                , Arrange.view
-                    { selectTrack = SelectedTrack
-                    , addTrack = ClickedAddTrack
-                    , removeTrack = ClickedRemoveTrack
-                    , toggleMute = ToggledMute
-                    , changeInstrument = ChangedInstrument
-                    , changeVolume = ChangedVolume
-                    , renameTrack = ChangedTrackName
-                    , toggledGhost = ToggledGhostTrack
-                    , chordRow =
-                        { select = SelectedTrack Data.ChordTrack.trackId
-                        , toggleMute = ToggledChordMute
-                        , changeInstrument = ChangedChordInstrument
-                        , changeVolume = ChangedChordVolume
-                        , toggledGhost = ToggledGhostTrack Data.ChordTrack.trackId
-                        }
-                    }
-                    (totalBarsFor model.project)
-                    model.selectedTrackId
-                    model.instrumentLoad
-                    model.ghostTrackIds
-                    model.pendingTrackDelete
-                    model.project.chordTrack
-                    model.project.tracks
-                , ChordEditor.view
-                    chordEditorConfig
-                    timeline
-                    model.playheadTicks
-                    voicingState
-                    model.project.chordTrack
-                , ScaleGuide.view
-                    { changedTonic = ChangedGuideKeyTonic
-                    , changedMode = ChangedGuideKeyMode
-                    }
-                    { effectiveKey = effectiveGuideKey model
-                    , override = model.guideKeyOverride
-                    }
-                , RefAudio.view
-                    { changedOffset = ChangedRefOffset
-                    , blurredOffset = BlurredRefOffset
-                    , changedVolume = ChangedRefVolume
-                    , toggledMute = ToggledRefMute
-                    }
-                    model.refOffsetInput
-                    model.refLoaded
-                    model.project.referenceAudio
-                , ScrapShelf.view
-                    { addFromSelection = ClickedAddScrap
-                    , place = ClickedPlaceScrap
-                    , remove = ClickedRemoveScrap
-                    , rename = ChangedScrapName
-                    }
-                    (Set.size model.selectedNoteIds)
-                    model.project.scraps
-                    model.pendingScrapDelete
-                , div [ style "font-size" "0.75rem", style "color" Theme.onSurfaceVariant, style "margin-top" "0.6rem" ]
-                    [ text "Space: 再生/停止（ボタンのEnterは別） ・ Ctrl/Cmd+Z: 元に戻す（Shiftでやり直し） ・ ルーラーか Ctrl/Cmd+クリック・コードをクリック: 再生位置移動 ・ Home/End: 曲頭/曲末へシーク ・ ⏮⏪⏩ かセクション編集欄の「先頭へ」: セクション/曲頭へ移動 ・ Shift+ドラッグ: 矩形選択 ・ Ctrl/Cmd+Shift+A: 選択中セクション内のノートを全選択 ・ ルーラーをshift+ドラッグ: ループ範囲を作成、ハンドルをドラッグで伸縮、[/]: ループの開始/終了を再生位置に設定 ・ ↑↓: 半音移動（Shiftでオクターブ） ・ ←→: 隣のノートを選択（Ctrl/Cmdで横移動、+Shiftで1小節） ・ n: 再生位置にノートを追加（鍵盤表示中は無効） ・ Ctrl/Cmd+C・X・V: コピー・カット・貼付 ・ Delete: 削除 ・ ダブルクリック/右クリック: ノート削除 ・ c: 選択↔カットツール切替 ・ Escape: 選択解除・ツールを選択に戻す（削除確認待ちも解除）" ]
+                , div
+                    [ style "flex" "1 1 auto"
+                    , style "min-width" "0"
+                    , style "overflow-y" "auto"
+                    , style "padding" "0.5rem 1rem 1rem 1rem"
+                    , style "box-sizing" "border-box"
+                    ]
+                    rightPaneChildren
                 ]
-            , div
-                [ style "width" "6px"
-                , style "flex" "0 0 auto"
-                , style "cursor" "col-resize"
-                , style "background" Theme.outlineVariant
-                , style "touch-action" "none"
-                , Html.Events.on "pointerdown" (Decode.map PressedPaneDivider (Decode.field "clientX" Decode.float))
-                ]
-                []
-            , div
-                [ style "flex" "1 1 auto"
-                , style "min-width" "0"
-                , style "overflow-y" "auto"
-                , style "padding" "0.5rem 1rem 1rem 1rem"
-                , style "box-sizing" "border-box"
-                ]
-                [ div [ style "margin-top" "0", style "font-size" "0.9rem" ]
-                    [ text ("編集中: " ++ selectedTrackName ++ selectionInfo) ]
-                , let
-                    durationSelect =
-                        div [ style "margin-top" "0.5rem", style "display" "flex", style "align-items" "center", style "gap" "0.4rem" ]
-                            [ span [ style "font-size" "0.85rem" ] [ text "音価（新規配置時の長さ）: " ]
-                            , Html.select [ onInput ChangedDefaultDuration ]
-                                (List.map
-                                    (\( ticks, label_ ) ->
-                                        Html.option
-                                            [ value (String.fromInt ticks)
-                                            , Html.Attributes.selected (ticks == model.defaultNoteDuration)
-                                            ]
-                                            [ text label_ ]
-                                    )
-                                    [ ( Data.Time.gridTicks Data.Time.SixteenthTriplet, "三連 16分音符" )
-                                    , ( Data.Time.ticksPerSixteenth, "16分音符" )
-                                    , ( Data.Time.gridTicks Data.Time.EighthTriplet, "三連 8分音符" )
-                                    , ( Data.Time.ticksPerSixteenth * 2, "8分音符" )
-                                    , ( Data.Time.ppq * 2 // 3, "三連 4分音符" )
-                                    , ( Data.Time.ticksPerSixteenth * 3, "付点8分音符" )
-                                    , ( Data.Time.ticksPerSixteenth * 4, "4分音符" )
-                                    , ( Data.Time.ticksPerSixteenth * 8, "2分音符" )
-                                    , ( Data.Time.ticksPerSixteenth * 16, "全音符" )
-                                    ]
-                                )
-                            ]
-
-                    gridSelect =
-                        div [ style "margin-top" "0.3rem", style "display" "flex", style "align-items" "center", style "gap" "0.4rem" ]
-                            [ span [ style "font-size" "0.85rem" ] [ text "グリッド: " ]
-                            , Html.select [ onInput ChangedGridUnit ]
-                                (List.map
-                                    (\unit ->
-                                        Html.option
-                                            [ value (Data.Time.gridUnitToString unit)
-                                            , Html.Attributes.selected (unit == model.gridUnit)
-                                            ]
-                                            [ text (Data.Time.gridLabel unit) ]
-                                    )
-                                    [ Data.Time.Sixteenth, Data.Time.EighthTriplet, Data.Time.SixteenthTriplet ]
-                                )
-                            ]
-
-                    pianoRollConfig =
-                        { pressedEmpty =
-                            case model.tool of
-                                PianoRoll.PointerTool ->
-                                    PressedEmptyCell
-
-                                PianoRoll.CutTool ->
-                                    PressedCutAt
-                        , pressedNote = PressedNote
-                        , draggedWhilePressingNote = \pos -> DraggedTo { clientX = pos.clientX, clientY = pos.clientY, alt = pos.alt }
-                        , releasedNotePress = ReleasedDrag
-                        , doubleClickedNote = DoubleClickedNote
-                        , rightClickedNote = RightClickedNote
-                        , pressedRuler = PressedRuler
-                        , pressedLoopHandle = PressedLoopHandle
-                        , pressedKey = PressedPianoKey
-                        , wheelZoomedRuler = WheelZoomedRuler
-                        , clickedChord = ClickedChordAt
-                        , doubleClickedChord = DoubleClickedChordStripAt
-                        , hoveredNote = HoveredNote
-                        , unhoveredNote = UnhoveredNote
-                        , scrolled = ScrolledPianoRoll
-                        , pressedVelocityBar = PressedVelocityBar
-                        , movedCutGuide = MovedCutGuide
-                        , clearedCutGuide = ClearedCutGuide
-                        }
-
-                    pianoRollOpts =
-                        { notes = trackNotes model
-                        , selectedIds = model.selectedNoteIds
-                        , playheadTicks = model.playheadTicks
-                        , sections = sectionSpans model.project
-                        , totalBars = totalBarsFor model.project
-                        , rubberBand = rubberBandRect model.rubberBand
-                        , highlightedPitch = Set.union model.highlightedPitches model.heldKeyPitches
-                        , scalePitchClasses = Data.Key.scalePitchClasses (Data.Timeline.keyAt (scaleReferenceTicks model) timeline)
-                        , loop = displayedLoop model.loopDrag model
-                        , loopEditable = model.loopMode == LoopRange
-                        , waveform = refWaveform
-                        , ghostNoteGroups = ghostNoteGroups model timeline
-                        , pxPerSixteenth = model.pianoRollZoom
-                        , gridUnit = model.gridUnit
-                        , chordSpans = chordSpans
-                        , tool = model.tool
-                        , cutGuideTicks = model.cutGuideTicks
-                        }
-
-                    toolToggle =
-                        div [ style "margin-top" "0.3rem", style "display" "flex", style "align-items" "center", style "gap" "0.4rem" ]
-                            [ span [ style "font-size" "0.85rem" ] [ text "ツール: " ]
-                            , button
-                                (Style.toggleButton (model.tool == PianoRoll.PointerTool)
-                                    ++ [ onClick (SelectedTool PianoRoll.PointerTool)
-                                       , Html.Attributes.title "選択・移動・リサイズ（c でカットと切替、Escape でも戻る）"
-                                       ]
-                                )
-                                [ text "🖱 選択" ]
-                            , button
-                                (Style.toggleButton (model.tool == PianoRoll.CutTool)
-                                    ++ [ onClick (SelectedTool PianoRoll.CutTool)
-                                       , Html.Attributes.title "クリック位置でノートを分割（c で切替）"
-                                       ]
-                                )
-                                [ text "✂ カット" ]
-                            ]
-
-                    pianoRollView =
-                        div [] [ durationSelect, gridSelect, toolToggle, PianoRoll.view pianoRollConfig pianoRollOpts ]
-
-                    chordParseErrors =
-                        Data.ChordTrack.cells timeline model.project.chordTrack
-                            |> List.concatMap
-                                (\cell ->
-                                    cell.chords
-                                        |> List.filterMap
-                                            (\c ->
-                                                case c.result of
-                                                    Err reason ->
-                                                        Just ("小節" ++ String.fromInt (cell.barIndex + 1) ++ ": \"" ++ c.token ++ "\" を解釈できません（" ++ reason ++ "）")
-
-                                                    Ok _ ->
-                                                        Nothing
-                                            )
-                                )
-
-                    chordTrackMainView =
-                        div []
-                            [ div [ style "margin-top" "0.5rem", style "display" "flex", style "align-items" "center", style "flex-wrap" "wrap", style "gap" "0.3rem" ]
-                                [ button
-                                    (Style.baseButton
-                                        ++ [ onClick ToggledChordProgressionModal
-                                           , Html.Attributes.title "表示/非表示を切替え"
-                                           ]
-                                    )
-                                    [ text
-                                        (if model.chordProgressionModalOpen then
-                                            "✦ コード進行を閉じる"
-
-                                         else
-                                            "✦ コード進行を編集"
-                                        )
-                                    ]
-                                , button
-                                    (Style.baseButton
-                                        ++ [ onClick ToggledChordBlockView
-                                           , style "margin-left" "0.4rem"
-                                           , Html.Attributes.title "ブロック表示とライン表示を切り替え"
-                                           ]
-                                    )
-                                    [ text
-                                        (if model.chordBlockView then
-                                            "📈 ライン表示に切替"
-
-                                         else
-                                            "📦 ブロック表示に切替"
-                                        )
-                                    ]
-                                , Style.divider
-                                , span [ style "font-size" "0.75rem", style "color" Theme.onSurfaceVariant ] [ text "リズム:" ]
-                                , ChordEditor.rhythmSelect chordEditorConfig model.project.chordTrack.rhythm
-                                ]
-                            , if model.chordProgressionModalOpen then
-                                ChordEditor.progressionEditorView chordEditorConfig (Maybe.withDefault "" model.chordSheetDraft)
-
-                              else
-                                text ""
-                            , if List.isEmpty chordParseErrors then
-                                text ""
-
-                              else
-                                div [ style "margin-top" "0.4rem", style "font-size" "0.75rem", style "color" Theme.error ]
-                                    (List.map (\msg -> div [] [ text msg ]) chordParseErrors)
-                            , if model.chordBlockView then
-                                ChordBlocks.view
-                                    { clickedChord = pianoRollConfig.clickedChord, doubleClickedToken = DoubleClickedChordToken }
-                                    timeline
-                                    model.playheadTicks
-                                    model.project.chordTrack
-
-                              else
-                                PianoRoll.chordTrackView pianoRollConfig
-                                    pianoRollOpts
-                                    (Just (Data.StrumExpand.previewNotes model.project.guitarFormEnabled (effectiveVoicings model) timeline model.project.chordTrack))
-                                    { config =
-                                        { pressedToken = PressedChordToken
-                                        , pressedLane = PressedChordLane
-                                        , doubleClickedToken = DoubleClickedChordToken
-                                        , draggedWhilePressingToken = DraggedTo
-                                        , releasedTokenPress = ReleasedDrag
-                                        }
-                                    , tokenSpans = Data.ChordTrack.tokenSpans timeline model.project.chordTrack
-                                    , selectedKeys = model.selectedChordKeys
-                                    , rubberBand =
-                                        model.chordRubberBand
-                                            |> Maybe.map (\crb -> { x = Basics.min crb.originX crb.curX, w = abs (crb.curX - crb.originX) })
-                                    }
-                            ]
-                  in
-                  if model.selectedTrackId == Data.ChordTrack.trackId then chordTrackMainView else case selectedTrackKind model of
-                    Just (DrumTrack _) ->
-                        div []
-                            [ button (Style.baseButton ++ [ onClick ToggledDrumView, style "margin-top" "0.5rem" ])
-                                [ text
-                                    (if model.drumViewRoll then
-                                        "🥁 ステップグリッドで編集"
-
-                                     else
-                                        "🎹 ピアノロールで編集（選択・移動・コピペ）"
-                                    )
-                                ]
-                            , if model.drumViewRoll then
-                                pianoRollView
-
-                              else
-                                div []
-                                    [ gridSelect
-                                    , DrumEditor.view
-                                        { pressedCell = PressedDrumCell
-                                        , rightClickedCell = RightClickedDrumCell
-                                        , doubleClickedCell = DoubleClickedDrumCell
-                                        , pressedVelocityBar = PressedVelocityBar
-                                        , appliedPreset = AppliedDrumPreset
-                                        , changedFillBars = ChangedDrumFillBars
-                                        , pressedRuler = PressedRuler
-                                        , pressedLoopHandle = PressedLoopHandle
-                                        , wheelZoomedRuler = WheelZoomedRuler
-                                        , scrolled = ScrolledPianoRoll
-                                        }
-                                        { sections = sectionSpans model.project
-                                        , totalBars = totalBarsFor model.project
-                                        , fillBars = model.drumFillBars
-                                        , notes = trackNotes model
-                                        , selectedIds = model.selectedNoteIds
-                                        , playheadTicks = model.playheadTicks
-                                        , pxPerSixteenth = model.pianoRollZoom
-                                        , gridUnit = model.gridUnit
-                                        , loop = displayedLoop model.loopDrag model
-                                        , loopEditable = model.loopMode == LoopRange
-                                        , rubberBand = rubberBandRect model.rubberBand
-                                        }
-                                    ]
-                            ]
-
-                    _ ->
-                        pianoRollView
-                , Keyboard.view
-                    { pressedKey = PressedPianoKey
-                    , toggled = ToggledKeyboard
-                    }
-                    (Set.union model.highlightedPitches model.heldKeyPitches)
-                    model.showKeyboard
-                ]
-            ]
         , if model.wavExportModalOpen then
             Modal.view ClosedWavExportModal
                 [ div [ style "min-width" "20rem" ]
@@ -5520,6 +5626,30 @@ hoveredFretCellTooltipView model =
                         ++ ")"
                     )
                 ]
+
+
+{-| 画面幅が狭いかどうか。800px未満を「狭い」とする。width == 0（起動直後、Browser.Dom.getViewportの
+Task解決前の1フレーム）は「広い」扱いにしてPCレイアウトをデフォルトにする。Modelには保持せず、
+view内で都度計算する派生値として扱う（ResizedWindowとの同期バグを避けるため）。
+-}
+isNarrowLayout : Model -> Bool
+isNarrowLayout model =
+    model.windowSize.width > 0 && model.windowSize.width < 800
+
+
+{-| 狭画面でのタブ切替バー。「編集」（NarrowMain、右ペイン相当）と「トラック・素材」（NarrowSide、左ペイン相当）の2つを
+切り替える。FormPicker.elmのタブバーと同様、Style.toggleButtonを使う。
+-}
+narrowTabBar : NarrowPane -> Html Msg
+narrowTabBar current =
+    div [ style "display" "flex", style "gap" "0.3rem", style "padding" "0.3rem 1rem", style "flex" "0 0 auto" ]
+        [ button
+            (Style.toggleButton (current == NarrowMain) ++ [ onClick (SelectedNarrowPane NarrowMain) ])
+            [ text "編集" ]
+        , button
+            (Style.toggleButton (current == NarrowSide) ++ [ onClick (SelectedNarrowPane NarrowSide) ])
+            [ text "トラック・素材" ]
+        ]
 
 
 {-| いずれかのドラッグが進行中か。trueの間だけviewDragOverlayを出してpointermove/pointerupを拾う。
