@@ -703,6 +703,7 @@ cssRules =
     , ".m3-btn:hover::after { opacity: 0.08; }"
     , ".m3-btn:active::after { opacity: 0.10; }"
     , ".m3-btn:focus-visible::after { opacity: 0.10; }"
+    , "@media (max-width: 799px) { .m3-btn { padding: 0.55rem 0.9rem !important; } }"
     , ".m3-hit { transition: filter 0.1s; }"
     , ".m3-hit:hover { filter: brightness(0.94); }"
     , rootBlock
