@@ -337,7 +337,7 @@ chordTrackView config opts previewNotes chordLane =
                 , HA.style "border" ("1px solid " ++ Theme.outlineVariant)
                 , HA.style "display" "flex"
                 ]
-                [ keyColumn config False True False opts.highlightedPitch opts.scalePitchClasses opts.isNarrow
+                [ keyColumn config (opts.waveform /= Nothing) True False opts.highlightedPitch opts.scalePitchClasses opts.isNarrow
                 , Html.div
                     [ HA.id pianoRollScrollId
                     , HA.style "overflow-x" "auto"
@@ -348,6 +348,7 @@ chordTrackView config opts previewNotes chordLane =
                     ]
                     [ rulerView config opts
                     , laneHtml ChordStrip.height
+                    , waveformView opts
                     , chordTrackNoteGrid config opts notes
                     , velocityLaneViewReadOnly
                         { pxPerSixteenth = opts.pxPerSixteenth
