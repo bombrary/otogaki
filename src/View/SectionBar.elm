@@ -305,43 +305,55 @@ view layout config rulerData chordSpans waveform extras selectedId sections pend
         totalBars =
             List.sum (List.map .lengthBars sections)
     in
-    div [ HA.style "margin-top" "1rem" ]
-        [ div [ HA.style "display" "flex", HA.style "align-items" "center", HA.style "gap" "0.3rem", HA.style "margin-bottom" "0.2rem" ]
-            [ span [ HA.style "font-size" "0.85rem" ] [ text "ズーム: " ]
-            , button
-                (Style.baseButton
-                    ++ [ HE.onClick (config.wheelZoomed { deltaY = 100, offsetX = 0 })
-                       , HA.title "セクションバーを縮小"
-                       ]
-                )
-                [ text "🔍－" ]
-            , button
-                (Style.baseButton
-                    ++ [ HE.onClick (config.wheelZoomed { deltaY = -100, offsetX = 0 })
-                       , HA.title "セクションバーを拡大"
-                       ]
-                )
-                [ text "🔍＋" ]
-            ]
+    div [ HA.style "margin-top" (if layout.isShort then "0.25rem" else "1rem") ]
+        [ if layout.isShort then
+            text ""
+
+          else
+            div [ HA.style "display" "flex", HA.style "align-items" "center", HA.style "gap" "0.3rem", HA.style "margin-bottom" "0.2rem" ]
+                [ span [ HA.style "font-size" "0.85rem" ] [ text "ズーム: " ]
+                , button
+                    (Style.baseButton
+                        ++ [ HE.onClick (config.wheelZoomed { deltaY = 100, offsetX = 0 })
+                           , HA.title "セクションバーを縮小"
+                           ]
+                    )
+                    [ text "🔍－" ]
+                , button
+                    (Style.baseButton
+                        ++ [ HE.onClick (config.wheelZoomed { deltaY = -100, offsetX = 0 })
+                           , HA.title "セクションバーを拡大"
+                           ]
+                    )
+                    [ text "🔍＋" ]
+                ]
         , div
             [ HA.id sectionBarScrollId
             , HA.style "overflow-x" "auto"
             ]
             [ regionRulerView layout.isNarrow config rulerData.pxPerBar rulerData.loopEditable rulerData.loop rulerData.ticksToPx rulerData.playheadTicks rulerData.viewRange sections
-            , case waveform of
-                Nothing ->
-                    text ""
+            , if layout.isShort then
+                text ""
 
-                Just w ->
-                    Svg.Lazy.lazy6 waveStrip w.peaks w.peakDt w.secsPerTick w.offsetMs rulerData.pxPerBar sections
-            , ChordStrip.view
-                { clickedChord = config.clickedChord, doubleClickedChord = Just config.doubleClickedChord }
-                { ticksToX = rulerData.ticksToPx
-                , width = totalBars * rulerData.pxPerBar
-                , playheadTicks = rulerData.playheadTicks
-                , height = ChordStrip.height
-                }
-                chordSpans
+              else
+                case waveform of
+                    Nothing ->
+                        text ""
+
+                    Just w ->
+                        Svg.Lazy.lazy6 waveStrip w.peaks w.peakDt w.secsPerTick w.offsetMs rulerData.pxPerBar sections
+            , if layout.isShort then
+                text ""
+
+              else
+                ChordStrip.view
+                    { clickedChord = config.clickedChord, doubleClickedChord = Just config.doubleClickedChord }
+                    { ticksToX = rulerData.ticksToPx
+                    , width = totalBars * rulerData.pxPerBar
+                    , playheadTicks = rulerData.playheadTicks
+                    , height = ChordStrip.height
+                    }
+                    chordSpans
             , div
                 [ HA.style "display" "flex"
                 , HA.style "align-items" "stretch"
@@ -355,6 +367,28 @@ view layout config rulerData chordSpans waveform extras selectedId sections pend
                                     ++ [ HE.onClick config.toggledEditPanel, HA.style "flex" "0 0 auto" ]
                                 )
                                 [ text "⚙ 設定" ]
+                            ]
+
+                        else
+                            []
+                       )
+                    ++ (if layout.isShort then
+                            [ button
+                                (Style.baseButton
+                                    ++ [ HE.onClick (config.wheelZoomed { deltaY = 100, offsetX = 0 })
+                                       , HA.title "セクションバーを縮小"
+                                       , HA.style "flex" "0 0 auto"
+                                       ]
+                                )
+                                [ text "🔍－" ]
+                            , button
+                                (Style.baseButton
+                                    ++ [ HE.onClick (config.wheelZoomed { deltaY = -100, offsetX = 0 })
+                                       , HA.title "セクションバーを拡大"
+                                       , HA.style "flex" "0 0 auto"
+                                       ]
+                                )
+                                [ text "🔍＋" ]
                             ]
 
                         else
