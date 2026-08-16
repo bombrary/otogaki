@@ -37,6 +37,8 @@ view config timeline playheadTicks selectedKeys track =
         , HA.style "gap" "2px"
         , HA.style "margin-top" "0.4rem"
         , HA.style "flex-wrap" "wrap"
+        , HA.style "user-select" "none"
+        , HA.style "-webkit-user-select" "none"
         , HE.on "pointermove" (Decode.map config.draggedWhilePressing View.ChordLane.tokenMoveDecoder)
         , HE.on "pointerup" (Decode.succeed config.releasedPress)
         , HE.on "pointercancel" (Decode.succeed config.releasedPress)
@@ -126,12 +128,17 @@ chordView config tokenKey tick key isCurrent isSelected c =
             [ HA.class "m3-btn"
             , HA.style "cursor" "pointer"
             , HA.style "touch-action" "none"
+            , HA.style "user-select" "none"
+            , HA.style "-webkit-user-select" "none"
             , HA.title "クリックでここから再生（ダブルクリックで運指を選ぶ、ドラッグで入れ替え）"
             , HA.attribute "data-pointer-release-capture" ""
             , HE.onClick (config.clickedChord tick)
             , HE.onDoubleClick (config.doubleClickedToken tokenKey)
-            , HE.stopPropagationOn "pointerdown"
-                (Decode.map (\pos -> ( config.pressedToken tokenKey pos, True )) View.ChordLane.tokenPressDecoder)
+            , HE.custom "pointerdown"
+                (Decode.map
+                    (\pos -> { message = config.pressedToken tokenKey pos, stopPropagation = True, preventDefault = True })
+                    View.ChordLane.tokenPressDecoder
+                )
             ]
 
         degree =
