@@ -5047,8 +5047,8 @@ view model =
                 [ text ("編集中: " ++ selectedTrackName ++ selectionInfo) ]
             , let
                 durationSelect =
-                    div [ style "margin-top" "0.5rem", style "display" "flex", style "align-items" "center", style "gap" "0.4rem" ]
-                        [ span [ style "font-size" "0.85rem" ] [ text "音価（新規配置時の長さ）: " ]
+                    div [ style "display" "flex", style "align-items" "center", style "gap" "0.4rem" ]
+                        [ span [ style "font-size" "0.85rem", Html.Attributes.title "新規配置時のノートの長さ" ] [ text "音価: " ]
                         , Html.select [ onInput ChangedDefaultDuration ]
                             (List.map
                                 (\( ticks, label_ ) ->
@@ -5072,7 +5072,7 @@ view model =
                         ]
 
                 gridSelect =
-                    div [ style "margin-top" "0.3rem", style "display" "flex", style "align-items" "center", style "gap" "0.4rem" ]
+                    div [ style "display" "flex", style "align-items" "center", style "gap" "0.4rem" ]
                         [ span [ style "font-size" "0.85rem" ] [ text "グリッド: " ]
                         , Html.select [ onInput ChangedGridUnit ]
                             (List.map
@@ -5136,9 +5136,8 @@ view model =
                     }
 
                 toolToggle =
-                    div [ style "margin-top" "0.3rem", style "display" "flex", style "align-items" "center", style "gap" "0.4rem" ]
-                        [ span [ style "font-size" "0.85rem" ] [ text "ツール: " ]
-                        , button
+                    div [ style "display" "flex", style "align-items" "center", style "gap" "0.4rem" ]
+                        [ button
                             (Style.toggleButton (model.tool == PianoRoll.PointerTool)
                                 ++ [ onClick (SelectedTool PianoRoll.PointerTool)
                                    , Html.Attributes.title "選択・移動・リサイズ（c でカットと切替、Escape でも戻る）"
@@ -5157,9 +5156,8 @@ view model =
                 {- ホイールが使えないタッチ環境向けのズームボタン。既存のWheelZoomedRulerを直接呼び、offsetXは0（左端を基準にズーム）。
                    デスクトップでも無害なので常時表示。 -}
                 pianoRollZoomButtons =
-                    div [ style "margin-top" "0.3rem", style "display" "flex", style "align-items" "center", style "gap" "0.3rem" ]
-                        [ span [ style "font-size" "0.85rem" ] [ text "ズーム: " ]
-                        , button
+                    div [ style "display" "flex", style "align-items" "center", style "gap" "0.3rem" ]
+                        [ button
                             (Style.baseButton
                                 ++ [ onClick (WheelZoomedRuler { deltaY = 100, offsetX = 0 })
                                    , Html.Attributes.title "ピアノロールを縮小"
@@ -5175,8 +5173,19 @@ view model =
                             [ text "🔍＋" ]
                         ]
 
+                editToolbar =
+                    div
+                        [ style "display" "flex"
+                        , style "flex-wrap" "wrap"
+                        , style "align-items" "center"
+                        , style "column-gap" "0.9rem"
+                        , style "row-gap" "0.3rem"
+                        , style "margin-top" "0.4rem"
+                        ]
+                        [ durationSelect, gridSelect, toolToggle, pianoRollZoomButtons, touchModeToggleView model ]
+
                 pianoRollView =
-                    div [] [ durationSelect, gridSelect, toolToggle, pianoRollZoomButtons, touchModeToggleView model, PianoRoll.view pianoRollConfig pianoRollOpts ]
+                    div [] [ editToolbar, PianoRoll.view pianoRollConfig pianoRollOpts ]
 
                 chordParseErrors =
                     Data.ChordTrack.cells timeline model.project.chordTrack
@@ -5284,8 +5293,8 @@ view model =
 
                           else
                             div []
-                                [ gridSelect
-                                , touchModeToggleView model
+                                [ div [ style "display" "flex", style "flex-wrap" "wrap", style "align-items" "center", style "column-gap" "0.9rem", style "row-gap" "0.3rem" ]
+                                    [ gridSelect, touchModeToggleView model ]
                                 , DrumEditor.view
                                     { pressedCell = PressedDrumCell
                                     , draggedWhilePressingCell = DraggedTo
@@ -5926,8 +5935,8 @@ isSinglePaneLayout model =
 -}
 touchModeToggleView : Model -> Html Msg
 touchModeToggleView model =
-    div [ style "margin-top" "0.3rem", style "display" "flex", style "align-items" "center", style "gap" "0.3rem", style "flex-wrap" "wrap" ]
-        [ span [ style "font-size" "0.85rem" ] [ text "タッチ修飾: " ]
+    div [ style "display" "flex", style "align-items" "center", style "gap" "0.3rem", style "flex-wrap" "wrap" ]
+        [ span [ style "font-size" "0.85rem", Html.Attributes.title "Shift/Alt/Ctrlなどの物理修飾キーの代替操作" ] [ text "修飾: " ]
         , button
             (Style.toggleButton (model.touchMode == TouchNormal)
                 ++ [ onClick (SelectedTouchMode TouchNormal)
