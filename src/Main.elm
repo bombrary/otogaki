@@ -4072,7 +4072,7 @@ updateCore msg model =
         ClickedCopyChordText ->
             ( { model | chordCopyFeedback = True }
             , Cmd.batch
-                [ Ports.copyToClipboard (Data.ChordTrack.toPlainText model.project.chordTrack)
+                [ Ports.copyToClipboard (Data.ChordTrack.toPlainText model.project.chordTrack |> Data.ChordTrack.wrapBarLines 4)
                 , Task.perform (\_ -> ResetCopyFeedback) (Process.sleep 2000)
                 ]
             )

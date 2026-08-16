@@ -24,6 +24,7 @@ module Data.ChordTrack exposing
     , updateToken
     , withVoicingName
     , withoutVoicingName
+    , wrapBarLines
     )
 
 import Data.Chord exposing (Chord)
@@ -759,6 +760,114 @@ toPlainText track =
                         s
             )
         |> String.concat
+
+
+{-| `toPlainText` の出力を `barsPerLine` 小節ごとに改行して整形する（コード譜コピー用）。行のコード部の
+小節数が `barsPerLine` 以下ならその行は完全に無変更で返す（空白・区切りも含めて元のまま）。それを超える行の
+み、`|` 区切りの小節を `barsPerLine` 個ずつのチャンクに分け直し、チャンクごとに改行する。コメント（`//`
+以降）は再整形せず、行末に1つ空白を挟んで付け直す。
+
+再整形されたチャンクの先頭小節が空文字列の場合は行頭に `"| "` を前置する。`Data.ChordSheet.parse` の
+`barsOfContent` は行頭・行末の空チャンクをそれぞれ1つ落とす仕様（`toSheetText.barsLine` と同じ規約）なので、
+これを省くと再パース時に空小節が1つ失われる。4小節超の行のみ小節内の空白が正規化される点に注意。
+-}
+wrapBarLines : Int -> String -> String
+wrapBarLines barsPerLine text =
+    String.split "\n" text
+        |> List.map (wrapLine barsPerLine)
+        |> String.join "\n"
+
+
+wrapLine : Int -> String -> String
+wrapLine barsPerLine line =
+    case String.indexes "//" line of
+        idx :: _ ->
+            let
+                code =
+                    String.left idx line
+
+                comment =
+                    String.dropLeft idx line
+
+                wrapped =
+                    wrapCode barsPerLine code
+            in
+            if wrapped == code then
+                line
+
+            else
+                wrapped ++ " " ++ comment
+
+        [] ->
+            wrapCode barsPerLine line
+
+
+wrapCode : Int -> String -> String
+wrapCode barsPerLine code =
+    let
+        bars =
+            barsOfLineContent code
+    in
+    if List.length bars <= barsPerLine then
+        code
+
+    else
+        chunksOf barsPerLine bars
+            |> List.map wrappedBarsLine
+            |> String.join "\n"
+
+
+{-| `Data.ChordSheet.barsOfContent` と同じ規約（行頭・行末の空チャンクを1つずつ落とす、各小節をtrim）で
+`|` 区切りの小節リストを取り出す。
+-}
+barsOfLineContent : String -> List String
+barsOfLineContent content =
+    let
+        dropFirstIfBlank chunks =
+            case chunks of
+                first :: rest ->
+                    if first == "" then
+                        rest
+
+                    else
+                        chunks
+
+                [] ->
+                    []
+
+        dropLastIfBlank chunks =
+            chunks |> List.reverse |> dropFirstIfBlank |> List.reverse
+    in
+    String.split "|" content
+        |> List.map String.trim
+        |> dropFirstIfBlank
+        |> dropLastIfBlank
+
+
+chunksOf : Int -> List a -> List (List a)
+chunksOf n xs =
+    case xs of
+        [] ->
+            []
+
+        _ ->
+            List.take n xs :: chunksOf n (List.drop n xs)
+
+
+{-| `Data.ChordSheet.toSheetText` の `barsLine` と同じ規約（先頭小節が空なら `"| "` を前置、行末は常に
+`" |"`）で小節リストを1行のテキストに戻す。
+-}
+wrappedBarsLine : List String -> String
+wrappedBarsLine bars =
+    let
+        leading =
+            if (List.head bars |> Maybe.withDefault "") == "" then
+                "| "
+
+            else
+                ""
+    in
+    leading ++ String.join " | " bars ++ " |"
 
 
 plainWord : String -> String
