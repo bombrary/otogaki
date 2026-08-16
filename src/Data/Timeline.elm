@@ -170,19 +170,23 @@ ticksToFractionalBar ticks timeline =
 -}
 fractionalBarToTicks : Float -> Timeline -> Int
 fractionalBarToTicks fractionalBar timeline =
-    let
-        wholeBar =
-            floor fractionalBar
+    if fractionalBar < 0 then
+        0
 
-        frac =
-            fractionalBar - toFloat wholeBar
-    in
-    case barAt wholeBar timeline of
-        Just bar ->
-            bar.startTicks + round (frac * toFloat bar.lengthTicks)
+    else
+        let
+            wholeBar =
+                floor fractionalBar
 
-        Nothing ->
-            totalTicks timeline
+            frac =
+                fractionalBar - toFloat wholeBar
+        in
+        case barAt wholeBar timeline of
+            Just bar ->
+                bar.startTicks + round (frac * toFloat bar.lengthTicks)
+
+            Nothing ->
+                totalTicks timeline
 
 
 meterAt : Int -> Timeline -> Meter

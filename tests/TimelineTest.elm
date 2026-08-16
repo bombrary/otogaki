@@ -142,6 +142,17 @@ suite =
                         Meter.ticksPerBar Meter.default * 3
                 in
                 Expect.equal ticks (Timeline.fractionalBarToTicks (Timeline.ticksToFractionalBar ticks tl) tl)
+        , test "fractionalBarToTicks は負の入力を 0 にクランプする（小節0より左に振っても末尾にワープしない）" <|
+            \_ ->
+                let
+                    tl =
+                        Timeline.fromSections { minBars = 4 } []
+                in
+                Expect.all
+                    [ \_ -> Expect.equal 0 (Timeline.fractionalBarToTicks -0.3 tl)
+                    , \_ -> Expect.equal 0 (Timeline.fractionalBarToTicks -5 tl)
+                    ]
+                    ()
         , test "拍子が変わるセクションをまたいでも正しい小数点位置を返す" <|
             \_ ->
                 let
