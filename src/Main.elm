@@ -178,6 +178,7 @@ type alias Model =
     , heldKeyPitches : Set Int
     , followPlayhead : Bool
     , metronomeEnabled : Bool
+    , metronomeVolume : Int
     , loopRange : Maybe Performance.Loop
     , loopDrag : Maybe LoopDrag
     , lastEditLabel : String
@@ -400,6 +401,7 @@ type Msg
     | ChangedGridUnit String
     | ToggledFollowPlayhead
     | ToggledMetronome
+    | ChangedMetronomeVolume String
     | GotPianoRollViewport Int (Result Browser.Dom.Error Browser.Dom.Viewport)
     | PressedLoopHandle Bool Float
     | WheelZoomedRuler { deltaY : Float, offsetX : Float }
@@ -489,6 +491,7 @@ init flags =
       , heldKeyPitches = Set.empty
       , followPlayhead = True
       , metronomeEnabled = False
+      , metronomeVolume = 100
       , loopRange = Nothing
       , loopDrag = Nothing
       , lastEditLabel = ""
@@ -1586,7 +1589,7 @@ update msg model =
 
         syncCmds =
             if newModel.playState == Playing && not stillDragging && (projectChanged || isReleasedDrag msg) then
-                [ Ports.toAudio (Performance.encodeUpdateEvents { metronome = newModel.metronomeEnabled } newModel.project) ]
+                [ Ports.toAudio (Performance.encodeUpdateEvents { metronome = newModel.metronomeEnabled, metronomeVolume = newModel.metronomeVolume } newModel.project) ]
 
             else
                 []
@@ -1636,7 +1639,7 @@ startPlay loop startTicks model =
         | playState = Playing
         , instrumentLoad = markLoading instrumentNames model.instrumentLoad
       }
-    , Ports.toAudio (Performance.encodePlay { loop = loop, startTicks = startTicks, metronome = model.metronomeEnabled } model.project)
+    , Ports.toAudio (Performance.encodePlay { loop = loop, startTicks = startTicks, metronome = model.metronomeEnabled, metronomeVolume = model.metronomeVolume } model.project)
     )
 
 
@@ -4818,11 +4821,25 @@ updateCore msg model =
             in
             ( newModel
             , if model.playState == Playing then
-                Ports.toAudio (Performance.encodeUpdateEvents { metronome = newModel.metronomeEnabled } newModel.project)
+                Ports.toAudio (Performance.encodeUpdateEvents { metronome = newModel.metronomeEnabled, metronomeVolume = newModel.metronomeVolume } newModel.project)
 
               else
                 Cmd.none
             )
+
+        ChangedMetronomeVolume raw ->
+            case String.toInt raw of
+                Just vol ->
+                    let
+                        clamped =
+                            clamp 0 100 vol
+                    in
+                    ( { model | metronomeVolume = clamped }
+                    , Ports.toAudio (Performance.encodeSetVolume Performance.metronomeTrackId clamped)
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
 
         GotPianoRollViewport ticks result ->
             case result of
@@ -5570,6 +5587,16 @@ view model =
                            ]
                     )
                     [ text "🕰 クリック" ]
+                , Html.input
+                    [ Html.Attributes.type_ "range"
+                    , Html.Attributes.min "0"
+                    , Html.Attributes.max "100"
+                    , Html.Attributes.value (String.fromInt model.metronomeVolume)
+                    , onInput ChangedMetronomeVolume
+                    , Html.Attributes.style "width" "70px"
+                    , Html.Attributes.title ("メトロノーム音量 " ++ String.fromInt model.metronomeVolume)
+                    ]
+                    []
                 ]
 
         undoGroup =

@@ -37,14 +37,14 @@ type alias Loop =
     }
 
 
-encodePlay : { loop : Maybe Loop, startTicks : Int, metronome : Bool } -> Project -> Encode.Value
+encodePlay : { loop : Maybe Loop, startTicks : Int, metronome : Bool, metronomeVolume : Int } -> Project -> Encode.Value
 encodePlay opts project =
     command "play"
         (Encode.object
             [ ( "bpm", Encode.float project.bpm )
             , ( "ppq", Encode.int Data.Time.ppq )
             , ( "events", Encode.list encodeEvent (eventsWithMetronome opts.metronome project) )
-            , ( "tracks", trackMetas project )
+            , ( "tracks", trackMetas opts.metronomeVolume project )
             , ( "loop", encodeLoop opts.loop )
             , ( "startTicks", Encode.int opts.startTicks )
             , ( "refAudio", encodeRefAudio project.referenceAudio )
@@ -83,7 +83,7 @@ encodeRenderWav opts project =
             [ ( "bpm", Encode.float project.bpm )
             , ( "ppq", Encode.int Data.Time.ppq )
             , ( "events", Encode.list encodeEvent (toEvents project) )
-            , ( "tracks", trackMetas project )
+            , ( "tracks", trackMetas 100 project )
             , ( "loop", encodeLoop opts.loop )
             , ( "fileName", Encode.string opts.fileName )
             ]
@@ -92,13 +92,13 @@ encodeRenderWav opts project =
 
 {-| 再生中にイベント列だけ差し替える（トランスポートは止めない）。
 -}
-encodeUpdateEvents : { metronome : Bool } -> Project -> Encode.Value
+encodeUpdateEvents : { metronome : Bool, metronomeVolume : Int } -> Project -> Encode.Value
 encodeUpdateEvents opts project =
     command "updateEvents"
         (Encode.object
             [ ( "ppq", Encode.int Data.Time.ppq )
             , ( "events", Encode.list encodeEvent (eventsWithMetronome opts.metronome project) )
-            , ( "tracks", trackMetas project )
+            , ( "tracks", trackMetas opts.metronomeVolume project )
             , ( "refAudio", encodeRefAudio project.referenceAudio )
             ]
         )
@@ -113,9 +113,26 @@ encodeRefAudio ra =
         ]
 
 
-trackMetas : Project -> Encode.Value
-trackMetas project =
-    Encode.list identity (List.map encodeTrackMeta project.tracks ++ [ chordTrackMeta project.chordTrack ])
+trackMetas : Int -> Project -> Encode.Value
+trackMetas metronomeVolume project =
+    Encode.list identity
+        (List.map encodeTrackMeta project.tracks
+            ++ [ chordTrackMeta project.chordTrack, metronomeMeta metronomeVolume ]
+        )
+
+
+{-| メトロノームの音量をJS側のvolumeMapに見せるためのトラックメタ。trackMetasに常時含めることで、
+audio.jsのapplyTrackMetaがplay/updateEventsのたびにvolumeMapを全リセットしてもmetronomeTrackIdの音量が
+100にフォールバックしないようにする。
+-}
+metronomeMeta : Int -> Encode.Value
+metronomeMeta volume =
+    Encode.object
+        [ ( "id", Encode.int metronomeTrackId )
+        , ( "instrument", Encode.string (Data.Track.instrumentToString Data.Track.DrumKit) )
+        , ( "muted", Encode.bool False )
+        , ( "volume", Encode.int volume )
+        ]
 
 
 encodeStop : Encode.Value
