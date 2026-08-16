@@ -298,8 +298,8 @@ sectionDragTargetIndex pxPerBar sections currentIndex accumDx =
                     Nothing
 
 
-view : Config msg -> RulerData -> List ChordSpan -> Maybe WaveformData -> BlockExtras -> Maybe Int -> List Section -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> Html msg
-view config rulerData chordSpans waveform extras selectedId sections pendingDeleteId resizePreview =
+view : Bool -> Config msg -> RulerData -> List ChordSpan -> Maybe WaveformData -> BlockExtras -> Maybe Int -> List Section -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> Html msg
+view isNarrow config rulerData chordSpans waveform extras selectedId sections pendingDeleteId resizePreview =
     let
         totalBars =
             List.sum (List.map .lengthBars sections)
@@ -326,7 +326,7 @@ view config rulerData chordSpans waveform extras selectedId sections pendingDele
             [ HA.id sectionBarScrollId
             , HA.style "overflow-x" "auto"
             ]
-            [ regionRulerView config rulerData.pxPerBar rulerData.loopEditable rulerData.loop rulerData.ticksToPx rulerData.playheadTicks rulerData.viewRange sections
+            [ regionRulerView isNarrow config rulerData.pxPerBar rulerData.loopEditable rulerData.loop rulerData.ticksToPx rulerData.playheadTicks rulerData.viewRange sections
             , case waveform of
                 Nothing ->
                     text ""
@@ -346,7 +346,7 @@ view config rulerData chordSpans waveform extras selectedId sections pendingDele
                 , HA.style "align-items" "stretch"
                 , HA.style "flex-wrap" "nowrap"
                 ]
-                (List.indexedMap (blockView config rulerData.pxPerBar selectedId resizePreview extras) sections
+                (List.indexedMap (blockView isNarrow config rulerData.pxPerBar selectedId resizePreview extras) sections
                     ++ [ button (Style.baseButton ++ [ HE.onClick config.add, HA.style "flex" "0 0 auto" ]) [ text "+ セクション" ] ]
                 )
             ]
@@ -363,8 +363,8 @@ view config rulerData chordSpans waveform extras selectedId sections pendingDele
 表示を全て担う対話型ルーラー。`PianoRoll.elm` の `rulerView`/`loopBandView`/`loopHandle`/`playheadLine` と同じ形を
 このスケール（`pxPerBar`）向けにミラーしている。
 -}
-regionRulerView : Config msg -> Int -> Bool -> Maybe { startTicks : Int, endTicks : Int } -> (Int -> Float) -> Int -> Maybe { startTicks : Int, endTicks : Int } -> List Section -> Html msg
-regionRulerView config pxPerBar loopEditable loop ticksToPx playheadTicks viewRange sections =
+regionRulerView : Bool -> Config msg -> Int -> Bool -> Maybe { startTicks : Int, endTicks : Int } -> (Int -> Float) -> Int -> Maybe { startTicks : Int, endTicks : Int } -> List Section -> Html msg
+regionRulerView isNarrow config pxPerBar loopEditable loop ticksToPx playheadTicks viewRange sections =
     let
         totalBars =
             List.sum (List.map .lengthBars sections)
@@ -433,8 +433,8 @@ regionRulerView config pxPerBar loopEditable loop ticksToPx playheadTicks viewRa
                     in
                     band
                         :: (if loopEditable then
-                                [ regionLoopHandle config False x0
-                                , regionLoopHandle config True x1
+                                [ regionLoopHandle isNarrow config False x0
+                                , regionLoopHandle isNarrow config True x1
                                 ]
 
                             else
@@ -514,13 +514,28 @@ wheelDecoder =
 {-| ループ帯の端をつまんで伸縮するためのハンドル。`PianoRoll.loopHandle` と同じ形だが、このルーラーの高さ（regionRulerHeight）に
 合わせて小さめにしている。
 -}
-regionLoopHandle : Config msg -> Bool -> Float -> Svg.Svg msg
-regionLoopHandle config isEnd x =
+regionLoopHandle : Bool -> Config msg -> Bool -> Float -> Svg.Svg msg
+regionLoopHandle isNarrow config isEnd x =
+    let
+        handleWidth =
+            if isNarrow then
+                14.0
+
+            else
+                10.0
+
+        handleHeight =
+            if isNarrow then
+                16.0
+
+            else
+                12.0
+    in
     Svg.rect
-        [ SA.x (String.fromFloat (x - 5))
+        [ SA.x (String.fromFloat (x - handleWidth / 2))
         , SA.y "2"
-        , SA.width "10"
-        , SA.height "12"
+        , SA.width (String.fromFloat handleWidth)
+        , SA.height (String.fromFloat handleHeight)
         , SA.fill Style.colorLoopHandle
         , SA.cursor "ew-resize"
         , HA.style "touch-action" "none"
@@ -530,8 +545,8 @@ regionLoopHandle config isEnd x =
         []
 
 
-blockView : Config msg -> Int -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> BlockExtras -> Int -> Section -> Html msg
-blockView config pxPerBar selectedId resizePreview extras idx section =
+blockView : Bool -> Config msg -> Int -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> BlockExtras -> Int -> Section -> Html msg
+blockView isNarrow config pxPerBar selectedId resizePreview extras idx section =
     let
         selected =
             selectedId == Just section.id
@@ -605,7 +620,13 @@ blockView config pxPerBar selectedId resizePreview extras idx section =
             , HA.style "right" "0"
             , HA.style "top" "0"
             , HA.style "bottom" "0"
-            , HA.style "width" "6px"
+            , HA.style "width"
+                (if isNarrow then
+                    "14px"
+
+                 else
+                    "6px"
+                )
             , HA.style "cursor" "ew-resize"
             , HA.style "background" (Palette.sectionColor idx)
             , HA.style "border-radius" "0 3px 3px 0"

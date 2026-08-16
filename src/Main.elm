@@ -5513,6 +5513,7 @@ view model =
                     ]
                 )
             , SectionBar.view
+                (isNarrowLayout model)
                 { select = SelectedSection
                 , add = ClickedAddSection
                 , remove = ClickedRemoveSection
@@ -5580,7 +5581,7 @@ view model =
                     ]
                     leftPaneChildren
                 , div
-                    [ style "width" "6px"
+                    [ style "width" "10px"
                     , style "flex" "0 0 auto"
                     , style "cursor" "col-resize"
                     , style "background" Theme.outlineVariant
