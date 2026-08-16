@@ -5508,10 +5508,23 @@ view model =
         ]
         [ Style.focusCss
         , Palette.globalCss
-        , div [ style "padding" "0.5rem 1rem 0 1rem", style "flex" "0 0 auto" ]
-            [ h1 [ style "font-size" "1.3rem", style "margin" "0 0 0.3rem 0" ] [ text "音書き otogaki" ]
+        , div
+            [ style "padding"
+                (if isShortViewport model then
+                    "0.25rem 0.75rem 0 0.75rem"
+
+                 else
+                    "0.5rem 1rem 0 1rem"
+                )
+            , style "flex" "0 0 auto"
+            ]
+            [ if isShortViewport model then
+                text ""
+
+              else
+                h1 [ style "font-size" "1.3rem", style "margin" "0 0 0.3rem 0" ] [ text "音書き otogaki" ]
             , div [ style "display" "flex", style "flex-wrap" "wrap", style "gap" "0.5rem", style "align-items" "center" ]
-                (if isNarrowLayout model then
+                (if isCompactHeader model then
                     [ transportGroup
                     , Style.divider
                     , undoGroup
@@ -5520,7 +5533,15 @@ view model =
                     , statusGroup
                     ]
                         ++ (if model.headerMenuOpen then
-                                [ div [ style "display" "flex", style "flex-direction" "column", style "gap" "0.5rem", style "flex" "1 1 100%", style "padding" "0.5rem", style "background" Theme.surfaceContainerHigh, style "border-radius" Theme.shapeS ]
+                                [ div
+                                    ([ style "display" "flex", style "flex-direction" "column", style "gap" "0.5rem", style "flex" "1 1 100%", style "padding" "0.5rem", style "background" Theme.surfaceContainerHigh, style "border-radius" Theme.shapeS ]
+                                        ++ (if isShortViewport model then
+                                                [ style "max-height" "45vh", style "overflow-y" "auto" ]
+
+                                            else
+                                                []
+                                           )
+                                    )
                                     [ themeGroup
                                     , loopGroup
                                     , bpmGroup
@@ -5860,13 +5881,23 @@ hoveredFretCellTooltipView model =
                 ]
 
 
-{-| 画面幅が狭いかどうか。800px未満を「狭い」とする。width == 0（起動直後、Browser.Dom.getViewportの
-Task解決前の1フレーム）は「広い」扱いにしてPCレイアウトをデフォルトにする。Modelには保持せず、
-view内で都度計算する派生値として扱う（ResizedWindowとの同期バグを避けるため）。
+{-| ビューポートの高さが低いか（横向きフォンを想定）。高さ500px未満を基準とする。
+横向きフォンのCSS高さは実質~300-430、タブレット横の高さ下限（iPad mini）が744、デスクトップの実用
+ウィンドウ高はほぼ常に≥600なので、その間の空白帯に500を置く。小型デスクトップウィンドウを極端に低くした場合も
+誤爆しうるが、ハンバーガーメニュー経由で全機能到達可能なので機能喪失はない（graceful degradation）。
 -}
-isNarrowLayout : Model -> Bool
-isNarrowLayout model =
-    model.windowSize.width > 0 && model.windowSize.width < 800
+isShortViewport : Model -> Bool
+isShortViewport model =
+    model.windowSize.height > 0 && model.windowSize.height < 500
+
+
+{-| ヘッダーツールバーをハンバーガーに折りたたむか。幅800px未満（従来の基準）または低高さ
+（isShortViewport）のときに折りたたむ。横向きフォン（幅は広くても高さが低い）をカバーするため、
+幅基準のみだった従来より広い条件でコンパクト化する。bodyの2ペイン/1ペイン判定（isSinglePaneLayout）とは独立。
+-}
+isCompactHeader : Model -> Bool
+isCompactHeader model =
+    (model.windowSize.width > 0 && model.windowSize.width < 800) || isShortViewport model
 
 
 {-| タッチ寸法（PianoRoll rowHeight拡大、SectionBarハンドル拡大、.m3-btnパディング拡大）を適用するか。
