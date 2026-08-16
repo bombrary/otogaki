@@ -1,6 +1,10 @@
 import * as Tone from "tone";
 import { DrumMachine, ElectricPiano, Mallet, Mellotron, Smolken, Soundfont, SplendidGrandPiano } from "smplr";
 
+// Elm 側 Codec.Performance.metronomeTrackId と一致させる。自然停止の終端計算からメトロノームの
+// クリックを除外するために使う（timeline 末尾の余白小節に食い込むのを防ぐ）。
+const METRONOME_TRACK_ID = -2;
+
 let started = false;
 let synth = null;
 let part = null;
@@ -522,10 +526,9 @@ function scheduleNaturalStop(events, ppq) {
     stopEventId = null;
   }
   if (t.loop) return;
-  let endTicks = events.reduce(
-    (acc, e) => Math.max(acc, e.ticks + e.durationTicks),
-    0
-  );
+  let endTicks = events
+    .filter((e) => e.trackId !== METRONOME_TRACK_ID)
+    .reduce((acc, e) => Math.max(acc, e.ticks + e.durationTicks), 0);
   if (refPlayer && refBuffer) {
     const offSec = (refMeta.offsetMs || 0) / 1000;
     const refEndSec = Math.max(0, refBuffer.duration - offSec);
