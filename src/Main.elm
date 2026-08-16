@@ -1589,7 +1589,7 @@ refreshChordSheetDraft : Model -> Model
 refreshChordSheetDraft m =
     case m.chordSheetDraft of
         Just _ ->
-            { m | chordSheetDraft = Just (Data.ChordSheet.toSheetText m.project.sections m.project.chordTrack) }
+            { m | chordSheetDraft = Just (Data.ChordSheet.toSheetText m.project.sections m.project.chordTrack |> Data.ChordTrack.wrapBarLines 4) }
 
         Nothing ->
             m
@@ -3134,7 +3134,7 @@ updateCore msg model =
             else
                 ( { model
                     | chordProgressionModalOpen = True
-                    , chordSheetDraft = Just (Data.ChordSheet.toSheetText model.project.sections model.project.chordTrack)
+                    , chordSheetDraft = Just (Data.ChordSheet.toSheetText model.project.sections model.project.chordTrack |> Data.ChordTrack.wrapBarLines 4)
                   }
                 , Cmd.none
                 )
