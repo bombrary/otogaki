@@ -225,6 +225,7 @@ type alias Model =
     , windowSize : { width : Int, height : Int }
     , narrowPane : NarrowPane
     , headerMenuOpen : Bool
+    , sectionEditPanelOpen : Maybe Bool
     , touchMode : TouchMode
     , touchSnapOff : Bool
     , longPressToken : Int
@@ -313,6 +314,7 @@ type Msg
     | ResizedWindow Int Int
     | SelectedNarrowPane NarrowPane
     | ToggledHeaderMenu
+    | ToggledSectionEditPanel
     | ToggledLeftPaneCollapsed
     | ClickedRemoveTrack Int
     | ToggledMute Int
@@ -533,6 +535,7 @@ init flags =
       , windowSize = { width = 0, height = 0 }
       , narrowPane = NarrowMain
       , headerMenuOpen = False
+      , sectionEditPanelOpen = Nothing
       , touchMode = TouchNormal
       , touchSnapOff = False
       , longPressToken = 0
@@ -4905,6 +4908,13 @@ updateCore msg model =
         ToggledHeaderMenu ->
             ( { model | headerMenuOpen = not model.headerMenuOpen }, Cmd.none )
 
+        ToggledSectionEditPanel ->
+            let
+                effective =
+                    Maybe.withDefault (not (isShortViewport model)) model.sectionEditPanelOpen
+            in
+            ( { model | sectionEditPanelOpen = Just (not effective) }, Cmd.none )
+
         ToggledLeftPaneCollapsed ->
             ( { model | leftPaneCollapsed = not model.leftPaneCollapsed }, Cmd.none )
 
@@ -5754,7 +5764,10 @@ view model =
                     ]
                 )
             , SectionBar.view
-                (isTouchLayout model)
+                { isNarrow = isTouchLayout model
+                , isShort = isShortViewport model
+                , editPanelOpen = Maybe.withDefault (not (isShortViewport model)) model.sectionEditPanelOpen
+                }
                 { select = SelectedSection
                 , add = ClickedAddSection
                 , remove = ClickedRemoveSection
@@ -5774,6 +5787,7 @@ view model =
                 , pressedLoopHandle = PressedSectionLoopHandle
                 , clickedChord = ClickedChordAt
                 , doubleClickedChord = DoubleClickedChordStripAt
+                , toggledEditPanel = ToggledSectionEditPanel
                 }
                 { pxPerBar = model.sectionBarZoom
                 , loopEditable = model.loopMode == LoopRange

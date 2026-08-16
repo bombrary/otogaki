@@ -53,6 +53,7 @@ type alias Config msg =
     , pressedLoopHandle : Bool -> Float -> msg
     , clickedChord : Int -> msg
     , doubleClickedChord : Int -> msg
+    , toggledEditPanel : msg
     }
 
 
@@ -298,8 +299,8 @@ sectionDragTargetIndex pxPerBar sections currentIndex accumDx =
                     Nothing
 
 
-view : Bool -> Config msg -> RulerData -> List ChordSpan -> Maybe WaveformData -> BlockExtras -> Maybe Int -> List Section -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> Html msg
-view isNarrow config rulerData chordSpans waveform extras selectedId sections pendingDeleteId resizePreview =
+view : { isNarrow : Bool, isShort : Bool, editPanelOpen : Bool } -> Config msg -> RulerData -> List ChordSpan -> Maybe WaveformData -> BlockExtras -> Maybe Int -> List Section -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> Html msg
+view layout config rulerData chordSpans waveform extras selectedId sections pendingDeleteId resizePreview =
     let
         totalBars =
             List.sum (List.map .lengthBars sections)
@@ -326,7 +327,7 @@ view isNarrow config rulerData chordSpans waveform extras selectedId sections pe
             [ HA.id sectionBarScrollId
             , HA.style "overflow-x" "auto"
             ]
-            [ regionRulerView isNarrow config rulerData.pxPerBar rulerData.loopEditable rulerData.loop rulerData.ticksToPx rulerData.playheadTicks rulerData.viewRange sections
+            [ regionRulerView layout.isNarrow config rulerData.pxPerBar rulerData.loopEditable rulerData.loop rulerData.ticksToPx rulerData.playheadTicks rulerData.viewRange sections
             , case waveform of
                 Nothing ->
                     text ""
@@ -346,16 +347,31 @@ view isNarrow config rulerData chordSpans waveform extras selectedId sections pe
                 , HA.style "align-items" "stretch"
                 , HA.style "flex-wrap" "nowrap"
                 ]
-                (List.indexedMap (blockView isNarrow config rulerData.pxPerBar selectedId resizePreview extras) sections
+                (List.indexedMap (blockView layout.isNarrow config rulerData.pxPerBar selectedId resizePreview extras) sections
                     ++ [ button (Style.baseButton ++ [ HE.onClick config.add, HA.style "flex" "0 0 auto" ]) [ text "+ セクション" ] ]
+                    ++ (if selectedId /= Nothing then
+                            [ button
+                                (Style.toggleButton layout.editPanelOpen
+                                    ++ [ HE.onClick config.toggledEditPanel, HA.style "flex" "0 0 auto" ]
+                                )
+                                [ text "⚙ 設定" ]
+                            ]
+
+                        else
+                            []
+                       )
                 )
             ]
-        , case selectedId |> Maybe.andThen (\sid -> sections |> List.filter (\s -> s.id == sid) |> List.head) of
-            Just section ->
-                editPanel config section pendingDeleteId
+        , if layout.editPanelOpen then
+            case selectedId |> Maybe.andThen (\sid -> sections |> List.filter (\s -> s.id == sid) |> List.head) of
+                Just section ->
+                    editPanel config section pendingDeleteId
 
-            Nothing ->
-                text ""
+                Nothing ->
+                    text ""
+
+          else
+            text ""
         ]
 
 
