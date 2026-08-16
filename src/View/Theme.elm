@@ -723,6 +723,7 @@ cssRules =
     , ".touch-ui .m3-btn { padding: 0.55rem 0.9rem !important; }"
     , ".touch-ui { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }"
     , ".touch-ui input, .touch-ui textarea, .touch-ui select { -webkit-user-select: text; user-select: text; }"
+    , "@media (pointer: coarse) { body { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; } input, textarea, select { -webkit-user-select: text; user-select: text; } }"
     , ".m3-hit { transition: filter 0.1s; }"
     , ".m3-hit:hover { filter: brightness(0.94); }"
     , rootBlock
