@@ -301,6 +301,7 @@ type Msg
     | DoubleClickedNote Int
     | RightClickedNote Int
     | DraggedTo ClientPos
+    | DraggedOverChordBar Int
     | ReleasedDrag
     | PressedRuler { offsetX : Float, clientX : Float, shift : Bool }
     | PressedPianoKey Int
@@ -953,6 +954,9 @@ isCoalescing msg =
         DraggedTo _ ->
             True
 
+        DraggedOverChordBar _ ->
+            True
+
         PressedEmptyCell _ ->
             True
 
@@ -1074,8 +1078,8 @@ describeMsg msg =
 
 
 
-{-| ドラッグ中のトークンをアンカーの横移動量から小節差に換算して moveTokens を呼ぶ。毎 move で origText/origKeys
-（ドラッグ開始時のスナップショット）から再計算するので累積誤差は出ない。deltaBars が前回と同じなら何もしない。
+{-| ドラッグ中のトークンをアンカーの横移動量から小節差に換算して applyChordDragDelta を呼ぶ。ライン表示専用
+（ブロック表示は座標が線形でないため DraggedOverChordBar で直接小節を渡す）。
 -}
 chordDragMove : ClientPos -> ChordDrag -> Model -> ( Model, Cmd Msg )
 chordDragMove pos cd model =
@@ -1092,11 +1096,23 @@ chordDragMove pos cd model =
         deltaBars =
             targetBar - Tuple.first cd.anchorKey
     in
+    applyChordDragDelta deltaBars cd model
+
+
+{-| deltaBars（アンカー小節からの差）を適用して moveTokens を呼ぶ。毎回 origText/origKeys（ドラッグ開始時の
+スナップショット）から再計算するので累積誤差は出ない。deltaBars が前回と同じなら何もしない。ライン表示
+（chordDragMove）・ブロック表示（DraggedOverChordBar）の両方から共有する。
+-}
+applyChordDragDelta : Int -> ChordDrag -> Model -> ( Model, Cmd Msg )
+applyChordDragDelta deltaBars cd model =
     if deltaBars == cd.lastDeltaBars then
         ( model, Cmd.none )
 
     else
         let
+            timeline =
+                Data.Project.timeline model.project
+
             origTrack =
                 model.project.chordTrack
 
@@ -3169,6 +3185,14 @@ updateCore msg model =
 
                                 Nothing ->
                                     legacyDraggedTo pos model
+
+        DraggedOverChordBar bar ->
+            case model.chordDrag of
+                Just cd ->
+                    applyChordDragDelta (bar - Tuple.first cd.anchorKey) cd model
+
+                Nothing ->
+                    ( model, Cmd.none )
 
         ReleasedDrag ->
             case model.pendingEmptyTouch of
@@ -5433,9 +5457,16 @@ view model =
                                 (List.map (\msg -> div [] [ text msg ]) chordParseErrors)
                         , if model.chordBlockView then
                             ChordBlocks.view
-                                { clickedChord = pianoRollConfig.clickedChord, doubleClickedToken = DoubleClickedChordToken }
+                                { clickedChord = pianoRollConfig.clickedChord
+                                , doubleClickedToken = DoubleClickedChordToken
+                                , pressedToken = PressedChordToken
+                                , draggedWhilePressing = DraggedTo
+                                , draggedOverBar = DraggedOverChordBar
+                                , releasedPress = ReleasedDrag
+                                }
                                 timeline
                                 model.playheadTicks
+                                model.selectedChordKeys
                                 model.project.chordTrack
 
                           else
@@ -6229,8 +6260,7 @@ isDragging model =
         /= Nothing
         || model.sectionLoopDrag
         /= Nothing
-        || model.chordDrag
-        /= Nothing
+        || (model.chordDrag /= Nothing && not model.chordBlockView)
         || model.chordRubberBand
         /= Nothing
         || model.velocityDrag

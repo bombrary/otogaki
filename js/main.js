@@ -66,3 +66,13 @@ document.addEventListener("pointerdown", (e) => {
     try { el.setPointerCapture(e.pointerId); } catch (_) {}
   }
 }, { capture: true });
+
+// タッチはpointerdownした要素に暗黙キャプチャされるため、そのままだと下の要素へpointerenter/pointermoveが
+// 届かない。data-pointer-release-captureを持つ要素（ブロック表示のコードドラッグ用）は明示的に解除し、
+// セルのpointerenterでドロップ先小節を特定できるようにする。
+document.addEventListener("pointerdown", (e) => {
+  const el = e.target.closest?.("[data-pointer-release-capture]");
+  if (el) {
+    try { el.releasePointerCapture(e.pointerId); } catch (_) {}
+  }
+}, { capture: true });

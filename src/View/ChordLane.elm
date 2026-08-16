@@ -1,4 +1,4 @@
-module View.ChordLane exposing (Config, view)
+module View.ChordLane exposing (Config, tokenMoveDecoder, tokenPressDecoder, view)
 
 import Data.ChordTrack exposing (TokenKey, TokenKind(..), TokenSpan)
 import Html
