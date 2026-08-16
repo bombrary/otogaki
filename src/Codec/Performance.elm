@@ -11,11 +11,15 @@ module Codec.Performance exposing
     , encodeSetVolume
     , encodeStop
     , encodeUpdateEvents
+    , metronomeEvents
+    , metronomeTrackId
     , toEvents
     , usedInstrumentNames
     )
 
+import Array
 import Data.ChordTrack exposing (ChordTrack)
+import Data.Meter
 import Data.Project exposing (Project)
 import Data.ReferenceAudio exposing (ReferenceAudio)
 import Data.StrumExpand
@@ -197,6 +201,58 @@ toEvents project =
                 []
     in
     List.concatMap trackEvents project.tracks ++ chordEvents project.guitarFormEnabled voicings (Data.Project.timeline project) project.chordTrack
+
+
+{-| メトロノームのクリックイベントに予約している trackId。コードトラックの -1 の隣。
+`js/audio.js` の `METRONOME_TRACK_ID` と値を一致させること（自然停止計算から除外するため）。
+-}
+metronomeTrackId : Int
+metronomeTrackId =
+    -2
+
+
+{-| timeline 全体（`Data.Timeline.totalTicks` まで）にわたって小節頭・拍のクリックイベントを生成する。
+拍子は小節ごとに異なってよい。小節頭（拍1）は cowbell、その他の拍は rimshot。
+`toEvents` には混ざず、`encodePlay` / `encodeUpdateEvents` の呼び出し側でオプトインで追加する（WAV/MIDI 書き出しには混入しない）。
+-}
+metronomeEvents : Data.Timeline.Timeline -> List Event
+metronomeEvents timeline =
+    Array.toList timeline.bars
+        |> List.concatMap barClicks
+
+
+barClicks : Data.Timeline.Bar -> List Event
+barClicks bar =
+    let
+        beatTicks =
+            Data.Meter.ticksPerBeat bar.meter
+
+        beatCount =
+            Basics.max 1 (bar.lengthTicks // beatTicks)
+
+        clickDuration =
+            Basics.max 1 (Data.Time.ppq // 4)
+
+        click i =
+            { ticks = bar.startTicks + i * beatTicks
+            , durationTicks = clickDuration
+            , pitch =
+                if i == 0 then
+                    56
+
+                else
+                    37
+            , velocity =
+                if i == 0 then
+                    115
+
+                else
+                    95
+            , instrument = "drumKit"
+            , trackId = metronomeTrackId
+            }
+    in
+    List.range 0 (beatCount - 1) |> List.map click
 
 
 chordEvents : Bool -> List Data.Voicing.Voicing -> Data.Timeline.Timeline -> ChordTrack -> List Event
