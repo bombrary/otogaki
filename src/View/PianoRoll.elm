@@ -598,8 +598,8 @@ type alias RulerOpts =
 {-| ルーラー（小節番号・セクション帯・ループ帯・プレイヘッド）を描画する。PianoRoll の Config 全体ではなく、
 ルーラーが実際に使うハンドラだけに narrow 化してあるので、DrumEditor 等他モジュールからも直接呼べる。
 -}
-rulerViewWith : RulerHandlers msg -> RulerOpts -> Html msg
-rulerViewWith handlers opts =
+rulerViewWith : Bool -> RulerHandlers msg -> RulerOpts -> Html msg
+rulerViewWith isNarrow handlers opts =
     Svg.svg
         [ SA.width (String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars))
         , SA.height (String.fromInt rulerHeight)
@@ -621,7 +621,7 @@ rulerViewWith handlers opts =
             []
             :: List.concat (List.indexedMap (sectionBand opts.pxPerSixteenth) opts.sections)
             ++ barNumbers opts.pxPerSixteenth opts.totalBars
-            ++ loopBandView handlers.pressedLoopHandle opts.pxPerSixteenth opts.loopEditable opts.loop
+            ++ loopBandView isNarrow handlers.pressedLoopHandle opts.pxPerSixteenth opts.loopEditable opts.loop
             ++ [ playheadLine opts.pxPerSixteenth rulerHeight opts.playheadTicks ]
         )
 
@@ -629,6 +629,7 @@ rulerViewWith handlers opts =
 rulerView : Config msg -> ViewOpts -> Html msg
 rulerView config opts =
     rulerViewWith
+        opts.isNarrow
         { pressedRuler = config.pressedRuler
         , pressedLoopHandle = config.pressedLoopHandle
         , wheelZoomedRuler = config.wheelZoomedRuler
@@ -670,8 +671,8 @@ wheelDecoder =
 
 {-| ルーラー上にループ区間を琥珀色の帯で示す。editable が真なら左右端につまむハンドルを追加で描く（「範囲」モードのループのみ）。
 -}
-loopBandView : (Bool -> Float -> msg) -> Int -> Bool -> Maybe { startTicks : Int, endTicks : Int } -> List (Svg.Svg msg)
-loopBandView pressedLoopHandle pxPerSixteenth editable loop =
+loopBandView : Bool -> (Bool -> Float -> msg) -> Int -> Bool -> Maybe { startTicks : Int, endTicks : Int } -> List (Svg.Svg msg)
+loopBandView isNarrow pressedLoopHandle pxPerSixteenth editable loop =
     case loop of
         Nothing ->
             []
@@ -697,8 +698,8 @@ loopBandView pressedLoopHandle pxPerSixteenth editable loop =
             in
             band
                 :: (if editable then
-                        [ loopHandle pressedLoopHandle False x0
-                        , loopHandle pressedLoopHandle True x1
+                        [ loopHandle isNarrow pressedLoopHandle False x0
+                        , loopHandle isNarrow pressedLoopHandle True x1
                         ]
 
                     else
@@ -708,13 +709,28 @@ loopBandView pressedLoopHandle pxPerSixteenth editable loop =
 
 {-| ループ帯の端をつまんで伸縮するためのハンドル。バンド本体（6pxx6px）より少し大きめにしてつかみやすくする。
 -}
-loopHandle : (Bool -> Float -> msg) -> Bool -> Float -> Svg.Svg msg
-loopHandle pressedLoopHandle isEnd x =
+loopHandle : Bool -> (Bool -> Float -> msg) -> Bool -> Float -> Svg.Svg msg
+loopHandle isNarrow pressedLoopHandle isEnd x =
+    let
+        handleWidth =
+            if isNarrow then
+                18.0
+
+            else
+                12.0
+
+        handleHeight =
+            if isNarrow then
+                24.0
+
+            else
+                18.0
+    in
     Svg.rect
-        [ SA.x (String.fromFloat (x - 6))
+        [ SA.x (String.fromFloat (x - handleWidth / 2))
         , SA.y "10"
-        , SA.width "12"
-        , SA.height "18"
+        , SA.width (String.fromFloat handleWidth)
+        , SA.height (String.fromFloat handleHeight)
         , SA.fill Style.colorLoopHandle
         , SA.cursor "ew-resize"
         , HA.style "touch-action" "none"
@@ -1322,7 +1338,14 @@ noteView isNarrow config pxPerSixteenth selectedIds tool note =
             ticksToPixels pxPerSixteenth note.duration
 
         handleWidth =
-            6.0
+            if isNarrow then
+                12.0
+
+            else
+                6.0
+
+        minFullHandleWidth =
+            18.0
 
         selected =
             Set.member note.id selectedIds
@@ -1397,7 +1420,7 @@ noteView isNarrow config pxPerSixteenth selectedIds tool note =
     , Svg.rect
         ([ SA.x
             (String.fromFloat
-                (if w >= 3 * handleWidth then
+                (if w >= 3 * minFullHandleWidth then
                     x + w - 1 - 1.5 - handleWidth
 
                  else
@@ -1406,7 +1429,7 @@ noteView isNarrow config pxPerSixteenth selectedIds tool note =
             )
          , SA.y
             (String.fromFloat
-                (if w >= 3 * handleWidth then
+                (if w >= 3 * minFullHandleWidth then
                     toFloat y + 2.5
 
                  else
@@ -1416,7 +1439,7 @@ noteView isNarrow config pxPerSixteenth selectedIds tool note =
          , SA.width (String.fromFloat handleWidth)
          , SA.height
             (String.fromFloat
-                (if w >= 3 * handleWidth then
+                (if w >= 3 * minFullHandleWidth then
                     toFloat (rowHeight isNarrow) - 5
 
                  else
@@ -1425,7 +1448,7 @@ noteView isNarrow config pxPerSixteenth selectedIds tool note =
             )
          , SA.rx "1"
          , SA.fill
-            (if w >= 3 * handleWidth then
+            (if w >= 3 * minFullHandleWidth then
                 if selected then
                     Theme.selectionDeep
 
@@ -1466,7 +1489,7 @@ noteView isNarrow config pxPerSixteenth selectedIds tool note =
         )
         []
     ]
-        ++ (if w >= 3 * handleWidth then
+        ++ (if w >= 3 * minFullHandleWidth then
                 [ Svg.rect
                     ([ SA.x (String.fromFloat x)
                      , SA.y (String.fromInt (y + 1))

@@ -200,6 +200,7 @@ view config opts =
                 , Html.Events.on "scroll" (PianoRoll.scrollDecoder config.scrolled)
                 ]
                 [ PianoRoll.rulerViewWith
+                    False
                     { pressedRuler = config.pressedRuler
                     , pressedLoopHandle = config.pressedLoopHandle
                     , wheelZoomedRuler = config.wheelZoomedRuler
