@@ -203,6 +203,7 @@ type alias Model =
     , sectionLoopDrag : Maybe LoopDrag
     , viewRangeDrag : Maybe { startClientX : Float, pressOffsetX : Float, origScrollX : Float, moved : Bool }
     , leftPaneWidth : Int
+    , leftPaneCollapsed : Bool
     , paneDividerDrag : Maybe { startClientX : Float, origWidth : Int }
     , chordProgressionModalOpen : Bool
     , hoveredNote : Maybe { note : Data.Note.Note, x : Float, y : Float }
@@ -308,6 +309,7 @@ type Msg
     | ResizedWindow Int Int
     | SelectedNarrowPane NarrowPane
     | ToggledHeaderMenu
+    | ToggledLeftPaneCollapsed
     | ClickedRemoveTrack Int
     | ToggledMute Int
     | ChangedInstrument Int String
@@ -506,6 +508,7 @@ init flags =
       , sectionLoopDrag = Nothing
       , viewRangeDrag = Nothing
       , leftPaneWidth = 380
+      , leftPaneCollapsed = False
       , paneDividerDrag = Nothing
       , chordProgressionModalOpen = False
       , hoveredNote = Nothing
@@ -4745,6 +4748,9 @@ updateCore msg model =
         ToggledHeaderMenu ->
             ( { model | headerMenuOpen = not model.headerMenuOpen }, Cmd.none )
 
+        ToggledLeftPaneCollapsed ->
+            ( { model | leftPaneCollapsed = not model.leftPaneCollapsed }, Cmd.none )
+
         NoOp ->
             ( model, Cmd.none )
 
@@ -5638,6 +5644,36 @@ view model =
                     )
                 ]
 
+          else if model.leftPaneCollapsed then
+            div [ style "flex" "1 1 auto", style "min-height" "0", style "display" "flex", style "overflow" "hidden" ]
+                [ div
+                    [ style "flex" "0 0 auto"
+                    , style "width" "28px"
+                    , style "display" "flex"
+                    , style "align-items" "flex-start"
+                    , style "justify-content" "center"
+                    , style "padding-top" "0.3rem"
+                    , style "background" Theme.surfaceContainerHigh
+                    ]
+                    [ button
+                        (Style.baseButton
+                            ++ [ onClick ToggledLeftPaneCollapsed
+                               , style "padding" "0.3rem 0.2rem"
+                               , Html.Attributes.title "サイドバーを開く"
+                               ]
+                        )
+                        [ text "▶" ]
+                    ]
+                , div
+                    [ style "flex" "1 1 auto"
+                    , style "min-width" "0"
+                    , style "overflow-y" "auto"
+                    , style "padding" "0.5rem 1rem 1rem 1rem"
+                    , style "box-sizing" "border-box"
+                    ]
+                    rightPaneChildren
+                ]
+
           else
             div [ style "flex" "1 1 auto", style "min-height" "0", style "display" "flex", style "overflow" "hidden" ]
                 [ div
@@ -5648,7 +5684,17 @@ view model =
                     , style "padding" "0 1rem 1rem 1rem"
                     , style "box-sizing" "border-box"
                     ]
-                    leftPaneChildren
+                    (div [ style "display" "flex", style "justify-content" "flex-end", style "margin" "0.3rem 0 0 0" ]
+                        [ button
+                            (Style.baseButton
+                                ++ [ onClick ToggledLeftPaneCollapsed
+                                   , Html.Attributes.title "サイドバーをたたむ"
+                                   ]
+                            )
+                            [ text "◀" ]
+                        ]
+                        :: leftPaneChildren
+                    )
                 , div
                     [ style "width" "10px"
                     , style "flex" "0 0 auto"
