@@ -230,6 +230,7 @@ type alias Model =
     , longPressToken : Int
     , longPress : Maybe { token : Int, target : LongPressTarget }
     , touchTooltipToken : Int
+    , lastNoteTap : Maybe { noteId : Int, time : Float, clientX : Float, clientY : Float }
     }
 
 
@@ -537,6 +538,7 @@ init flags =
       , longPressToken = 0
       , longPress = Nothing
       , touchTooltipToken = 0
+      , lastNoteTap = Nothing
       }
     , Task.perform (\vp -> ResizedWindow (round vp.viewport.width) (round vp.viewport.height)) Browser.Dom.getViewport
     )
@@ -2817,6 +2819,27 @@ updateCore msg model =
             in
             case findNote model1 noteId of
                 Just note ->
+                    let
+                        {- iOS Safariはタッチではdblclickを発火しないため、300ms以内・24px以内の同一ノートへの
+                           再タップを独自にダブルタップとして検出する。長押し削除（500ms）と両立させる。
+                        -}
+                        isDoubleTap =
+                            pos.isTouch
+                                && (case model1.lastNoteTap of
+                                        Just lt ->
+                                            lt.noteId
+                                                == noteId
+                                                && (pos.timeStamp - lt.time)
+                                                < 300
+                                                && abs (pos.clientX - lt.clientX)
+                                                < 24
+                                                && abs (pos.clientY - lt.clientY)
+                                                < 24
+
+                                        Nothing ->
+                                            False
+                                   )
+                    in
                     if pos.shift || model1.touchMode == TouchSelect then
                         ( { model1
                             | selectedNoteIds =
@@ -2826,6 +2849,18 @@ updateCore msg model =
                                 else
                                     Set.insert noteId model1.selectedNoteIds
                             , highlightedPitches = Set.singleton note.pitch
+                          }
+                        , Cmd.none
+                        )
+
+                    else if isDoubleTap then
+                        ( { model1
+                            | project = Data.Project.removeNote model1.selectedTrackId noteId model1.project
+                            , selectedNoteIds = Set.remove noteId model1.selectedNoteIds
+                            , hoveredNote = clearHoveredNote noteId model1.hoveredNote
+                            , pendingNoteDrag = Nothing
+                            , longPress = Nothing
+                            , lastNoteTap = Nothing
                           }
                         , Cmd.none
                         )
@@ -2847,6 +2882,7 @@ updateCore msg model =
                                     { model3
                                         | hoveredNote = Just { note = note, x = pos.clientX, y = pos.clientY }
                                         , touchTooltipToken = newTooltipToken
+                                        , lastNoteTap = Just { noteId = noteId, time = pos.timeStamp, clientX = pos.clientX, clientY = pos.clientY }
                                     }
 
                                 tooltipCmd =
