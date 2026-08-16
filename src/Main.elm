@@ -30,7 +30,7 @@ import File
 import File.Download
 import File.Select
 import Html exposing (Html, button, div, h1, input, label, span, text, textarea)
-import Html.Attributes exposing (disabled, style, type_, value)
+import Html.Attributes exposing (classList, disabled, style, type_, value)
 import Html.Events exposing (onBlur, onClick, onInput)
 import Json.Decode as Decode
 import Json.Encode as Encode
@@ -5499,7 +5499,13 @@ view model =
             div (groupStyle ++ Style.labelText)
                 [ text (stateLabel ++ " — " ++ String.fromInt barBeat.bar ++ " 小節 " ++ String.fromInt barBeat.beat ++ " 拍目") ]
     in
-    div [ style "display" "flex", style "flex-direction" "column", style "height" "100vh", style "font-family" "sans-serif" ]
+    div
+        [ style "display" "flex"
+        , style "flex-direction" "column"
+        , style "height" "100vh"
+        , style "font-family" "sans-serif"
+        , classList [ ( "touch-ui", isTouchLayout model ) ]
+        ]
         [ Style.focusCss
         , Palette.globalCss
         , div [ style "padding" "0.5rem 1rem 0 1rem", style "flex" "0 0 auto" ]
