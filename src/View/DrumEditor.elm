@@ -17,6 +17,8 @@ import View.Theme as Theme
 
 type alias Config msg =
     { pressedCell : { pitch : Int, tick : Int, offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, isTouch : Bool, timeStamp : Float } -> msg
+    , draggedWhilePressingCell : { clientX : Float, clientY : Float, alt : Bool } -> msg
+    , releasedCellPress : msg
     , rightClickedCell : { pitch : Int, tick : Int } -> msg
     , doubleClickedCell : { pitch : Int, tick : Int } -> msg
     , pressedVelocityBar : Int -> { clientX : Float, clientY : Float } -> msg
@@ -272,6 +274,11 @@ gridView config opts =
         , HA.style "touch-action" "none"
         , Html.Events.on "pointerdown"
             (Decode.map config.pressedCell (cellPressDecoder opts.gridUnit opts.pxPerSixteenth))
+        , HA.attribute "data-pointer-capture" ""
+        , Html.Events.on "pointermove"
+            (Decode.map config.draggedWhilePressingCell PianoRoll.noteMoveDecoder)
+        , Html.Events.on "pointerup" (Decode.succeed config.releasedCellPress)
+        , Html.Events.on "pointercancel" (Decode.succeed config.releasedCellPress)
         , Html.Events.on "dblclick"
             (Decode.map config.doubleClickedCell (cellClickDecoder opts.gridUnit opts.pxPerSixteenth))
         , Html.Events.preventDefaultOn "contextmenu"

@@ -2669,8 +2669,8 @@ updateCore msg model =
                             | project = Data.Project.addNote model1.selectedTrackId note model1.project
                             , selectedNoteIds = Set.singleton note.id
                             , highlightedPitches = Set.singleton note.pitch
-                            , dragState =
-                                Dragging
+                            , pendingNoteDrag =
+                                Just
                                     { anchorId = note.id
                                     , mode = ResizeRight
                                     , startClientX = pos.clientX
@@ -5264,6 +5264,8 @@ view model =
                                 , touchModeToggleView model
                                 , DrumEditor.view
                                     { pressedCell = PressedDrumCell
+                                    , draggedWhilePressingCell = DraggedTo
+                                    , releasedCellPress = ReleasedDrag
                                     , rightClickedCell = RightClickedDrumCell
                                     , doubleClickedCell = DoubleClickedDrumCell
                                     , pressedVelocityBar = PressedVelocityBar

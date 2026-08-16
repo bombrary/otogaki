@@ -11,6 +11,7 @@ module View.PianoRoll exposing
     , maxPxPerSixteenth
     , minPitch
     , minPxPerSixteenth
+    , noteMoveDecoder
     , pianoRollScrollId
     , pixelsToTicks
     , playheadLine
@@ -812,6 +813,11 @@ gridView config opts =
             )
          , HA.style "touch-action" "none"
          , Html.Events.on "pointerdown" (Decode.map config.pressedEmpty emptyPressDecoder)
+         , HA.attribute "data-pointer-capture" ""
+         , Html.Events.on "pointermove"
+            (Decode.map config.draggedWhilePressingNote noteMoveDecoder)
+         , Html.Events.on "pointerup" (Decode.succeed config.releasedNotePress)
+         , Html.Events.on "pointercancel" (Decode.succeed config.releasedNotePress)
          ]
             ++ (if opts.tool == CutTool then
                     [ Html.Events.on "mousemove" (Decode.map config.movedCutGuide cutGuideMoveDecoder)
