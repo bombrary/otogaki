@@ -7,6 +7,8 @@ module View.Theme exposing
     , errorContainer
     , fontFamily
     , globalCss
+    , gridRowBlackKey
+    , gridRowWhiteKey
     , highlight
     , highlightContainer
     , inversePrimary
@@ -195,6 +197,8 @@ colorTokens =
     , ColorToken "on-success-container" "#1E5A1E" "#B8F0B8"
     , ColorToken "pending-container" "#FFDCBE" "#6B3600"
     , ColorToken "on-pending-container" "#8F4C00" "#FFCA9E"
+    , ColorToken "grid-row-white-key" "#FFFFFF" "#1A1B22"
+    , ColorToken "grid-row-black-key" "#E6E8EE" "#0C0D13"
     ]
 
 
@@ -480,6 +484,19 @@ keyWhite =
 keyBlack : String
 keyBlack =
     "#222222"
+
+
+{-| ピアノロールのグリッド背景行。白鍵行/黒鍵行の対応を示すガイドで、鍵盤実物色（keyWhite/keyBlack）とは
+別物。ダークでも「黒鍵行が白鍵行より暗い」関係を保つ。
+-}
+gridRowWhiteKey : String
+gridRowWhiteKey =
+    tokenVar "grid-row-white-key"
+
+
+gridRowBlackKey : String
+gridRowBlackKey =
+    tokenVar "grid-row-black-key"
 
 
 

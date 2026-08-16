@@ -531,20 +531,20 @@ keyRow config highlightedPitch scalePitchClasses isNarrow pitch =
                 Style.colorHighlight
 
              else if isBlack then
-                Theme.onSurface
+                Theme.keyBlack
 
              else
-                Theme.surfaceContainerLowest
+                Theme.keyWhite
             )
         , HA.style "color"
             (if isHighlighted then
-                Theme.onSurface
+                Theme.keyBlack
 
              else if isBlack then
-                Theme.surfaceContainerHighest
+                Theme.keyWhite
 
              else
-                Theme.onSurface
+                Theme.keyBlack
             )
         , HA.style "border-bottom" ("1px solid " ++ Theme.outlineVariant)
         , HA.style "font-size" "9px"
@@ -1181,10 +1181,10 @@ rowBackgrounds isNarrow pxPerSixteenth totalBars =
                     , SA.height (String.fromInt (rowHeight isNarrow))
                     , SA.fill
                         (if isBlack then
-                            Theme.surfaceContainerHigh
+                            Theme.gridRowBlackKey
 
                          else
-                            Theme.surfaceContainerLowest
+                            Theme.gridRowWhiteKey
                         )
                     , SA.stroke Theme.surfaceContainerHighest
                     , SA.strokeWidth "0.5"
