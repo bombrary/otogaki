@@ -5216,9 +5216,7 @@ view model =
             ]
 
         rightPaneChildren =
-            [ div [ style "margin-top" "0", style "font-size" "0.9rem" ]
-                [ text ("編集中: " ++ selectedTrackName ++ selectionInfo) ]
-            , let
+            [ let
                 durationSelect =
                     div [ style "display" "flex", style "align-items" "center", style "gap" "0.4rem" ]
                         [ span [ style "font-size" "0.85rem", Html.Attributes.title "新規配置時のノートの長さ" ] [ text "音価: " ]
@@ -5364,7 +5362,7 @@ view model =
                         , style "row-gap" "0.3rem"
                         , style "margin-top" "0.4rem"
                         ]
-                        [ durationSelect, gridSelect, toolToggle, pianoRollZoomButtons, touchModeToggleView model ]
+                        [ span [ style "font-size" "0.9rem" ] [ text ("編集中: " ++ selectedTrackName ++ selectionInfo) ], durationSelect, gridSelect, toolToggle, pianoRollZoomButtons, touchModeToggleView model ]
 
                 pianoRollView =
                     div [] [ editToolbar, PianoRoll.view pianoRollConfig pianoRollOpts ]
@@ -5388,7 +5386,8 @@ view model =
                 chordTrackMainView =
                     div []
                         [ div [ style "margin-top" "0.5rem", style "display" "flex", style "align-items" "center", style "flex-wrap" "wrap", style "gap" "0.3rem" ]
-                            [ button
+                            [ span [ style "font-size" "0.9rem" ] [ text ("編集中: " ++ selectedTrackName ++ selectionInfo) ]
+                            , button
                                 (Style.baseButton
                                     ++ [ onClick ToggledChordProgressionModal
                                        , Html.Attributes.title "表示/非表示を切替え"
@@ -5476,7 +5475,7 @@ view model =
                           else
                             div []
                                 [ div [ style "display" "flex", style "flex-wrap" "wrap", style "align-items" "center", style "column-gap" "0.9rem", style "row-gap" "0.3rem" ]
-                                    [ gridSelect, touchModeToggleView model ]
+                                    [ span [ style "font-size" "0.9rem" ] [ text ("編集中: " ++ selectedTrackName ++ selectionInfo) ], gridSelect, touchModeToggleView model ]
                                 , DrumEditor.view
                                     { pressedCell = PressedDrumCell
                                     , draggedWhilePressingCell = DraggedTo
