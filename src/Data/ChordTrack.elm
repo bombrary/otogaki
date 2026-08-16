@@ -406,10 +406,11 @@ tokenKeyAtTicks timeline ticks track =
         |> Maybe.map .key
 
 
-{-| 選択トークンを deltaBars 小節移動してテキストを再構成する。移動先セルへは末尾追記（上書き・押し出しなし）。
-% と = は移動前の resolvedName（実コード名）に展開して移動する（参照先が変わる事故を防ぐため）。
-_ と Err はリテラルのまま。変更した小節だけ正規化再構成し、無変更の小節は生チャンク（コメント含む）を温存する。
-deltaBars が 0 または選択が空なら何もしない。
+{-| 選択トークンを deltaBars 小節移動してテキストを再構成する。選択が単一小節に収まり、移動先の小節が空でない場合は移動先の既存トークンと
+入れ替える（swap、長さを保持）。それ以外（複数小節にまたがる選択、または移動先が空）は末尾追記（上書き・
+押し出しなし）。% と = は移動前の resolvedName（実コード名）に展開して移動する（参照先が変わる事故を防ぐため。
+swapで押し出される側も同様に展開する）。_ と Err はリテラルのまま。変更した小節だけ正規化再構成し、無変更の
+小節は生チャンク（コメント含む）を温存する。deltaBars が 0（クランプ後も含む）または選択が空なら何もしない。
 -}
 moveTokens : Timeline -> Int -> Set TokenKey -> ChordTrack -> { track : ChordTrack, movedKeys : Set TokenKey }
 moveTokens timeline deltaBarsRaw selectedKeys track =
@@ -418,9 +419,6 @@ moveTokens timeline deltaBarsRaw selectedKeys track =
 
     else
         let
-            cellsList =
-                cells timeline track
-
             movedText span =
                 case span.result of
                     Ok TRepeat ->
@@ -434,7 +432,6 @@ moveTokens timeline deltaBarsRaw selectedKeys track =
 
             spanLookup =
                 tokenSpans timeline track
-                    |> List.filter (\s -> Set.member s.key selectedKeys)
                     |> List.map (\s -> ( s.key, movedText s ))
                     |> Dict.fromList
 
@@ -443,116 +440,179 @@ moveTokens timeline deltaBarsRaw selectedKeys track =
 
             deltaBars =
                 Basics.max deltaBarsRaw (negate minBar)
+        in
+        if deltaBars == 0 then
+            { track = track, movedKeys = selectedKeys }
 
-            rawChunks =
-                String.split "|" track.text
+        else
+            let
+                cellsList =
+                    cells timeline track
 
-            barCountRaw =
-                List.length rawChunks
+                rawChunks =
+                    String.split "|" track.text
 
-            maxDestBar =
-                selectedKeys
-                    |> Set.toList
-                    |> List.map (\( b, _ ) -> b + deltaBars)
-                    |> List.maximum
-                    |> Maybe.withDefault 0
+                barCountRaw =
+                    List.length rawChunks
 
-            totalBars =
-                Basics.max barCountRaw (maxDestBar + 1)
+                maxDestBar =
+                    selectedKeys
+                        |> Set.toList
+                        |> List.map (\( b, _ ) -> b + deltaBars)
+                        |> List.maximum
+                        |> Maybe.withDefault 0
 
-            paddedChunks =
-                rawChunks ++ List.repeat (totalBars - barCountRaw) ""
+                totalBars =
+                    Basics.max barCountRaw (maxDestBar + 1)
 
-            barTokens b =
-                cellsList
-                    |> List.filter (\c -> c.barIndex == b)
-                    |> List.head
-                    |> Maybe.map (\c -> List.indexedMap Tuple.pair c.chords)
-                    |> Maybe.withDefault []
+                paddedChunks =
+                    rawChunks ++ List.repeat (totalBars - barCountRaw) ""
 
-            keptTokens b =
-                barTokens b
-                    |> List.filter (\( j, _ ) -> not (Set.member ( b, j ) selectedKeys))
-                    |> List.map (\( _, c ) -> c.token)
+                barTokens b =
+                    cellsList
+                        |> List.filter (\c -> c.barIndex == b)
+                        |> List.head
+                        |> Maybe.map (\c -> List.indexedMap Tuple.pair c.chords)
+                        |> Maybe.withDefault []
 
-            selectedTokensOf b =
-                barTokens b
-                    |> List.filterMap
-                        (\( j, _ ) ->
-                            if Set.member ( b, j ) selectedKeys then
-                                Dict.get ( b, j ) spanLookup |> Maybe.map (\txt -> ( j, txt ))
+                keptTokens b =
+                    barTokens b
+                        |> List.filter (\( j, _ ) -> not (Set.member ( b, j ) selectedKeys))
+                        |> List.map (\( _, c ) -> c.token)
 
-                            else
-                                Nothing
-                        )
-
-            initFinal =
-                List.range 0 (totalBars - 1) |> List.map (\b -> ( b, keptTokens b )) |> Dict.fromList
-
-            ( finalTokensDict, keyMapList, touchedBars ) =
-                List.range 0 (barCountRaw - 1)
-                    |> List.foldl
-                        (\b ( finalAcc, mapAcc, touchedAcc ) ->
-                            let
-                                moving =
-                                    selectedTokensOf b
-                            in
-                            if List.isEmpty moving then
-                                ( finalAcc, mapAcc, touchedAcc )
-
-                            else
-                                let
-                                    destBar =
-                                        b + deltaBars
-
-                                    currentDestTokens =
-                                        Dict.get destBar finalAcc |> Maybe.withDefault []
-
-                                    baseIndex =
-                                        List.length currentDestTokens
-
-                                    appended =
-                                        List.indexedMap (\i ( srcIdx, txt ) -> ( srcIdx, txt, baseIndex + i )) moving
-
-                                    newTokens =
-                                        List.map (\( _, txt, _ ) -> txt) appended
-
-                                    newMapEntries =
-                                        List.map (\( srcIdx, _, newIdx ) -> ( ( b, srcIdx ), ( destBar, newIdx ) )) appended
-                                in
-                                ( Dict.insert destBar (currentDestTokens ++ newTokens) finalAcc
-                                , mapAcc ++ newMapEntries
-                                , touchedAcc |> Set.insert b |> Set.insert destBar
-                                )
-                        )
-                        ( initFinal, [], Set.empty )
-
-            newChunks =
-                List.range 0 (totalBars - 1)
-                    |> List.map
-                        (\b ->
-                            if Set.member b touchedBars then
-                                let
-                                    toks =
-                                        Dict.get b finalTokensDict |> Maybe.withDefault []
-                                in
-                                if List.isEmpty toks then
-                                    ""
+                selectedTokensOf b =
+                    barTokens b
+                        |> List.filterMap
+                            (\( j, _ ) ->
+                                if Set.member ( b, j ) selectedKeys then
+                                    Dict.get ( b, j ) spanLookup |> Maybe.map (\txt -> ( j, txt ))
 
                                 else
-                                    " " ++ String.join " " toks ++ " "
+                                    Nothing
+                            )
+
+                initFinal =
+                    List.range 0 (totalBars - 1) |> List.map (\b -> ( b, keptTokens b )) |> Dict.fromList
+
+                sourceBars =
+                    selectedKeys |> Set.toList |> List.map Tuple.first |> Set.fromList
+
+                appendPlacement =
+                    List.range 0 (barCountRaw - 1)
+                        |> List.foldl
+                            (\b ( finalAcc, mapAcc, touchedAcc ) ->
+                                let
+                                    moving =
+                                        selectedTokensOf b
+                                in
+                                if List.isEmpty moving then
+                                    ( finalAcc, mapAcc, touchedAcc )
+
+                                else
+                                    let
+                                        destBar =
+                                            b + deltaBars
+
+                                        currentDestTokens =
+                                            Dict.get destBar finalAcc |> Maybe.withDefault []
+
+                                        baseIndex =
+                                            List.length currentDestTokens
+
+                                        appended =
+                                            List.indexedMap (\i ( srcIdx, txt ) -> ( srcIdx, txt, baseIndex + i )) moving
+
+                                        newTokens =
+                                            List.map (\( _, txt, _ ) -> txt) appended
+
+                                        newMapEntries =
+                                            List.map (\( srcIdx, _, newIdx ) -> ( ( b, srcIdx ), ( destBar, newIdx ) )) appended
+                                    in
+                                    ( Dict.insert destBar (currentDestTokens ++ newTokens) finalAcc
+                                    , mapAcc ++ newMapEntries
+                                    , touchedAcc |> Set.insert b |> Set.insert destBar
+                                    )
+                            )
+                            ( initFinal, [], Set.empty )
+
+                swapPlacement b destBar =
+                    let
+                        selB =
+                            selectedTokensOf b
+
+                        keptWithIdxB =
+                            barTokens b
+                                |> List.filter (\( j, _ ) -> not (Set.member ( b, j ) selectedKeys))
+
+                        firstSelIdx =
+                            selB |> List.map Tuple.first |> List.minimum |> Maybe.withDefault 0
+
+                        beforeTexts =
+                            keptWithIdxB |> List.filter (\( j, _ ) -> j < firstSelIdx) |> List.map (\( _, c ) -> c.token)
+
+                        afterTexts =
+                            keptWithIdxB |> List.filter (\( j, _ ) -> j >= firstSelIdx) |> List.map (\( _, c ) -> c.token)
+
+                        displacedTexts =
+                            barTokens destBar
+                                |> List.map (\( j, c ) -> Dict.get ( destBar, j ) spanLookup |> Maybe.withDefault c.token)
+
+                        destFinalTexts =
+                            selB |> List.map Tuple.second
+
+                        bFinalTexts =
+                            beforeTexts ++ displacedTexts ++ afterTexts
+
+                        newMapEntries =
+                            List.indexedMap (\newIdx ( srcIdx, _ ) -> ( ( b, srcIdx ), ( destBar, newIdx ) )) selB
+                    in
+                    ( initFinal |> Dict.insert b bFinalTexts |> Dict.insert destBar destFinalTexts
+                    , newMapEntries
+                    , Set.fromList [ b, destBar ]
+                    )
+
+                ( finalTokensDict, keyMapList, touchedBars ) =
+                    case Set.toList sourceBars of
+                        [ b ] ->
+                            let
+                                destBar =
+                                    b + deltaBars
+                            in
+                            if List.isEmpty (keptTokens destBar) then
+                                appendPlacement
 
                             else
-                                paddedChunks |> List.drop b |> List.head |> Maybe.withDefault ""
-                        )
+                                swapPlacement b destBar
 
-            newText =
-                String.join "|" newChunks
+                        _ ->
+                            appendPlacement
 
-            movedKeys =
-                keyMapList |> List.map Tuple.second |> Set.fromList
-        in
-        { track = { track | text = newText }, movedKeys = movedKeys }
+                newChunks =
+                    List.range 0 (totalBars - 1)
+                        |> List.map
+                            (\b ->
+                                if Set.member b touchedBars then
+                                    let
+                                        toks =
+                                            Dict.get b finalTokensDict |> Maybe.withDefault []
+                                    in
+                                    if List.isEmpty toks then
+                                        ""
+
+                                    else
+                                        " " ++ String.join " " toks ++ " "
+
+                                else
+                                    paddedChunks |> List.drop b |> List.head |> Maybe.withDefault ""
+                            )
+
+                newText =
+                    String.join "|" newChunks
+
+                movedKeys =
+                    keyMapList |> List.map Tuple.second |> Set.fromList
+            in
+            { track = { track | text = newText }, movedKeys = movedKeys }
 
 
 {-| 選択トークンを削除する。| の数（小節構造）は絶対に変えない。変更した小節だけ正規化再構成し、

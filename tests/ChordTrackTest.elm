@@ -233,7 +233,7 @@ moveTokensSuite =
                 in
                 ( ChordTrack.cells timeline result.track |> List.map (\c -> List.map .token c.chords), result.movedKeys )
                     |> Expect.equal ( [ [], [ "C" ] ], Set.fromList [ ( 1, 0 ) ] )
-        , test "既存セルへの合流は末尾追記" <|
+        , test "既存セルとの入れ替え（swap）" <|
             \_ ->
                 let
                     result =
@@ -241,7 +241,14 @@ moveTokensSuite =
                 in
                 ChordTrack.cells timeline result.track
                     |> List.map (\c -> List.map .token c.chords)
-                    |> Expect.equal [ [], [ "G", "C" ] ]
+                    |> Expect.equal [ [ "G" ], [ "C" ] ]
+        , test "swap時のmovedKeysはdestBar側のみ" <|
+            \_ ->
+                let
+                    result =
+                        ChordTrack.moveTokens timeline 1 (Set.fromList [ ( 0, 0 ) ]) (track "C | G")
+                in
+                result.movedKeys |> Expect.equal (Set.fromList [ ( 1, 0 ) ])
         , test "% は展開して移動する" <|
             \_ ->
                 let
@@ -280,7 +287,7 @@ moveTokensSuite =
                         ChordTrack.moveTokens timeline 2 Set.empty original
                 in
                 result.track.text |> Expect.equal original.text
-        , test "負方向は選択の最小 barIndex が 0 を下回らないようにクランプされる" <|
+        , test "負方向は選択の最小 barIndex が 0 を下回らないようにクランプされ、swapが発動する" <|
             \_ ->
                 let
                     result =
@@ -288,7 +295,7 @@ moveTokensSuite =
                 in
                 ChordTrack.cells timeline result.track
                     |> List.map (\c -> List.map .token c.chords)
-                    |> Expect.equal [ [ "C", "G" ], [] ]
+                    |> Expect.equal [ [ "G" ], [ "C" ] ]
         , test "末尾を超える移動は空小節でパディングされる" <|
             \_ ->
                 let
@@ -310,6 +317,59 @@ moveTokensSuite =
                     |> Maybe.withDefault ""
                     |> String.contains "// secret"
                     |> Expect.equal True
+        , test "swap: 部分選択で非選択トークンは残る" <|
+            \_ ->
+                let
+                    result =
+                        ChordTrack.moveTokens timeline 1 (Set.fromList [ ( 0, 1 ) ]) (track "C G | Am")
+                in
+                ChordTrack.cells timeline result.track
+                    |> List.map (\c -> List.map .token c.chords)
+                    |> Expect.equal [ [ "C", "Am" ], [ "G" ] ]
+        , test "swap: 押し出されたトークンは選択していた位置に挿入される" <|
+            \_ ->
+                let
+                    result =
+                        ChordTrack.moveTokens timeline 1 (Set.fromList [ ( 0, 0 ) ]) (track "C G | Am")
+                in
+                ChordTrack.cells timeline result.track
+                    |> List.map (\c -> List.map .token c.chords)
+                    |> Expect.equal [ [ "Am", "G" ], [ "C" ] ]
+        , test "swap: 移動先が複数トークンの小節でも入れ替わる" <|
+            \_ ->
+                let
+                    result =
+                        ChordTrack.moveTokens timeline 1 (Set.fromList [ ( 0, 0 ) ]) (track "C | Am F")
+                in
+                ChordTrack.cells timeline result.track
+                    |> List.map (\c -> List.map .token c.chords)
+                    |> Expect.equal [ [ "Am", "F" ], [ "C" ] ]
+        , test "swap: 小節内全選択でも順序を保って入れ替わる" <|
+            \_ ->
+                let
+                    result =
+                        ChordTrack.moveTokens timeline 1 (Set.fromList [ ( 0, 0 ), ( 0, 1 ) ]) (track "C G | Am")
+                in
+                ( ChordTrack.cells timeline result.track |> List.map (\c -> List.map .token c.chords), result.movedKeys )
+                    |> Expect.equal ( [ [ "Am" ], [ "C", "G" ] ], Set.fromList [ ( 1, 0 ), ( 1, 1 ) ] )
+        , test "複数小節にまたがる選択はswapしない（末尾追記のまま）" <|
+            \_ ->
+                let
+                    result =
+                        ChordTrack.moveTokens timeline 1 (Set.fromList [ ( 0, 0 ), ( 1, 0 ) ]) (track "C | G | Am")
+                in
+                ChordTrack.cells timeline result.track
+                    |> List.map (\c -> List.map .token c.chords)
+                    |> Expect.equal [ [], [ "C" ], [ "Am", "G" ] ]
+        , test "swap: 押し出される側の % も展開される" <|
+            \_ ->
+                let
+                    result =
+                        ChordTrack.moveTokens timeline 1 (Set.fromList [ ( 0, 0 ) ]) (track "C | %")
+                in
+                ChordTrack.cells timeline result.track
+                    |> List.map (\c -> List.map .token c.chords)
+                    |> Expect.equal [ [ "C" ], [ "C" ] ]
         ]
 
 
