@@ -5342,6 +5342,13 @@ view model =
                 , button (Style.baseButton ++ [ onClick ClickedPlay, Html.Attributes.title "再生 (Space)" ]) [ text "▶ 再生" ]
                 , button (Style.baseButton ++ [ onClick ClickedStop, Html.Attributes.title "停止 (Space)" ]) [ text "■ 停止" ]
                 , button (Style.baseButton ++ [ onClick SeekNextSection, Html.Attributes.title "次のセクションの頭へ", Html.Attributes.attribute "aria-label" "次のセクションへ" ]) [ text "⏩" ]
+                , button
+                    (Style.toggleButton model.metronomeEnabled
+                        ++ [ onClick ToggledMetronome
+                           , Html.Attributes.title "メトロノーム（各拍でクリック音、小節頭はアクセント）"
+                           ]
+                    )
+                    [ text "🕰 クリック" ]
                 ]
 
         undoGroup =
