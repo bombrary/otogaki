@@ -1400,10 +1400,10 @@ releasedDragNoteOrRubberBand model =
                         _ ->
                             let
                                 pLow =
-                                    PianoRoll.yToPitch (isNarrowLayout model) y1
+                                    PianoRoll.yToPitch (isTouchLayout model) y1
 
                                 pHigh =
-                                    PianoRoll.yToPitch (isNarrowLayout model) y0
+                                    PianoRoll.yToPitch (isTouchLayout model) y0
                             in
                             trackNotes model
                                 |> List.filter
@@ -2649,7 +2649,7 @@ updateCore msg model =
                         PianoRoll.pixelsToTicks model1.pianoRollZoom pos.offsetX
 
                     hitPitch =
-                        PianoRoll.yToPitch (isNarrowLayout model1) pos.offsetY
+                        PianoRoll.yToPitch (isTouchLayout model1) pos.offsetY
 
                     hit =
                         trackNotes model1
@@ -4773,7 +4773,7 @@ dragMove pos d model =
         MoveNote ->
             let
                 dpitch =
-                    negate (Basics.round ((pos.clientY - d.startClientY) / toFloat (PianoRoll.rowHeight (isNarrowLayout model))))
+                    negate (Basics.round ((pos.clientY - d.startClientY) / toFloat (PianoRoll.rowHeight (isTouchLayout model))))
 
                 project2 =
                     List.foldl
@@ -5132,7 +5132,7 @@ view model =
                     , chordSpans = chordSpans
                     , tool = model.tool
                     , cutGuideTicks = model.cutGuideTicks
-                    , isNarrow = isNarrowLayout model
+                    , isNarrow = isTouchLayout model
                     }
 
                 toolToggle =
@@ -5546,7 +5546,7 @@ view model =
                     ]
                 )
             , SectionBar.view
-                (isNarrowLayout model)
+                (isTouchLayout model)
                 { select = SelectedSection
                 , add = ClickedAddSection
                 , remove = ClickedRemoveSection
@@ -5861,6 +5861,16 @@ view内で都度計算する派生値として扱う（ResizedWindowとの同期
 isNarrowLayout : Model -> Bool
 isNarrowLayout model =
     model.windowSize.width > 0 && model.windowSize.width < 800
+
+
+{-| タッチ寸法（PianoRoll rowHeight拡大、SectionBarハンドル拡大、.m3-btnパディング拡大）を適用するか。
+幅1200px未満を基準とする—全フォン、iPad縦（744-1024）、iPad横11"以下（1024-1194）をカバーする。
+既知の限界: iPad Pro 12.9"/13"横（~1366）は幅のみでは判別できずマウス寸法のままになる。
+1280-1536px級のラップトップを誤爆させないためのトレードオフとして受容。width == 0（起動直後）は広い扱い。
+-}
+isTouchLayout : Model -> Bool
+isTouchLayout model =
+    model.windowSize.width > 0 && model.windowSize.width < 1200
 
 
 {-| Shift/Alt/Ctrlなどの物理修飾キーを押せないタッチ環境向けの代替モード切替ボタン。
