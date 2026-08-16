@@ -37,19 +37,28 @@ type alias Loop =
     }
 
 
-encodePlay : { loop : Maybe Loop, startTicks : Int } -> Project -> Encode.Value
+encodePlay : { loop : Maybe Loop, startTicks : Int, metronome : Bool } -> Project -> Encode.Value
 encodePlay opts project =
     command "play"
         (Encode.object
             [ ( "bpm", Encode.float project.bpm )
             , ( "ppq", Encode.int Data.Time.ppq )
-            , ( "events", Encode.list encodeEvent (toEvents project) )
+            , ( "events", Encode.list encodeEvent (eventsWithMetronome opts.metronome project) )
             , ( "tracks", trackMetas project )
             , ( "loop", encodeLoop opts.loop )
             , ( "startTicks", Encode.int opts.startTicks )
             , ( "refAudio", encodeRefAudio project.referenceAudio )
             ]
         )
+
+
+eventsWithMetronome : Bool -> Project -> List Event
+eventsWithMetronome metronome project =
+    if metronome then
+        toEvents project ++ metronomeEvents (Data.Project.timeline project)
+
+    else
+        toEvents project
 
 
 encodeLoop : Maybe Loop -> Encode.Value
@@ -83,12 +92,12 @@ encodeRenderWav opts project =
 
 {-| 再生中にイベント列だけ差し替える（トランスポートは止めない）。
 -}
-encodeUpdateEvents : Project -> Encode.Value
-encodeUpdateEvents project =
+encodeUpdateEvents : { metronome : Bool } -> Project -> Encode.Value
+encodeUpdateEvents opts project =
     command "updateEvents"
         (Encode.object
             [ ( "ppq", Encode.int Data.Time.ppq )
-            , ( "events", Encode.list encodeEvent (toEvents project) )
+            , ( "events", Encode.list encodeEvent (eventsWithMetronome opts.metronome project) )
             , ( "tracks", trackMetas project )
             , ( "refAudio", encodeRefAudio project.referenceAudio )
             ]

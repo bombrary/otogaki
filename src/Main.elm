@@ -175,6 +175,7 @@ type alias Model =
     , highlightedPitches : Set Int
     , heldKeyPitches : Set Int
     , followPlayhead : Bool
+    , metronomeEnabled : Bool
     , loopRange : Maybe Performance.Loop
     , loopDrag : Maybe LoopDrag
     , lastEditLabel : String
@@ -389,6 +390,7 @@ type Msg
     | ChangedDefaultDuration String
     | ChangedGridUnit String
     | ToggledFollowPlayhead
+    | ToggledMetronome
     | GotPianoRollViewport Int (Result Browser.Dom.Error Browser.Dom.Viewport)
     | PressedLoopHandle Bool Float
     | WheelZoomedRuler { deltaY : Float, offsetX : Float }
@@ -476,6 +478,7 @@ init flags =
       , highlightedPitches = Set.empty
       , heldKeyPitches = Set.empty
       , followPlayhead = True
+      , metronomeEnabled = False
       , loopRange = Nothing
       , loopDrag = Nothing
       , lastEditLabel = ""
@@ -1462,7 +1465,7 @@ update msg model =
 
         syncCmds =
             if newModel.playState == Playing && not stillDragging && (projectChanged || isReleasedDrag msg) then
-                [ Ports.toAudio (Performance.encodeUpdateEvents newModel.project) ]
+                [ Ports.toAudio (Performance.encodeUpdateEvents { metronome = newModel.metronomeEnabled } newModel.project) ]
 
             else
                 []
@@ -1479,11 +1482,19 @@ update msg model =
 
 startPlay : Maybe Performance.Loop -> Int -> Model -> ( Model, Cmd Msg )
 startPlay loop startTicks model =
+    let
+        instrumentNames =
+            if model.metronomeEnabled then
+                "drumKit" :: Performance.usedInstrumentNames model.project
+
+            else
+                Performance.usedInstrumentNames model.project
+    in
     ( { model
         | playState = Playing
-        , instrumentLoad = markLoading (Performance.usedInstrumentNames model.project) model.instrumentLoad
+        , instrumentLoad = markLoading instrumentNames model.instrumentLoad
       }
-    , Ports.toAudio (Performance.encodePlay { loop = loop, startTicks = startTicks } model.project)
+    , Ports.toAudio (Performance.encodePlay { loop = loop, startTicks = startTicks, metronome = model.metronomeEnabled } model.project)
     )
 
 
@@ -4612,6 +4623,19 @@ updateCore msg model =
 
         ToggledFollowPlayhead ->
             ( { model | followPlayhead = not model.followPlayhead }, Cmd.none )
+
+        ToggledMetronome ->
+            let
+                newModel =
+                    { model | metronomeEnabled = not model.metronomeEnabled }
+            in
+            ( newModel
+            , if model.playState == Playing then
+                Ports.toAudio (Performance.encodeUpdateEvents { metronome = newModel.metronomeEnabled } newModel.project)
+
+              else
+                Cmd.none
+            )
 
         GotPianoRollViewport ticks result ->
             case result of
