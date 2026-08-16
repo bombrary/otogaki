@@ -75,6 +75,7 @@ type alias DragInfo =
     , startClientY : Float
     , origNotes : List Data.Note.Note
     , lastPreviewPitch : Int
+    , isTouch : Bool
     }
 
 
@@ -642,6 +643,13 @@ dragThreshold =
     3
 
 
+{-| タッチでは指先の位置が3px程度容易にブレ、長押し削除（500ms）が完走する前にdragStateへの昇格でlongPressがdisarmされてしまうため、マウスより広いしきい値を使う。
+-}
+touchDragThreshold : Float
+touchDragThreshold =
+    10
+
+
 exceedsDragThreshold : { r | startClientX : Float, startClientY : Float } -> { p | clientX : Float, clientY : Float } -> Bool
 exceedsDragThreshold info pos =
     let
@@ -671,7 +679,7 @@ armLongPress target model =
 {-| ノートをドラッグ移動/リサイズ状態にする共通処理。PressedNote の非Shift分岐と、PressedEmptyCell が
 既存ノート上のクリックを新規作成ではなく選択+移動にフォールバックする場合の両方から呼ばれる。
 -}
-pressNoteForDrag : Data.Note.Note -> PianoRoll.ResizeHandle -> { r | clientX : Float, clientY : Float } -> Model -> ( Model, Cmd Msg )
+pressNoteForDrag : Data.Note.Note -> PianoRoll.ResizeHandle -> { r | clientX : Float, clientY : Float, isTouch : Bool } -> Model -> ( Model, Cmd Msg )
 pressNoteForDrag note handle pos model =
     let
         sel =
@@ -705,6 +713,7 @@ pressNoteForDrag note handle pos model =
                 , startClientY = pos.clientY
                 , origNotes = origs
                 , lastPreviewPitch = note.pitch
+                , isTouch = pos.isTouch
                 }
       }
     , Ports.toAudio (Performance.encodePreviewNote (selectedInstrumentName model) note.pitch)
@@ -765,6 +774,7 @@ placeNoteWithResizePending pos model =
                 , startClientY = pos.clientY
                 , origNotes = [ note ]
                 , lastPreviewPitch = note.pitch
+                , isTouch = False
                 }
       }
     , cmd
@@ -2784,7 +2794,7 @@ updateCore msg model =
                 in
                 case hit of
                     Just note ->
-                        pressNoteForDrag note PianoRoll.NoResize { clientX = pos.clientX, clientY = pos.clientY } model1
+                        pressNoteForDrag note PianoRoll.NoResize { clientX = pos.clientX, clientY = pos.clientY, isTouch = pos.isTouch } model1
 
                     Nothing ->
                         if pos.isTouch then
@@ -3086,8 +3096,15 @@ updateCore msg model =
 
                         dist =
                             sqrt (dx * dx + dy * dy)
+
+                        threshold =
+                            if info.isTouch then
+                                touchDragThreshold
+
+                            else
+                                dragThreshold
                     in
-                    if dist < 3 then
+                    if dist < threshold then
                         ( model, Cmd.none )
 
                     else
