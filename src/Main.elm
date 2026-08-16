@@ -151,6 +151,7 @@ type alias Model =
     , selectedTrackId : Int
     , dragState : DragState
     , pendingNoteDrag : Maybe DragInfo
+    , pendingEmptyTouch : Maybe { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float }
     , instrumentLoad : Dict String String
     , selectedSectionId : Maybe Int
     , bpmInput : String
@@ -289,7 +290,8 @@ type Msg
     | ChangedBpm String
     | BlurredBpm
     | GotAudio AudioEvent
-    | PressedEmptyCell { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, seekMod : Bool }
+    | PressedEmptyCell { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, seekMod : Bool, isTouch : Bool }
+    | CanceledNotePress
     | PressedNote Int PianoRoll.ResizeHandle { clientX : Float, clientY : Float, shift : Bool, isTouch : Bool, timeStamp : Float }
     | PressedChordToken ( Int, Int ) { clientX : Float, clientY : Float, shift : Bool }
     | PressedChordLane { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, seekMod : Bool }
@@ -415,7 +417,7 @@ type Msg
     | SubmittedFormPickerDraft
     | SelectedFormPickerTab FormPicker.Tab
     | PressedVelocityBar Int { clientX : Float, clientY : Float }
-    | PressedCutAt { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, seekMod : Bool }
+    | PressedCutAt { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, seekMod : Bool, isTouch : Bool }
     | MovedCutGuide { offsetX : Float }
     | ClearedCutGuide
     | SelectedTool PianoRoll.Tool
@@ -456,6 +458,7 @@ init flags =
       , selectedTrackId = Maybe.withDefault (firstTrackId project) restoredSelectedTrackId
       , dragState = NoDrag
       , pendingNoteDrag = Nothing
+      , pendingEmptyTouch = Nothing
       , instrumentLoad = Dict.empty
       , selectedSectionId = Nothing
       , bpmInput = String.fromFloat project.bpm
@@ -708,7 +711,67 @@ pressNoteForDrag note handle pos model =
     )
 
 
-{-| ドラムグリッドのセル（pitch, グリッドにスナップした tick）に履ているノートを探す。
+{-| 空セルへのノート新規配置のコア処理。addNote + 選択 + ハイライト + プレビュー音を行う。タッチのタップ確定
+（ReleasedDrag）とマウスのpointerdown即座配置（PressedEmptyCell）の両方から呼ばれる。
+-}
+insertNoteAt : { r | offsetX : Float, offsetY : Float } -> Model -> ( Model, Cmd Msg, Data.Note.Note )
+insertNoteAt pos model =
+    let
+        exactTick =
+            PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX
+
+        hitPitch =
+            PianoRoll.yToPitch (isTouchLayout model) pos.offsetY
+
+        start =
+            Basics.max 0 (snapFloor model exactTick)
+
+        pitch =
+            clamp PianoRoll.minPitch PianoRoll.maxPitch hitPitch
+
+        note =
+            { id = model.project.nextId
+            , pitch = pitch
+            , start = start
+            , duration = model.defaultNoteDuration
+            , velocity = 100
+            }
+    in
+    ( { model
+        | project = Data.Project.addNote model.selectedTrackId note model.project
+        , selectedNoteIds = Set.singleton note.id
+        , highlightedPitches = Set.singleton note.pitch
+      }
+    , Ports.toAudio (Performance.encodePreviewNote (selectedInstrumentName model) note.pitch)
+    , note
+    )
+
+
+{-| マウス用: insertNoteAt に続けて pendingNoteDrag を ResizeRight で武装し、押したまま右に伸ばして
+配置できるようにする（タッチはこの武装をせず pointerup で確定するだけ）。
+-}
+placeNoteWithResizePending : { r | offsetX : Float, offsetY : Float, clientX : Float, clientY : Float } -> Model -> ( Model, Cmd Msg )
+placeNoteWithResizePending pos model =
+    let
+        ( placed, cmd, note ) =
+            insertNoteAt pos model
+    in
+    ( { placed
+        | pendingNoteDrag =
+            Just
+                { anchorId = note.id
+                , mode = ResizeRight
+                , startClientX = pos.clientX
+                , startClientY = pos.clientY
+                , origNotes = [ note ]
+                , lastPreviewPitch = note.pitch
+                }
+      }
+    , cmd
+    )
+
+
+{-| ドラムグリッドのセル（pitch, グリッドにスナップした tick）に該当するノートを探す。
 -}
 findDrumNoteAt : { pitch : Int, tick : Int } -> Model -> Maybe Data.Note.Note
 findDrumNoteAt { pitch, tick } model =
@@ -1231,6 +1294,30 @@ legacyDraggedTo pos model =
 
                                                                             Nothing ->
                                                                                 draggedToNoteOrRubberBand pos model
+
+
+{-| pendingEmptyTouch以外の保留状態（pendingNoteDrag/pendingChordDrag/pendingVoicingDrag）を順に確認し、
+どれもなければlegacyReleasedDragに落とす。元々ReleasedDragハンドラ本体だったものを、pendingEmptyTouch分岐を
+先頭に追加する際にネストが深くなりすぎないよう外出しした。
+-}
+releasedDragFallback : Model -> ( Model, Cmd Msg )
+releasedDragFallback model =
+    case model.pendingNoteDrag of
+        Just _ ->
+            ( { model | pendingNoteDrag = Nothing, longPress = Nothing }, Cmd.none )
+
+        Nothing ->
+            case model.pendingChordDrag of
+                Just _ ->
+                    ( { model | pendingChordDrag = Nothing, longPress = Nothing }, Cmd.none )
+
+                Nothing ->
+                    case model.pendingVoicingDrag of
+                        Just _ ->
+                            ( { model | pendingVoicingDrag = Nothing, longPress = Nothing }, Cmd.none )
+
+                        Nothing ->
+                            legacyReleasedDrag { model | longPress = Nothing }
 
 
 legacyReleasedDrag : Model -> ( Model, Cmd Msg )
@@ -2674,7 +2761,7 @@ updateCore msg model =
             let
                 {- 残留したpendingNoteDragがあっても、次のクリックで必ず健全化するように先頭でリセットする。 -}
                 model1 =
-                    { model | pendingNoteDrag = Nothing }
+                    { model | pendingNoteDrag = Nothing, pendingEmptyTouch = Nothing }
             in
             if pos.seekMod || model1.touchMode == TouchSeek then
                 seekTo (snapFloor model1 (PianoRoll.pixelsToTicks model1.pianoRollZoom pos.offsetX)) model1
@@ -2700,37 +2787,15 @@ updateCore msg model =
                         pressNoteForDrag note PianoRoll.NoResize { clientX = pos.clientX, clientY = pos.clientY } model1
 
                     Nothing ->
-                        let
-                            start =
-                                Basics.max 0 (snapFloor model1 exactTick)
+                        if pos.isTouch then
+                            -- 配置はpointerup（タップ確定）まで保留。スワイプならブラウザが
+                            -- pointercancelを発火してネイティブスクロールに移行し、配置されない。
+                            ( { model1 | pendingEmptyTouch = Just { offsetX = pos.offsetX, offsetY = pos.offsetY, clientX = pos.clientX, clientY = pos.clientY } }
+                            , Cmd.none
+                            )
 
-                            pitch =
-                                clamp PianoRoll.minPitch PianoRoll.maxPitch hitPitch
-
-                            note =
-                                { id = model1.project.nextId
-                                , pitch = pitch
-                                , start = start
-                                , duration = model1.defaultNoteDuration
-                                , velocity = 100
-                                }
-                        in
-                        ( { model1
-                            | project = Data.Project.addNote model1.selectedTrackId note model1.project
-                            , selectedNoteIds = Set.singleton note.id
-                            , highlightedPitches = Set.singleton note.pitch
-                            , pendingNoteDrag =
-                                Just
-                                    { anchorId = note.id
-                                    , mode = ResizeRight
-                                    , startClientX = pos.clientX
-                                    , startClientY = pos.clientY
-                                    , origNotes = [ note ]
-                                    , lastPreviewPitch = note.pitch
-                                    }
-                          }
-                        , Ports.toAudio (Performance.encodePreviewNote (selectedInstrumentName model1) note.pitch)
-                        )
+                        else
+                            placeNoteWithResizePending pos model1
 
         PressedNote noteId handle pos ->
             let
@@ -2738,7 +2803,7 @@ updateCore msg model =
                    pointer capture導入後は原理上残留しないはずだが、多層防御として入れておく。
                 -}
                 model1 =
-                    { model | pendingNoteDrag = Nothing }
+                    { model | pendingNoteDrag = Nothing, pendingEmptyTouch = Nothing }
             in
             case findNote model1 noteId of
                 Just note ->
@@ -3050,22 +3115,25 @@ updateCore msg model =
                                     legacyDraggedTo pos model
 
         ReleasedDrag ->
-            case model.pendingNoteDrag of
-                Just _ ->
-                    ( { model | pendingNoteDrag = Nothing, longPress = Nothing }, Cmd.none )
+            case model.pendingEmptyTouch of
+                Just p ->
+                    {- タッチで空白を押したまま指を動かさず離した（＝スワイプではなくタップ）と判断し、ここで初めてノートを確定配置する。
+                       pendingNoteDragは付けず（指は既に離れているため）、押したまま伸ばすジェスチャはタッチでは提供しない。
+                    -}
+                    let
+                        ( placed, cmd, _ ) =
+                            insertNoteAt p { model | pendingEmptyTouch = Nothing }
+                    in
+                    ( placed, cmd )
 
                 Nothing ->
-                    case model.pendingChordDrag of
-                        Just _ ->
-                            ( { model | pendingChordDrag = Nothing, longPress = Nothing }, Cmd.none )
+                    releasedDragFallback model
 
-                        Nothing ->
-                            case model.pendingVoicingDrag of
-                                Just _ ->
-                                    ( { model | pendingVoicingDrag = Nothing, longPress = Nothing }, Cmd.none )
-
-                                Nothing ->
-                                    legacyReleasedDrag { model | longPress = Nothing }
+        CanceledNotePress ->
+            {- タッチで空白を押したものの指が動いてブラウザがネイティブスクロールに切り替えた（pointercancel）。配置せず保留を
+               破棄し、ReleasedDragと同じ事後処理（他の保留状態の解除）に委譲する。
+            -}
+            updateCore ReleasedDrag { model | pendingEmptyTouch = Nothing }
 
         PressedRuler pos ->
             if pos.shift || model.touchMode == TouchSelect then
@@ -5140,6 +5208,7 @@ view model =
                     , pressedNote = PressedNote
                     , draggedWhilePressingNote = \pos -> DraggedTo { clientX = pos.clientX, clientY = pos.clientY, alt = pos.alt }
                     , releasedNotePress = ReleasedDrag
+                    , canceledNotePress = CanceledNotePress
                     , doubleClickedNote = DoubleClickedNote
                     , rightClickedNote = RightClickedNote
                     , pressedRuler = PressedRuler
@@ -5175,6 +5244,14 @@ view model =
                     , tool = model.tool
                     , cutGuideTicks = model.cutGuideTicks
                     , isNarrow = isTouchLayout model
+                    , gridTouchAction =
+                        if model.tool == PianoRoll.PointerTool && model.touchMode == TouchNormal then
+                            "pan-x pan-y"
+                            -- 空白スワイプをネイティブスクロールに委譲（ピンチズームは除外）
+
+                        else
+                            "none"
+                            -- TouchSelect（矩形選択ドラッグ）・TouchSeek・CutToolは従来通り
                     }
 
                 toolToggle =

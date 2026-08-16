@@ -51,10 +51,11 @@ import View.Theme as Theme
 
 
 type alias Config msg =
-    { pressedEmpty : { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, seekMod : Bool } -> msg
+    { pressedEmpty : { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, seekMod : Bool, isTouch : Bool } -> msg
     , pressedNote : Int -> ResizeHandle -> { clientX : Float, clientY : Float, shift : Bool, isTouch : Bool, timeStamp : Float } -> msg
     , draggedWhilePressingNote : { clientX : Float, clientY : Float, alt : Bool } -> msg
     , releasedNotePress : msg
+    , canceledNotePress : msg
     , doubleClickedNote : Int -> msg
     , rightClickedNote : Int -> msg
     , pressedRuler : { offsetX : Float, clientX : Float, shift : Bool } -> msg
@@ -114,6 +115,7 @@ type alias ViewOpts =
     , tool : Tool
     , cutGuideTicks : Maybe Int
     , isNarrow : Bool
+    , gridTouchAction : String
     }
 
 
@@ -812,13 +814,13 @@ gridView config opts =
              else
                 "crosshair"
             )
-         , HA.style "touch-action" "none"
+         , HA.style "touch-action" opts.gridTouchAction
          , Html.Events.on "pointerdown" (Decode.map config.pressedEmpty emptyPressDecoder)
          , HA.attribute "data-pointer-capture" ""
          , Html.Events.on "pointermove"
             (Decode.map config.draggedWhilePressingNote noteMoveDecoder)
          , Html.Events.on "pointerup" (Decode.succeed config.releasedNotePress)
-         , Html.Events.on "pointercancel" (Decode.succeed config.releasedNotePress)
+         , Html.Events.on "pointercancel" (Decode.succeed config.canceledNotePress)
          ]
             ++ (if opts.tool == CutTool then
                     [ Html.Events.on "mousemove" (Decode.map config.movedCutGuide cutGuideMoveDecoder)
@@ -1087,30 +1089,43 @@ sectionTint isNarrow pxPerSixteenth idx span =
 出す想定）でも PressedEmptyCell が発火し、「押したまま伸ばして配置する」ためのリサイズ状態が始まってしまう。
 右ボタンを離しても contextmenu 発火後はイベント配送が止まるため状態がホールドされ続ける。
 -}
-emptyPressDecoder : Decode.Decoder { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, seekMod : Bool }
+emptyPressDecoder : Decode.Decoder { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, seekMod : Bool, isTouch : Bool }
 emptyPressDecoder =
     Decode.field "button" Decode.int
         |> Decode.andThen
             (\button ->
                 if button == 0 then
-                    Decode.map8
-                        (\ox oy cx cy sh ctrl meta alt ->
-                            { offsetX = ox
-                            , offsetY = oy
-                            , clientX = cx
-                            , clientY = cy
-                            , shift = sh
-                            , seekMod = ctrl || meta || alt
+                    Decode.map2
+                        (\r touch ->
+                            { offsetX = r.offsetX
+                            , offsetY = r.offsetY
+                            , clientX = r.clientX
+                            , clientY = r.clientY
+                            , shift = r.shift
+                            , seekMod = r.seekMod
+                            , isTouch = touch
                             }
                         )
-                        (Decode.field "offsetX" Decode.float)
-                        (Decode.field "offsetY" Decode.float)
-                        (Decode.field "clientX" Decode.float)
-                        (Decode.field "clientY" Decode.float)
-                        (Decode.field "shiftKey" Decode.bool)
-                        (Decode.field "ctrlKey" Decode.bool)
-                        (Decode.field "metaKey" Decode.bool)
-                        (Decode.field "altKey" Decode.bool)
+                        (Decode.map8
+                            (\ox oy cx cy sh ctrl meta alt ->
+                                { offsetX = ox
+                                , offsetY = oy
+                                , clientX = cx
+                                , clientY = cy
+                                , shift = sh
+                                , seekMod = ctrl || meta || alt
+                                }
+                            )
+                            (Decode.field "offsetX" Decode.float)
+                            (Decode.field "offsetY" Decode.float)
+                            (Decode.field "clientX" Decode.float)
+                            (Decode.field "clientY" Decode.float)
+                            (Decode.field "shiftKey" Decode.bool)
+                            (Decode.field "ctrlKey" Decode.bool)
+                            (Decode.field "metaKey" Decode.bool)
+                            (Decode.field "altKey" Decode.bool)
+                        )
+                        (Decode.field "pointerType" Decode.string |> Decode.map ((==) "touch"))
 
                 else
                     Decode.fail "not left button"
