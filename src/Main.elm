@@ -95,11 +95,15 @@ type alias RubberBand =
 
 
 {-| コードトークンのドラッグ移動中の状態。origText/origKeys はドラッグ開始時のスナップショットで、
-moveTokens は毎 move でこのスナップショットから再計算する（累積誤差を防ぐため）。
+moveTokens は毎 move でこのスナップショットから再計算する（累積誤差を防ぐため）。anchorCenterTicksは
+トークンの開始tickではなく中心tick（startTicks + durationTicks // 2）。開始tickを基準にするとticksToBarBeatの
+floor丸めの影響で、右方向の小節切り替えにはほぼ1小節分の移動が必要なのに対し、左方向はわずかな移動で
+切り替わってしまい左右非対称になる。中心tickを基準にすることで、左右とも半小節分の移動で切り替わる
+ようにしている。
 -}
 type alias ChordDrag =
     { anchorKey : ( Int, Int )
-    , anchorStartTicks : Int
+    , anchorCenterTicks : Int
     , startClientX : Float
     , startClientY : Float
     , origText : String
@@ -1094,7 +1098,7 @@ chordDragMove pos cd model =
             PianoRoll.pixelsToTicks model.pianoRollZoom (pos.clientX - cd.startClientX)
 
         targetBar =
-            (Data.Timeline.ticksToBarBeat (Basics.max 0 (cd.anchorStartTicks + dxTicks)) timeline).bar - 1
+            (Data.Timeline.ticksToBarBeat (Basics.max 0 (cd.anchorCenterTicks + dxTicks)) timeline).bar - 1
 
         deltaBars =
             targetBar - Tuple.first cd.anchorKey
@@ -1319,7 +1323,13 @@ legacyDraggedTo pos model =
                                                             Nothing ->
                                                                 case model.chordDrag of
                                                                     Just cd ->
-                                                                        chordDragMove pos cd model
+                                                                        if model.chordBlockView then
+                                                                            {- ブロック表示ではセル座標が線形でないためdeltaBarsの発生源はDraggedOverChordBarのみ。
+                                                                               ここでchordDragMoveを呼ぶとpointerenter直後のpointermoveがdeltaBars=0を再計算してswapを打ち消す。 -}
+                                                                            ( model, Cmd.none )
+
+                                                                        else
+                                                                            chordDragMove pos cd model
 
                                                                     Nothing ->
                                                                         case model.chordRubberBand of
@@ -3076,11 +3086,11 @@ updateCore msg model =
                     timeline =
                         Data.Project.timeline model1.project
 
-                    anchorStartTicks =
+                    anchorCenterTicks =
                         Data.ChordTrack.tokenSpans timeline model1.project.chordTrack
                             |> List.filter (\s -> s.key == key)
                             |> List.head
-                            |> Maybe.map .startTicks
+                            |> Maybe.map (\s -> s.startTicks + s.durationTicks // 2)
                             |> Maybe.withDefault 0
                 in
                 ( { model1
@@ -3088,7 +3098,7 @@ updateCore msg model =
                     , pendingChordDrag =
                         Just
                             { anchorKey = key
-                            , anchorStartTicks = anchorStartTicks
+                            , anchorCenterTicks = anchorCenterTicks
                             , startClientX = pos.clientX
                             , startClientY = pos.clientY
                             , origText = model1.project.chordTrack.text
