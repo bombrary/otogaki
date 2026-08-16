@@ -1473,12 +1473,33 @@ update msg model =
             else
                 []
 
+        -- シートの元データが実際に変わったかの狭い判定。
+        -- project 全体（ノート・音量等）の変更では draft を触らない。
+        sheetSourceChanged =
+            (coreModel.project.sections /= model.project.sections)
+                || (coreModel.project.chordTrack.text /= model.project.chordTrack.text)
+
+        isSheetTextEdit =
+            case msg of
+                ChangedChordSheetText _ ->
+                    True
+
+                _ ->
+                    False
+
         finalModel =
-            if isReleasedDrag msg then
+            (if isReleasedDrag msg then
                 { newModel | highlightedPitches = Set.empty }
 
-            else
+             else
                 newModel
+            )
+                |> (if sheetSourceChanged && not isSheetTextEdit then
+                        refreshChordSheetDraft
+
+                    else
+                        identity
+                   )
     in
     ( finalModel, Cmd.batch (cmd :: saveCmds ++ syncCmds) )
 
@@ -1557,6 +1578,21 @@ sectionStartBar sectionId project =
 resizeSectionBars : Int -> Int -> Model -> Model
 resizeSectionBars sectionId newLenRaw model =
     { model | project = Data.Project.updateSection sectionId (\s -> { s | lengthBars = clamp 1 64 newLenRaw }) model.project }
+
+
+{-| コード進行パネルが開いている（chordSheetDraft が Just の）間、シートの元データ（セクション列または
+コードトラック本文）が変わったら textarea の下書きを toSheetText で作り直す。ChangedChordSheetText 自体は
+呼び出し側（updateラッパー）で除外する（ユーザーが入力中の生テキスト—コメントや途中の崩れた形式—を
+正規化で上書きしないため）。
+-}
+refreshChordSheetDraft : Model -> Model
+refreshChordSheetDraft m =
+    case m.chordSheetDraft of
+        Just _ ->
+            { m | chordSheetDraft = Just (Data.ChordSheet.toSheetText m.project.sections m.project.chordTrack) }
+
+        Nothing ->
+            m
 
 
 parseInsertCount : String -> Int
