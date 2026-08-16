@@ -4727,7 +4727,7 @@ updateCore msg model =
 
                 {- 狭画面に遷移した時は、進行中のペイン幅ドラッグをリセットする（ディバイダーを描画しなくなるための保険）。 -}
                 model2 =
-                    if isNarrowLayout model1 then
+                    if isSinglePaneLayout model1 then
                         { model1 | paneDividerDrag = Nothing }
 
                     else
@@ -5595,7 +5595,7 @@ view model =
                 model.pendingSectionDelete
                 (model.sectionResizeDrag |> Maybe.map (\d -> { sectionId = d.sectionId, lengthBars = d.curLengthBars }))
             ]
-        , if isNarrowLayout model then
+        , if isSinglePaneLayout model then
             div [ style "flex" "1 1 auto", style "min-height" "0", style "display" "flex", style "flex-direction" "column", style "overflow" "hidden" ]
                 [ narrowTabBar model.narrowPane
                 , div [ style "flex" "1 1 auto", style "min-height" "0", style "overflow-y" "auto", style "padding" "0.5rem 1rem 1rem 1rem", style "box-sizing" "border-box" ]
@@ -5877,6 +5877,16 @@ isNarrowLayout model =
 isTouchLayout : Model -> Bool
 isTouchLayout model =
     model.windowSize.width > 0 && model.windowSize.width < 1200
+
+
+{-| 2ペインレイアウト（左ペイン+ディバイダー+右ペイン）を成立させるには幅が足りないか。
+2ペインの最低成立幅 ≈ leftPaneWidth初期値380 + ディバイダー10 + メイン編集部~600 ≈ 990に基づき
+幅1000を固定定数とする（leftPaneWidth依存の動的式はドラッグで広げた瞬間に1ペインに崩落する
+自己破壊的ヒステリシスになるため不採用）。width == 0（起動直後）は2ペイン成立扱い（False）。
+-}
+isSinglePaneLayout : Model -> Bool
+isSinglePaneLayout model =
+    model.windowSize.width > 0 && model.windowSize.width < 1000
 
 
 {-| Shift/Alt/Ctrlなどの物理修飾キーを押せないタッチ環境向けの代替モード切替ボタン。
