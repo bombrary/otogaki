@@ -5664,7 +5664,7 @@ view model =
             div groupStyle
                 [ button (Style.baseButton ++ [ onClick (SeekTo 0), Html.Attributes.title "曲の先頭へ", Html.Attributes.attribute "aria-label" "曲の先頭へ" ]) [ text "⏮" ]
                 , button (Style.baseButton ++ [ onClick SeekPrevSection, Html.Attributes.title "このセクションの頭へ（連打で前へ遡る）", Html.Attributes.attribute "aria-label" "前のセクションへ" ]) [ text "⏪" ]
-                , button (Style.baseButton ++ [ onClick ClickedPlay, Html.Attributes.title "再生 (Space)" ]) [ text "▶ 再生" ]
+                , button (Style.toggleButton (model.playState == Playing) ++ [ onClick ClickedPlay, Html.Attributes.title "再生 (Space)" ]) [ text "▶ 再生" ]
                 , button (Style.baseButton ++ [ onClick ClickedStop, Html.Attributes.title "停止 (Space)" ]) [ text "■ 停止" ]
                 , button (Style.baseButton ++ [ onClick SeekNextSection, Html.Attributes.title "次のセクションの頭へ", Html.Attributes.attribute "aria-label" "次のセクションへ" ]) [ text "⏩" ]
                 , button
@@ -6157,6 +6157,7 @@ viewDragOverlay =
         , style "inset" "0"
         , style "z-index" Theme.zDragOverlay
         , style "touch-action" "none"
+        , style "cursor" "grabbing"
         , Html.Events.on "pointermove" (Decode.map DraggedTo clientPosDecoder)
         , Html.Events.on "pointerup" (Decode.succeed ReleasedDrag)
         , Html.Events.on "pointercancel" (Decode.succeed ReleasedDrag)
