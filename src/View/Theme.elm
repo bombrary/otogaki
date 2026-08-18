@@ -186,7 +186,7 @@ colorTokens =
     , ColorToken "selection" "#B42B62" "#FFB1C8"
     , ColorToken "on-selection" "#FFFFFF" "#5E1133"
     , ColorToken "selection-deep" "#8E1D4C" "#FFD9E2"
-    , ColorToken "highlight" "#F5C518" "#F5C518"
+    , ColorToken "highlight" "#8A6A00" "#F5C518"
     , ColorToken "highlight-container" "#FFF0C9" "#4D3C00"
     , ColorToken "on-highlight-container" "#584400" "#FFE38C"
     , ColorToken "loop" "#5E60CE" "#C2C1FF"
@@ -681,7 +681,7 @@ darkDeclarations =
 
 rootBlock : String
 rootBlock =
-    ":root {\n" ++ lightDeclarations ++ "\n}"
+    ":root {\n" ++ lightDeclarations ++ "\n  color-scheme: light;\n}"
 
 
 {-| OS のダーク設定に自動追従するブロック。`[data-theme=light]` が明示されている時だけ除外するので、
@@ -693,7 +693,7 @@ darkMediaBlock =
     "@media (prefers-color-scheme: dark) {\n"
         ++ ":root:not([data-theme=light]) {\n"
         ++ darkDeclarations
-        ++ "\n}\n"
+        ++ "\n  color-scheme: dark;\n}\n"
         ++ ":root:not([data-theme=light]) .m3-hit:hover { filter: brightness(1.15); }\n"
         ++ "}"
 
@@ -704,7 +704,7 @@ darkOverrideBlock : String
 darkOverrideBlock =
     ":root[data-theme=dark] {\n"
         ++ darkDeclarations
-        ++ "\n}\n"
+        ++ "\n  color-scheme: dark;\n}\n"
         ++ ":root[data-theme=dark] .m3-hit:hover { filter: brightness(1.15); }"
 
 
@@ -720,6 +720,8 @@ cssRules =
     , ".m3-btn:hover::after { opacity: 0.08; }"
     , ".m3-btn:active::after { opacity: 0.10; }"
     , ".m3-btn:focus-visible::after { opacity: 0.10; }"
+    , ".m3-btn:disabled { opacity: 0.38; cursor: default; }"
+    , ".m3-btn:disabled::after { display: none; }"
     , ".touch-ui .m3-btn { padding: 0.55rem 0.9rem !important; }"
     , ".touch-ui { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }"
     , ".touch-ui input, .touch-ui textarea, .touch-ui select { -webkit-user-select: text; user-select: text; }"

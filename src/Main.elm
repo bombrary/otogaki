@@ -5761,7 +5761,6 @@ view model =
         [ style "display" "flex"
         , style "flex-direction" "column"
         , style "height" "100vh"
-        , style "font-family" "sans-serif"
         , classList [ ( "touch-ui", isTouchLayout model ) ]
         ]
         [ Style.focusCss
@@ -5985,7 +5984,7 @@ view model =
 
                         WavExportFailed message ->
                             [ Html.h2 [] [ text "WAV書き出し" ]
-                            , div [ style "color" "crimson" ] [ text ("書き出しに失敗しました: " ++ message) ]
+                            , div [ style "color" Theme.error ] [ text ("書き出しに失敗しました: " ++ message) ]
                             , button (Style.baseButton ++ [ onClick ClickedExportWav ]) [ text "再試行" ]
                             ]
                     )
