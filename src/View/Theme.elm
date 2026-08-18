@@ -70,6 +70,9 @@ module View.Theme exposing
     , typeTitleLarge
     , typeTitleSmall
     , withAlpha
+    , zDragOverlay
+    , zModal
+    , zToast
     )
 
 {-| Material Design 3 のデザイントークン。全トークンの単一情報源。
@@ -531,6 +534,25 @@ shapeXL =
 shapeFull : String
 shapeFull =
     "999px"
+
+
+
+-- Z-index (重なり順: ドラッグオーバーレイ < モーダル < トースト)
+
+
+zDragOverlay : String
+zDragOverlay =
+    "900"
+
+
+zModal : String
+zModal =
+    "1000"
+
+
+zToast : String
+zToast =
+    "1100"
 
 
 

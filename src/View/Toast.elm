@@ -42,7 +42,7 @@ view onDismiss toast =
         , HA.style "padding" "0.75rem 1.25rem"
         , HA.style "border-radius" Theme.shapeS
         , HA.style "box-shadow" Theme.elevation3
-        , HA.style "z-index" "1100"
+        , HA.style "z-index" Theme.zToast
         , HA.style "cursor" "pointer"
         , HA.style "max-width" "90vw"
         , HA.style "font-size" "0.875rem"

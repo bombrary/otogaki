@@ -2646,6 +2646,34 @@ showToast tone message model =
     )
 
 
+isModalOpen : Model -> Bool
+isModalOpen model =
+    model.formPicker /= Nothing || model.editingVoicingIndex /= Nothing || model.wavExportModalOpen
+
+
+{-| 開いているモーダルを優先順（formPicker > editingVoicingIndex > wavExportModalOpen）で一つ閉じる。
+既存のクローズ用Msgハンドラを再利用することで、閉じる際の後処理（voicing選択解除等）を二重実装しない。
+WAV書出のレンダリング中は閉じない（状態が宙ぶらりになるのを防ぐ）。
+-}
+closeTopModal : Model -> ( Model, Cmd Msg )
+closeTopModal model =
+    if model.formPicker /= Nothing then
+        updateCore ClosedFormPicker model
+
+    else if model.editingVoicingIndex /= Nothing then
+        if Set.isEmpty model.voicingSelectedOffsets then
+            updateCore ClosedFormPicker model
+
+        else
+            ( { model | voicingSelectedOffsets = Set.empty }, Cmd.none )
+
+    else if model.wavExportModalOpen && model.wavExportState /= WavExportRendering then
+        updateCore ClosedWavExportModal model
+
+    else
+        ( model, Cmd.none )
+
+
 updateCore : Msg -> Model -> ( Model, Cmd Msg )
 updateCore msg model =
     case msg of
@@ -3489,7 +3517,10 @@ updateCore msg model =
             )
 
         GotKey k ->
-            if List.member k.targetTag [ "INPUT", "TEXTAREA", "SELECT" ] then
+            if k.key == "Escape" && isModalOpen model then
+                closeTopModal model
+
+            else if List.member k.targetTag [ "INPUT", "TEXTAREA", "SELECT" ] then
                 ( model, Cmd.none )
 
             else if model.editingVoicingIndex /= Nothing && (k.key == "ArrowUp" || k.key == "ArrowDown") then
@@ -3571,8 +3602,8 @@ updateCore msg model =
                     Nothing ->
                         ( model, Cmd.none )
 
-            else if model.editingVoicingIndex /= Nothing && k.key == "Escape" then
-                ( { model | voicingSelectedOffsets = Set.empty }, Cmd.none )
+            else if isModalOpen model then
+                ( model, Cmd.none )
 
             else if k.key == " " then
                 if model.playState == Playing then
@@ -5991,7 +6022,7 @@ view model =
                     rightPaneChildren
                 ]
         , if model.wavExportModalOpen then
-            Modal.view ClosedWavExportModal
+            Modal.view { onClose = ClosedWavExportModal, noOp = NoOp }
                 [ div [ style "min-width" "20rem" ]
                     (case model.wavExportState of
                         WavExportIdle ->
@@ -6027,7 +6058,7 @@ view model =
             ( Nothing, Just index ) ->
                 case List.drop index model.project.voicings |> List.head of
                     Just voicing ->
-                        Modal.view (ClickedVoicingRow index)
+                        Modal.view { onClose = ClickedVoicingRow index, noOp = NoOp }
                             [ ChordEditor.voicingEditorView chordEditorConfig voicingState index voicing ]
 
                     Nothing ->
@@ -6059,7 +6090,7 @@ view model =
                 in
                 case maybeChord of
                     Just _ ->
-                        Modal.view ClosedFormPicker
+                        Modal.view { onClose = ClosedFormPicker, noOp = NoOp }
                             [ FormPicker.view
                                 { chose = ChoseChordForm fp.key
                                 , choseShape = ChoseVoicingShape fp.key
@@ -6104,7 +6135,7 @@ viewDragOverlay =
     div
         [ style "position" "fixed"
         , style "inset" "0"
-        , style "z-index" "900"
+        , style "z-index" Theme.zDragOverlay
         , style "touch-action" "none"
         , Html.Events.on "pointermove" (Decode.map DraggedTo clientPosDecoder)
         , Html.Events.on "pointerup" (Decode.succeed ReleasedDrag)
