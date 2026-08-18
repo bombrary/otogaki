@@ -55,6 +55,7 @@ import View.RefAudio as RefAudio
 import View.ScaleGuide as ScaleGuide
 import View.ScrapShelf as ScrapShelf
 import View.SectionBar as SectionBar
+import View.Toast as Toast
 
 
 type PlayState
@@ -237,6 +238,9 @@ type alias Model =
     , longPress : Maybe { token : Int, target : LongPressTarget }
     , touchTooltipToken : Int
     , lastNoteTap : Maybe { noteId : Int, time : Float, clientX : Float, clientY : Float }
+    , toast : Maybe Toast.Toast
+    , toastCounter : Int
+    , chordSheetError : Maybe Data.ChordSheet.ParseError
     }
 
 
@@ -439,6 +443,7 @@ type Msg
     | ClickedThemeToggle
     | ChangedGuideKeyTonic String
     | ChangedGuideKeyMode String
+    | DismissedToast Int
     | NoOp
 
 
@@ -550,6 +555,9 @@ init flags =
       , longPress = Nothing
       , touchTooltipToken = 0
       , lastNoteTap = Nothing
+      , toast = Nothing
+      , toastCounter = 0
+      , chordSheetError = Nothing
       }
     , Task.perform (\vp -> ResizedWindow (round vp.viewport.width) (round vp.viewport.height)) Browser.Dom.getViewport
     )
@@ -2627,6 +2635,17 @@ autoRegisterAndOpenEditTab key chord model =
     finishRegistrationAndOpenEditTab name (insertVoicingForToken key voicing model)
 
 
+showToast : Toast.Tone -> String -> Model -> ( Model, Cmd Msg )
+showToast tone message model =
+    let
+        newId =
+            model.toastCounter + 1
+    in
+    ( { model | toast = Just { id = newId, tone = tone, message = message }, toastCounter = newId }
+    , Task.perform (\_ -> DismissedToast newId) (Process.sleep 4000)
+    )
+
+
 updateCore : Msg -> Model -> ( Model, Cmd Msg )
 updateCore msg model =
     case msg of
@@ -2793,7 +2812,7 @@ updateCore msg model =
                     ( model, Cmd.none )
 
                 WavRenderDone ->
-                    ( { model | wavExportModalOpen = False, wavExportState = WavExportIdle }, Cmd.none )
+                    showToast Toast.Success "WAVを書き出しました" { model | wavExportModalOpen = False, wavExportState = WavExportIdle }
 
                 WavRenderFailed message ->
                     ( { model | wavExportState = WavExportFailed message }, Cmd.none )
@@ -3875,19 +3894,19 @@ updateCore msg model =
                     resetToProject project importedSelectedTrackId model
 
                 Err _ ->
-                    ( model, Cmd.none )
+                    showToast Toast.Error "JSONの読み込みに失敗しました" model
 
         ChangedChordSheetText textValue ->
             let
-                newProject =
+                ( newProject, newError ) =
                     case Data.ChordSheet.parse textValue of
                         Ok blocks ->
-                            Data.ChordSheet.applyToProjectPreservingIds blocks model.project
+                            ( Data.ChordSheet.applyToProjectPreservingIds blocks model.project, Nothing )
 
-                        Err _ ->
-                            model.project
+                        Err parseError ->
+                            ( model.project, Just parseError )
             in
-            ( { model | chordSheetDraft = Just textValue, project = newProject, selectedChordKeys = Set.empty }
+            ( { model | chordSheetDraft = Just textValue, project = newProject, selectedChordKeys = Set.empty, chordSheetError = newError }
             , Cmd.none
             )
 
@@ -4969,6 +4988,18 @@ updateCore msg model =
         ToggledLeftPaneCollapsed ->
             ( { model | leftPaneCollapsed = not model.leftPaneCollapsed }, Cmd.none )
 
+        DismissedToast id ->
+            case model.toast of
+                Just t ->
+                    if t.id == id then
+                        ( { model | toast = Nothing }, Cmd.none )
+
+                    else
+                        ( model, Cmd.none )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
         NoOp ->
             ( model, Cmd.none )
 
@@ -5472,7 +5503,7 @@ view model =
                             , ChordEditor.rhythmSelect chordEditorConfig model.project.chordTrack.rhythm
                             ]
                         , if model.chordProgressionModalOpen then
-                            ChordEditor.progressionEditorView chordEditorConfig (Maybe.withDefault "" model.chordSheetDraft)
+                            ChordEditor.progressionEditorView chordEditorConfig (Maybe.withDefault "" model.chordSheetDraft) model.chordSheetError
 
                           else
                             text ""
@@ -6054,6 +6085,12 @@ view model =
 
           else
             text ""
+        , case model.toast of
+            Just t ->
+                Toast.view DismissedToast t
+
+            Nothing ->
+                text ""
         ]
 
 
