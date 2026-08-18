@@ -27,16 +27,16 @@ type alias Config msg =
 {-| 小節ごとのブロックとしてコード進行を表示する。旧 ChordEditor.cellsView/cellView/chordView
 （`e325f2e` で削除される前の実装）の移植。ピアノロール風の一直線表示（View.ChordStrip）と
 切り替えて使うトグル表示。トークンのドラッグ入れ替え（swap、Data.ChordTrack.moveTokens）は
-View.ChordLane とロジック（デコーダ）を共有する。flex-wrap で折り返すため clientX 差分での
+View.ChordLane とロジック（デコーダ）を共有する。grid（8列）で折り返すため clientX 差分での
 座標換算が使えず、代わりにセルの pointerenter でドロップ先小節を特定する。
 -}
 view : Config msg -> Timeline -> Int -> Set TokenKey -> ChordTrack -> Html msg
 view config timeline playheadTicks selectedKeys track =
     div
-        [ HA.style "display" "flex"
+        [ HA.style "display" "grid"
+        , HA.style "grid-template-columns" "repeat(8, minmax(0, 1fr))"
         , HA.style "gap" "2px"
         , HA.style "margin-top" "0.4rem"
-        , HA.style "flex-wrap" "wrap"
         , HA.style "user-select" "none"
         , HA.style "-webkit-user-select" "none"
         , HE.on "pointermove" (Decode.map config.draggedWhilePressing View.ChordLane.tokenMoveDecoder)
@@ -84,8 +84,12 @@ cellView config timeline playheadTicks selectedKeys cell =
     div
         [ HA.style "border-radius" "3px"
         , HA.style "padding" "0.2rem 0.4rem"
-        , HA.style "min-width" "3.5rem"
+        , HA.style "min-width" "0"
         , HA.style "background" background
+        , HA.style "display" "flex"
+        , HA.style "flex-wrap" "wrap"
+        , HA.style "align-items" "flex-start"
+        , HA.style "align-content" "flex-start"
         , HE.on "pointerenter" (Decode.map (\_ -> config.draggedOverBar cell.barIndex) View.ChordLane.tokenMoveDecoder)
         ]
         (span
@@ -155,11 +159,13 @@ chordView config tokenKey tick key isCurrent isSelected c =
                  , HA.style "flex-direction" "column"
                  , HA.style "align-items" "center"
                  , HA.style "margin-right" "0.3rem"
+                 , HA.style "min-width" "0"
+                 , HA.style "max-width" "100%"
                  ]
                     ++ highlight
                     ++ clickable
                 )
-                [ span (HA.style "color" color :: Theme.typeTitleSmall) [ text c.token ]
+                [ span (HA.style "overflow-wrap" "anywhere" :: HA.style "color" color :: Theme.typeTitleSmall) [ text c.token ]
                 , case degree of
                     Just d ->
                         span [ HA.style "font-size" "0.6rem", HA.style "color" Theme.onSurfaceVariant ] [ text d ]
@@ -180,6 +186,9 @@ chordView config tokenKey tick key isCurrent isSelected c =
                 ([ HA.style "color" Theme.error
                  , HA.style "text-decoration" "underline wavy"
                  , HA.style "margin-right" "0.3rem"
+                 , HA.style "min-width" "0"
+                 , HA.style "max-width" "100%"
+                 , HA.style "overflow-wrap" "anywhere"
                  , HA.title reason
                  ]
                     ++ highlight
