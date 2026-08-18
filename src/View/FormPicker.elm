@@ -189,6 +189,8 @@ candidatesSection config chord =
             text ""
     , div [ HA.style "margin-top" "0.6rem", HA.style "font-size" "0.75rem", HA.style "font-weight" "600", HA.style "color" Theme.onSurfaceVariant ]
         [ text "ボイシング型" ]
+    , div [ HA.style "font-size" "0.7rem", HA.style "color" Theme.onSurfaceVariant, HA.style "margin-top" "0.2rem" ]
+        [ text "※ Closed/Drop2/Wide はテンション（#9 等）を含まない基本形になります" ]
     , div [ HA.style "display" "flex", HA.style "gap" "0.6rem", HA.style "flex-wrap" "wrap", HA.style "margin-top" "0.3rem" ]
         (List.map (\( _, shape ) -> shapeCard config chord shape) VoicingPreset.shapes)
     , div [ HA.style "margin-top" "0.8rem", HA.style "font-size" "0.75rem", HA.style "font-weight" "600", HA.style "color" Theme.onSurfaceVariant ]

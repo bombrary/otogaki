@@ -173,6 +173,12 @@ progressionEditorView config sheetText parseError =
     div []
         [ span [ HA.style "font-size" "0.75rem", HA.style "color" Theme.onSurfaceVariant, HA.style "display" "block", HA.style "margin-top" "0.3rem" ]
             [ text "空行でセクションを区切り、ブロック先頭の縦棒を含まない行がセクション名になります。縦棒で小節区切り、空白で小節内分割。% = 直前のコードを繰返し、_ = 休符、= = 直前のコードを伸ばす、// 以降は行末までコメント。入力するたびに自動反映されます（形式が崩れている間は反映されません）。コードをクリックすると再生位置がそこへ移動" ]
+        , Html.details [ HA.style "margin-top" "0.3rem", HA.style "font-size" "0.75rem", HA.style "color" Theme.onSurfaceVariant ]
+            [ Html.summary [ HA.style "cursor" "pointer" ] [ text "記法の詳細 ▾" ]
+            , div [ HA.style "margin-top" "0.3rem", HA.style "line-height" "1.6" ]
+                [ text "@NAME でボイシング辞書に登録した運指をコードに指定できます（例: FM7@drop2）。行頭に「リズム: 8ビート」のように書くと、そのセクションのコードが指定したリズムパターンで刻まれます（8ビート・16ビート・フォーク・アルペジオ・全音符・シンコペーション）。"
+                ]
+            ]
         , textarea
             [ HA.value sheetText
             , HE.onInput config.changedChordSheetText
