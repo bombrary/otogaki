@@ -168,7 +168,8 @@ trackRow config totalBars selectedTrackId loadStates ghostTrackIds pendingDelete
             , stopClick (config.selectTrack track.id)
             , HA.style "width" "6rem"
             , HA.style "font-size" "0.9rem"
-            , HA.style "border" "1px solid transparent"
+            , HA.style "border" ("1px solid " ++ Theme.outlineVariant)
+            , HA.style "border-radius" "4px"
             , HA.style "background" "transparent"
             , HA.title "トラック名を編集"
             ]
@@ -319,6 +320,25 @@ clipPreview totalBars track =
         totalTicks =
             Basics.max 1 totalBars * Data.Time.ticksPerBar
 
+        trackNotes =
+            notesOf track.kind
+
+        pitchPadding =
+            3
+
+        ( paddedMinPitch, paddedMaxPitch ) =
+            case List.map .pitch trackNotes of
+                [] ->
+                    ( 60 - pitchPadding, 72 + pitchPadding )
+
+                pitches ->
+                    ( (List.minimum pitches |> Maybe.withDefault 60) - pitchPadding
+                    , (List.maximum pitches |> Maybe.withDefault 72) + pitchPadding
+                    )
+
+        pitchRange =
+            Basics.max 1 (paddedMaxPitch - paddedMinPitch)
+
         noteRect note =
             let
                 x =
@@ -328,7 +348,7 @@ clipPreview totalBars track =
                     Basics.max 1 (toFloat note.duration / toFloat totalTicks * width)
 
                 y =
-                    toFloat (108 - note.pitch) / 72 * height
+                    toFloat (paddedMaxPitch - note.pitch) / toFloat pitchRange * height
             in
             Svg.rect
                 [ SA.x (String.fromFloat x)
@@ -344,4 +364,4 @@ clipPreview totalBars track =
         , SA.height (String.fromInt height)
         , HA.style "background" Theme.surfaceContainerLow
         ]
-        (List.map noteRect (notesOf track.kind))
+        (List.map noteRect trackNotes)
