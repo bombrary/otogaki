@@ -54,6 +54,7 @@ import View.PianoRoll as PianoRoll
 import View.RefAudio as RefAudio
 import View.ScaleGuide as ScaleGuide
 import View.ScrapShelf as ScrapShelf
+import View.HelpPanel as HelpPanel
 import View.SectionBar as SectionBar
 import View.Toast as Toast
 
@@ -241,6 +242,7 @@ type alias Model =
     , toast : Maybe Toast.Toast
     , toastCounter : Int
     , chordSheetError : Maybe Data.ChordSheet.ParseError
+    , helpModalOpen : Bool
     }
 
 
@@ -444,6 +446,7 @@ type Msg
     | ChangedGuideKeyTonic String
     | ChangedGuideKeyMode String
     | DismissedToast Int
+    | ToggledHelpModal
     | NoOp
 
 
@@ -558,6 +561,7 @@ init flags =
       , toast = Nothing
       , toastCounter = 0
       , chordSheetError = Nothing
+      , helpModalOpen = False
       }
     , Task.perform (\vp -> ResizedWindow (round vp.viewport.width) (round vp.viewport.height)) Browser.Dom.getViewport
     )
@@ -2648,7 +2652,7 @@ showToast tone message model =
 
 isModalOpen : Model -> Bool
 isModalOpen model =
-    model.formPicker /= Nothing || model.editingVoicingIndex /= Nothing || model.wavExportModalOpen
+    model.formPicker /= Nothing || model.editingVoicingIndex /= Nothing || model.wavExportModalOpen || model.helpModalOpen
 
 
 {-| 開いているモーダルを優先順（formPicker > editingVoicingIndex > wavExportModalOpen）で一つ閉じる。
@@ -2669,6 +2673,9 @@ closeTopModal model =
 
     else if model.wavExportModalOpen && model.wavExportState /= WavExportRendering then
         updateCore ClosedWavExportModal model
+
+    else if model.helpModalOpen then
+        updateCore ToggledHelpModal model
 
     else
         ( model, Cmd.none )
@@ -3604,6 +3611,9 @@ updateCore msg model =
 
             else if isModalOpen model then
                 ( model, Cmd.none )
+
+            else if k.key == "?" then
+                updateCore ToggledHelpModal model
 
             else if k.key == " " then
                 if model.playState == Playing then
@@ -5031,6 +5041,9 @@ updateCore msg model =
                 Nothing ->
                     ( model, Cmd.none )
 
+        ToggledHelpModal ->
+            ( { model | helpModalOpen = not model.helpModalOpen }, Cmd.none )
+
         NoOp ->
             ( model, Cmd.none )
 
@@ -5324,8 +5337,10 @@ view model =
                 (Set.size model.selectedNoteIds)
                 model.project.scraps
                 model.pendingScrapDelete
-            , div [ style "font-size" "0.75rem", style "color" Theme.onSurfaceVariant, style "margin-top" "0.6rem" ]
-                [ text "Space: 再生/停止（ボタンのEnterは別） ・ Ctrl/Cmd+Z: 元に戻す（Shiftでやり直し） ・ ルーラーか Ctrl/Cmd+クリック・コードをクリック: 再生位置移動 ・ Home/End: 曲頭/曲末へシーク ・ ⏮⏪⏩ かセクション編集欄の「先頭へ」: セクション/曲頭へ移動 ・ Shift+ドラッグ: 矩形選択 ・ Ctrl/Cmd+Shift+A: 選択中セクション内のノートを全選択 ・ ルーラーをshift+ドラッグ: ループ範囲を作成、ハンドルをドラッグで伸縮、[/]: ループの開始/終了を再生位置に設定 ・ ↑↓: 半音移動（Shiftでオクターブ） ・ ←→: 隣のノートを選択（Ctrl/Cmdで横移動、+Shiftで1小節） ・ n: 再生位置にノートを追加（鍵盤表示中は無効） ・ Ctrl/Cmd+C・X・V: コピー・カット・貼付 ・ Delete: 削除 ・ ダブルクリック/右クリック: ノート削除 ・ c: 選択↔カットツール切替 ・ Escape: 選択解除・ツールを選択に戻す（削除確認待ちも解除）" ]
+            , div [ style "font-size" "0.75rem", style "color" Theme.onSurfaceVariant, style "margin-top" "0.6rem", style "display" "flex", style "align-items" "center", style "gap" "0.5rem", style "flex-wrap" "wrap" ]
+                [ button (Style.baseButton ++ [ onClick ToggledHelpModal ]) [ text "? ショートカット一覧" ]
+                , text "ルーラーやコードのクリックで再生位置を移動、ダブルクリック/右クリックでノート削除"
+                ]
             ]
 
         rightPaneChildren =
@@ -6051,6 +6066,11 @@ view model =
                             ]
                     )
                 ]
+
+          else
+            text ""
+        , if model.helpModalOpen then
+            Modal.view { onClose = ToggledHelpModal, noOp = NoOp } [ HelpPanel.view ]
 
           else
             text ""
