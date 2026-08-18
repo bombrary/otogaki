@@ -82,7 +82,12 @@ tokenView config opts span =
 
         ( bgFill, borderColor ) =
             if selected then
-                ( Style.colorSelection, Theme.selectionDeep )
+                case span.result of
+                    Err _ ->
+                        ( Style.colorSelection, Theme.error )
+
+                    _ ->
+                        ( Style.colorSelection, Theme.selectionDeep )
 
             else if active then
                 ( Theme.highlightContainer, Theme.onHighlightContainer )
