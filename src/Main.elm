@@ -5529,20 +5529,29 @@ view model =
                                         "✦ コード進行を編集"
                                     )
                                 ]
-                            , button
-                                (Style.baseButton
-                                    ++ [ onClick ToggledChordBlockView
-                                       , style "margin-left" "0.4rem"
-                                       , Html.Attributes.title "ブロック表示とライン表示を切り替え"
-                                       ]
-                                )
-                                [ text
-                                    (if model.chordBlockView then
-                                        "📈 ライン表示に切替"
+                            , div [ style "display" "flex", style "gap" "0.2rem", style "margin-left" "0.4rem" ]
+                                [ button
+                                    (Style.toggleButton (not model.chordBlockView)
+                                        ++ (if model.chordBlockView then
+                                                [ onClick ToggledChordBlockView ]
 
-                                     else
-                                        "📦 ブロック表示に切替"
+                                            else
+                                                []
+                                           )
+                                        ++ [ Html.Attributes.title "ライン表示" ]
                                     )
+                                    [ text "📈 ライン" ]
+                                , button
+                                    (Style.toggleButton model.chordBlockView
+                                        ++ (if model.chordBlockView then
+                                                []
+
+                                            else
+                                                [ onClick ToggledChordBlockView ]
+                                           )
+                                        ++ [ Html.Attributes.title "ブロック表示" ]
+                                    )
+                                    [ text "📦 ブロック" ]
                                 ]
                             , Style.divider
                             , span [ style "font-size" "0.75rem", style "color" Theme.onSurfaceVariant ] [ text "リズム:" ]
@@ -5595,14 +5604,29 @@ view model =
               if model.selectedTrackId == Data.ChordTrack.trackId then chordTrackMainView else case selectedTrackKind model of
                 Just (DrumTrack _) ->
                     div []
-                        [ button (Style.baseButton ++ [ onClick ToggledDrumView, style "margin-top" "0.5rem" ])
-                            [ text
-                                (if model.drumViewRoll then
-                                    "🥁 ステップグリッドで編集"
+                        [ div [ style "display" "flex", style "gap" "0.2rem", style "margin-top" "0.5rem" ]
+                            [ button
+                                (Style.toggleButton model.drumViewRoll
+                                    ++ (if model.drumViewRoll then
+                                            []
 
-                                 else
-                                    "🎹 ピアノロールで編集（選択・移動・コピペ）"
+                                        else
+                                            [ onClick ToggledDrumView ]
+                                       )
+                                    ++ [ Html.Attributes.title "ピアノロールで編集（選択・移動・コピペ）" ]
                                 )
+                                [ text "🎹 ピアノロール" ]
+                            , button
+                                (Style.toggleButton (not model.drumViewRoll)
+                                    ++ (if model.drumViewRoll then
+                                            [ onClick ToggledDrumView ]
+
+                                        else
+                                            []
+                                       )
+                                    ++ [ Html.Attributes.title "ステップグリッドで編集" ]
+                                )
+                                [ text "🥁 ステップグリッド" ]
                             ]
                         , if model.drumViewRoll then
                             pianoRollView
