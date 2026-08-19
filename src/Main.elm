@@ -111,6 +111,7 @@ type alias ChordDrag =
     , origText : String
     , origKeys : Set ( Int, Int )
     , lastDeltaBars : Int
+    , ghostLabel : String
     }
 
 
@@ -3149,12 +3150,27 @@ updateCore msg model =
                     timeline =
                         Data.Project.timeline model1.project
 
-                    anchorCenterTicks =
+                    anchorSpan =
                         Data.ChordTrack.tokenSpans timeline model1.project.chordTrack
                             |> List.filter (\s -> s.key == key)
                             |> List.head
+
+                    anchorCenterTicks =
+                        anchorSpan
                             |> Maybe.map (\s -> s.startTicks + s.durationTicks // 2)
                             |> Maybe.withDefault 0
+
+                    anchorToken =
+                        anchorSpan
+                            |> Maybe.map .token
+                            |> Maybe.withDefault ""
+
+                    ghostLabel =
+                        if Set.size sel > 1 then
+                            anchorToken ++ " ほか" ++ String.fromInt (Set.size sel - 1) ++ "個"
+
+                        else
+                            anchorToken
                 in
                 ( { model1
                     | selectedChordKeys = sel
@@ -3167,6 +3183,7 @@ updateCore msg model =
                             , origText = model1.project.chordTrack.text
                             , origKeys = sel
                             , lastDeltaBars = 0
+                            , ghostLabel = ghostLabel
                             }
                   }
                 , Cmd.none
@@ -6236,7 +6253,12 @@ viewDragGhost model =
 -}
 ghostContent : Model -> Maybe String
 ghostContent model =
-    Nothing
+    case model.chordDrag of
+        Just cd ->
+            Just cd.ghostLabel
+
+        Nothing ->
+            Nothing
 
 
 {-| ノートホバー時のツールチップ。ホバー中ノートと同じトラック（通常ピアノロールなら選択中トラック、
