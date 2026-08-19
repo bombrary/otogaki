@@ -1,4 +1,4 @@
-module View.Arrange exposing (Config, view)
+module View.Arrange exposing (Config, trackDragTargetIndex, view)
 
 import Data.ChordTrack exposing (ChordTrack)
 import Data.Note exposing (Note)
@@ -25,6 +25,7 @@ type alias Config msg =
     , changeVolume : Int -> String -> msg
     , renameTrack : Int -> String -> msg
     , toggledGhost : Int -> msg
+    , pressedTrackHandle : Int -> Float -> msg
     , chordRow : ChordRowConfig msg
     }
 
@@ -41,13 +42,13 @@ type alias ChordRowConfig msg =
     }
 
 
-view : Config msg -> Int -> Int -> Dict String String -> Set Int -> Maybe Int -> ChordTrack -> List Track -> Html msg
-view config totalBars selectedTrackId loadStates ghostTrackIds pendingDeleteId chordTrack tracks =
+view : Config msg -> Int -> Int -> Dict String String -> Set Int -> Maybe Int -> Maybe Int -> ChordTrack -> List Track -> Html msg
+view config totalBars selectedTrackId loadStates ghostTrackIds pendingDeleteId movingTrackId chordTrack tracks =
     Html.details
         [ HA.attribute "open" "", HA.style "margin-top" "1rem" ]
         (Html.summary (HA.style "cursor" "pointer" :: Style.headingText) [ text "トラック" ]
             :: chordTrackRow config selectedTrackId loadStates ghostTrackIds chordTrack
-            :: List.map (trackRow config totalBars selectedTrackId loadStates ghostTrackIds pendingDeleteId) tracks
+            :: List.map (trackRow config totalBars selectedTrackId loadStates ghostTrackIds pendingDeleteId movingTrackId) tracks
             ++ [ button (Style.baseButton ++ [ HE.onClick config.addTrack, HA.style "margin-top" "0.5rem" ]) [ text "+ トラック" ] ]
         )
 
@@ -131,11 +132,14 @@ chordTrackRow config selectedTrackId loadStates ghostTrackIds chordTrack =
         ]
 
 
-trackRow : Config msg -> Int -> Int -> Dict String String -> Set Int -> Maybe Int -> Track -> Html msg
-trackRow config totalBars selectedTrackId loadStates ghostTrackIds pendingDeleteId track =
+trackRow : Config msg -> Int -> Int -> Dict String String -> Set Int -> Maybe Int -> Maybe Int -> Track -> Html msg
+trackRow config totalBars selectedTrackId loadStates ghostTrackIds pendingDeleteId movingTrackId track =
     let
         selected =
             track.id == selectedTrackId
+
+        moving =
+            movingTrackId == Just track.id
 
         loadState =
             Dict.get (Data.Track.instrumentToString track.instrument) loadStates
@@ -158,11 +162,41 @@ trackRow config totalBars selectedTrackId loadStates ghostTrackIds pendingDelete
             )
         , HA.style "border-radius" "4px"
         , HA.style "margin-bottom" "2px"
+        , HA.style "opacity"
+            (if moving then
+                "0.55"
+
+             else
+                "1"
+            )
+        , HA.style "box-shadow"
+            (if moving then
+                Theme.elevation2
+
+             else
+                "none"
+            )
         , HA.style "cursor" "pointer"
         , HA.class "m3-btn"
         , HE.onClick (config.selectTrack track.id)
         ]
-        [ input
+        [ span
+            [ HA.style "cursor"
+                (if moving then
+                    "grabbing"
+
+                 else
+                    "grab"
+                )
+            , HA.style "touch-action" "none"
+            , HA.style "color" Theme.onSurfaceVariant
+            , HA.title "ドラッグで並び替え"
+            , HA.attribute "aria-label" "ドラッグで並び替え"
+            , HE.stopPropagationOn "pointerdown"
+                (Decode.map (\cy -> ( config.pressedTrackHandle track.id cy, True )) (Decode.field "clientY" Decode.float))
+            ]
+            [ text "⠠" ]
+        , input
             [ HA.value track.name
             , HE.onInput (config.renameTrack track.id)
             , stopClick (config.selectTrack track.id)
@@ -365,3 +399,34 @@ clipPreview totalBars track =
         , HA.style "background" Theme.surfaceContainerLow
         ]
         (List.map noteRect trackNotes)
+
+
+trackRowHeightPx : Float
+trackRowHeightPx =
+    40
+
+
+{-| ドラッグ中の累積 dy から、進行方向の隣接トラックの高さの半分を超えたら入れ替え先 indexと、次の判定に持ち越す分の dy を返す。超えていなければ `Nothing`（まだ動かさない）。
+`View.SectionBar.sectionDragTargetIndex` の縦版。トラック行は高さがほぼ一定なので固定値 `trackRowHeightPx` を使う。
+-}
+trackDragTargetIndex : Int -> Int -> Float -> Maybe ( Int, Float )
+trackDragTargetIndex trackCount currentIndex accumDy =
+    let
+        dir =
+            if accumDy > 0 then
+                1
+
+            else
+                -1
+
+        targetIndex =
+            currentIndex + dir
+    in
+    if targetIndex < 0 || targetIndex >= trackCount then
+        Nothing
+
+    else if abs accumDy >= trackRowHeightPx / 2 then
+        Just ( targetIndex, accumDy - toFloat dir * trackRowHeightPx )
+
+    else
+        Nothing

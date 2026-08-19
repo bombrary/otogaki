@@ -209,6 +209,7 @@ type alias Model =
     , pianoRollViewportWidth : Maybe Float
     , sectionResizeDrag : Maybe { sectionId : Int, startClientX : Float, origLengthBars : Int, curLengthBars : Int }
     , sectionMoveDrag : Maybe { sectionId : Int, lastClientX : Float, accumDx : Float, moved : Bool, wasSelected : Bool }
+    , trackMoveDrag : Maybe { trackId : Int, lastClientY : Float, accumDy : Float, moved : Bool }
     , sectionBarZoom : Int
     , sectionLoopDrag : Maybe LoopDrag
     , viewRangeDrag : Maybe { startClientX : Float, pressOffsetX : Float, origScrollX : Float, moved : Bool }
@@ -420,6 +421,7 @@ type Msg
     | GotPianoRollViewportForZoom { deltaY : Float, offsetX : Float } (Result Browser.Dom.Error Browser.Dom.Viewport)
     | PressedSectionResizeHandle Int Float
     | PressedSectionBlock Int Float
+    | PressedTrackRowHandle Int Float
     | WheelZoomedSectionBar { deltaY : Float, offsetX : Float }
     | GotSectionBarViewportForZoom { deltaY : Float, offsetX : Float } (Result Browser.Dom.Error Browser.Dom.Viewport)
     | PressedSectionRuler { offsetX : Float, clientX : Float, shift : Bool }
@@ -529,6 +531,7 @@ init flags =
       , pianoRollViewportWidth = Nothing
       , sectionResizeDrag = Nothing
       , sectionMoveDrag = Nothing
+      , trackMoveDrag = Nothing
       , sectionBarZoom = SectionBar.defaultRegionPxPerBar
       , sectionLoopDrag = Nothing
       , viewRangeDrag = Nothing
@@ -1183,8 +1186,42 @@ rubberBandRect band =
             )
 
 
+{-| trackMoveDrag 中ならトラック並び替えを優先し、それ以外は既存の legacyDraggedToRest（旧 legacyDraggedTo）に委ねる。
+-}
 legacyDraggedTo : ClientPos -> Model -> ( Model, Cmd Msg )
 legacyDraggedTo pos model =
+    case model.trackMoveDrag of
+        Just d ->
+            let
+                accum =
+                    d.accumDy + (pos.clientY - d.lastClientY)
+
+                currentIndex =
+                    model.project.tracks
+                        |> List.indexedMap Tuple.pair
+                        |> List.filter (\( _, t ) -> t.id == d.trackId)
+                        |> List.head
+                        |> Maybe.map Tuple.first
+                        |> Maybe.withDefault 0
+            in
+            case Arrange.trackDragTargetIndex (List.length model.project.tracks) currentIndex accum of
+                Just ( targetIndex, remaining ) ->
+                    ( { model
+                        | project = Data.Project.moveTrackToIndex d.trackId targetIndex model.project
+                        , trackMoveDrag = Just { d | lastClientY = pos.clientY, accumDy = remaining, moved = True }
+                      }
+                    , Cmd.none
+                    )
+
+                Nothing ->
+                    ( { model | trackMoveDrag = Just { d | lastClientY = pos.clientY, accumDy = accum } }, Cmd.none )
+
+        Nothing ->
+            legacyDraggedToRest pos model
+
+
+legacyDraggedToRest : ClientPos -> Model -> ( Model, Cmd Msg )
+legacyDraggedToRest pos model =
     case model.viewRangeDrag of
         Just d ->
             let
@@ -1379,8 +1416,19 @@ releasedDragFallback model =
                             legacyReleasedDrag { model | longPress = Nothing }
 
 
+{-| trackMoveDrag 中ならトラック並び替えを終了し、それ以外は既存の legacyReleasedDragRest（旧 legacyReleasedDrag）に委ねる。
+-}
 legacyReleasedDrag : Model -> ( Model, Cmd Msg )
 legacyReleasedDrag model =
+    if model.trackMoveDrag /= Nothing then
+        ( { model | trackMoveDrag = Nothing }, Cmd.none )
+
+    else
+        legacyReleasedDragRest model
+
+
+legacyReleasedDragRest : Model -> ( Model, Cmd Msg )
+legacyReleasedDragRest model =
     case model.viewRangeDrag of
         Just d ->
             if d.moved then
@@ -3543,6 +3591,11 @@ updateCore msg model =
             , Cmd.none
             )
 
+        PressedTrackRowHandle trackId clientY ->
+            ( { model | trackMoveDrag = Just { trackId = trackId, lastClientY = clientY, accumDy = 0, moved = False } }
+            , Cmd.none
+            )
+
         PressedPianoKey pitch ->
             ( { model | highlightedPitches = Set.singleton pitch }
             , Ports.toAudio (Performance.encodePreviewNote (selectedInstrumentName model) pitch)
@@ -5321,6 +5374,7 @@ view model =
                 , changeVolume = ChangedVolume
                 , renameTrack = ChangedTrackName
                 , toggledGhost = ToggledGhostTrack
+                , pressedTrackHandle = PressedTrackRowHandle
                 , chordRow =
                     { select = SelectedTrack Data.ChordTrack.trackId
                     , toggleMute = ToggledChordMute
@@ -5334,6 +5388,7 @@ view model =
                 model.instrumentLoad
                 model.ghostTrackIds
                 model.pendingTrackDelete
+                (model.trackMoveDrag |> Maybe.andThen (\d -> if d.moved then Just d.trackId else Nothing))
                 model.project.chordTrack
                 model.project.tracks
             , ChordEditor.view
@@ -6274,7 +6329,19 @@ ghostContent model =
                         Nothing
 
                 Nothing ->
-                    Nothing
+                    case model.trackMoveDrag of
+                        Just d ->
+                            if d.moved then
+                                model.project.tracks
+                                    |> List.filter (\t -> t.id == d.trackId)
+                                    |> List.head
+                                    |> Maybe.map .name
+
+                            else
+                                Nothing
+
+                        Nothing ->
+                            Nothing
 
 
 {-| ノートホバー時のツールチップ。ホバー中ノートと同じトラック（通常ピアノロールなら選択中トラック、
@@ -6503,6 +6570,8 @@ isDragging model =
         || model.velocityDrag
         /= Nothing
         || model.viewRangeDrag
+        /= Nothing
+        || model.trackMoveDrag
         /= Nothing
 
 
