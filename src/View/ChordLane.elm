@@ -35,6 +35,7 @@ view :
         , playheadTicks : Int
         , rubberBand : Maybe { x : Float, w : Float }
         , selectedKeys : Set TokenKey
+        , dragActive : Bool
         }
     -> List TokenSpan
     -> Html.Html msg
@@ -63,6 +64,7 @@ tokenView :
             , playheadTicks : Int
             , height : Int
             , selectedKeys : Set TokenKey
+            , dragActive : Bool
         }
     -> TokenSpan
     -> List (Svg.Svg msg)
@@ -131,6 +133,13 @@ tokenView config opts span =
         , SA.fill bgFill
         , SA.stroke borderColor
         , SA.strokeWidth "1"
+        , SA.opacity
+            (if selected && opts.dragActive then
+                "0.6"
+
+             else
+                "1"
+            )
         , HA.style "cursor" "move"
         , HA.style "touch-action" "none"
         , HA.title span.token

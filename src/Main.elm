@@ -5610,6 +5610,8 @@ view model =
                                 timeline
                                 model.playheadTicks
                                 model.selectedChordKeys
+                                (model.chordDrag /= Nothing)
+                                (model.chordDrag |> Maybe.map (\cd -> Tuple.first cd.anchorKey + cd.lastDeltaBars))
                                 model.project.chordTrack
 
                           else
@@ -5628,6 +5630,7 @@ view model =
                                 , rubberBand =
                                     model.chordRubberBand
                                         |> Maybe.map (\crb -> { x = Basics.min crb.originX crb.curX, w = abs (crb.curX - crb.originX) })
+                                , dragActive = model.chordDrag /= Nothing
                                 }
                         ]
               in

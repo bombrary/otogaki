@@ -293,6 +293,7 @@ type alias ChordLaneOpts msg =
     , tokenSpans : List TokenSpan
     , selectedKeys : Set TokenKey
     , rubberBand : Maybe { x : Float, w : Float }
+    , dragActive : Bool
     }
 
 
@@ -312,6 +313,7 @@ chordTrackView config opts previewNotes chordLane =
                 , playheadTicks = opts.playheadTicks
                 , rubberBand = chordLane.rubberBand
                 , selectedKeys = chordLane.selectedKeys
+                , dragActive = chordLane.dragActive
                 }
                 chordLane.tokenSpans
     in
