@@ -6007,6 +6007,7 @@ view model =
                 model.project.sections
                 model.pendingSectionDelete
                 (model.sectionResizeDrag |> Maybe.map (\d -> { sectionId = d.sectionId, lengthBars = d.curLengthBars }))
+                (model.sectionMoveDrag |> Maybe.andThen (\d -> if d.moved then Just d.sectionId else Nothing))
             ]
         , if isSinglePaneLayout model then
             div [ style "flex" "1 1 auto", style "min-height" "0", style "display" "flex", style "flex-direction" "column", style "overflow" "hidden" ]
@@ -6258,7 +6259,19 @@ ghostContent model =
             Just cd.ghostLabel
 
         Nothing ->
-            Nothing
+            case model.sectionMoveDrag of
+                Just d ->
+                    if d.moved then
+                        model.project.sections
+                            |> List.filter (\s -> s.id == d.sectionId)
+                            |> List.head
+                            |> Maybe.map .name
+
+                    else
+                        Nothing
+
+                Nothing ->
+                    Nothing
 
 
 {-| ノートホバー時のツールチップ。ホバー中ノートと同じトラック（通常ピアノロールなら選択中トラック、

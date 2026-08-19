@@ -299,8 +299,8 @@ sectionDragTargetIndex pxPerBar sections currentIndex accumDx =
                     Nothing
 
 
-view : { isNarrow : Bool, isShort : Bool, editPanelOpen : Bool } -> Config msg -> RulerData -> List ChordSpan -> Maybe WaveformData -> BlockExtras -> Maybe Int -> List Section -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> Html msg
-view layout config rulerData chordSpans waveform extras selectedId sections pendingDeleteId resizePreview =
+view : { isNarrow : Bool, isShort : Bool, editPanelOpen : Bool } -> Config msg -> RulerData -> List ChordSpan -> Maybe WaveformData -> BlockExtras -> Maybe Int -> List Section -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> Maybe Int -> Html msg
+view layout config rulerData chordSpans waveform extras selectedId sections pendingDeleteId resizePreview movingSectionId =
     let
         totalBars =
             List.sum (List.map .lengthBars sections)
@@ -359,7 +359,7 @@ view layout config rulerData chordSpans waveform extras selectedId sections pend
                 , HA.style "align-items" "stretch"
                 , HA.style "flex-wrap" "nowrap"
                 ]
-                (List.indexedMap (blockView layout.isNarrow config rulerData.pxPerBar selectedId resizePreview extras) sections
+                (List.indexedMap (blockView layout.isNarrow config rulerData.pxPerBar selectedId resizePreview extras movingSectionId) sections
                     ++ [ button (Style.baseButton ++ [ HE.onClick config.add, HA.style "flex" "0 0 auto" ]) [ text "+ セクション" ] ]
                     ++ (if selectedId /= Nothing then
                             [ button
@@ -595,11 +595,14 @@ regionLoopHandle isNarrow config isEnd x =
         []
 
 
-blockView : Bool -> Config msg -> Int -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> BlockExtras -> Int -> Section -> Html msg
-blockView isNarrow config pxPerBar selectedId resizePreview extras idx section =
+blockView : Bool -> Config msg -> Int -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> BlockExtras -> Maybe Int -> Int -> Section -> Html msg
+blockView isNarrow config pxPerBar selectedId resizePreview extras movingSectionId idx section =
     let
         selected =
             selectedId == Just section.id
+
+        moving =
+            movingSectionId == Just section.id
 
         displayLengthBars =
             case resizePreview of
@@ -640,15 +643,31 @@ blockView isNarrow config pxPerBar selectedId resizePreview extras idx section =
             )
         , HA.style "border-radius" "4px"
         , HA.style "background" (Palette.sectionTint idx)
+        , HA.style "opacity"
+            (if moving then
+                "0.55"
+
+             else
+                "1"
+            )
         , HA.style "box-shadow"
-            (if playing then
+            (if moving then
+                Theme.elevation2
+
+             else if playing then
                 "0 0 8px " ++ Palette.sectionColor idx
 
              else
                 "none"
             )
         , HA.style "position" "relative"
-        , HA.style "cursor" "grab"
+        , HA.style "cursor"
+            (if moving then
+                "grabbing"
+
+             else
+                "grab"
+            )
         , HA.style "font-size" "0.85rem"
         , HA.style "overflow" "hidden"
         , HA.style "white-space" "nowrap"
