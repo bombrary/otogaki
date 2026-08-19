@@ -19,17 +19,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - name: Install npm dependencies
-        run: npm ci
-      - name: Install Elm compiler
-        run: npm install --no-save elm@0.19.1
-      - name: Run tests
-        run: npx elm-test
-      - name: Build
-        run: npx vite build
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - name: Build via nix devShell
+        # devShell の elm / elm-test は flake.nix で nixpkgs-unstable の
+        # elmPackages を使っており、elm.json が要求する 0.19.2 と一致する。
+        # npm の elm パッケージは 0.19.1 までしか配布していないので使わない。
+        run: |
+          nix develop -c bash -c "npm ci && elm-test && npx vite build"
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
