@@ -29,11 +29,17 @@ note id start =
     { id = id, pitch = 60, start = start, duration = 100, velocity = 100 }
 
 
+track : Int -> Data.Track.Track
+track id =
+    { id = id, name = "t" ++ String.fromInt id, instrument = Data.Track.Piano, muted = False, volume = 100, kind = NoteTrack [] }
+
+
 suite : Test
 suite =
     Test.concat
         [ timelineSuite
         , moveSectionToIndexSuite
+        , moveTrackToIndexSuite
         , reorderSectionsWithContentSuite
         , voicingIndexByNameSuite
         ]
@@ -166,6 +172,44 @@ moveSectionToIndexSuite =
         , test "存在しない sectionId を渡すと何も変わらない" <|
             \_ ->
                 (Project.moveSectionToIndex 999 0 project).sections
+                    |> List.map .id
+                    |> Expect.equal [ 1, 2, 3 ]
+        ]
+
+
+moveTrackToIndexSuite : Test
+moveTrackToIndexSuite =
+    let
+        project =
+            { demo | tracks = [ track 1, track 2, track 3 ] }
+
+        demo =
+            Project.demo
+    in
+    describe "Data.Project.moveTrackToIndex"
+        [ test "後ろの index に移動できる" <|
+            \_ ->
+                (Project.moveTrackToIndex 1 2 project).tracks
+                    |> List.map .id
+                    |> Expect.equal [ 2, 3, 1 ]
+        , test "前の index に移動できる" <|
+            \_ ->
+                (Project.moveTrackToIndex 3 0 project).tracks
+                    |> List.map .id
+                    |> Expect.equal [ 3, 1, 2 ]
+        , test "負の index は先頭にクランプされる" <|
+            \_ ->
+                (Project.moveTrackToIndex 3 -5 project).tracks
+                    |> List.map .id
+                    |> Expect.equal [ 3, 1, 2 ]
+        , test "大きすぎる index は末尾にクランプされる" <|
+            \_ ->
+                (Project.moveTrackToIndex 1 99 project).tracks
+                    |> List.map .id
+                    |> Expect.equal [ 2, 3, 1 ]
+        , test "存在しない trackId を渡すと何も変わらない" <|
+            \_ ->
+                (Project.moveTrackToIndex 999 0 project).tracks
                     |> List.map .id
                     |> Expect.equal [ 1, 2, 3 ]
         ]

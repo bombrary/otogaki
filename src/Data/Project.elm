@@ -20,6 +20,7 @@ module Data.Project exposing
     , removeNote
     , removeScrap
     , removeSection
+    , moveTrackToIndex
     , removeTrack
     , removeVoicing
     , reorderSectionsWithContent
@@ -640,6 +641,30 @@ addTrack project =
 removeTrack : Int -> Project -> Project
 removeTrack trackId project =
     { project | tracks = List.filter (\t -> t.id /= trackId) project.tracks }
+
+
+{-| トラックを任意の絶対 index に移動する。`moveSectionToIndex` と違いノートはトラック内包で
+順序に依存しないため、内容のシフトは不要で List 並べ替えだけでよい。targetIndex は自動的に
+0..(トラック数-1) にクランプされる。
+-}
+moveTrackToIndex : Int -> Int -> Project -> Project
+moveTrackToIndex trackId targetIndex project =
+    let
+        moving =
+            project.tracks |> List.filter (\t -> t.id == trackId) |> List.head
+
+        rest =
+            project.tracks |> List.filter (\t -> t.id /= trackId)
+
+        clampedIndex =
+            clamp 0 (List.length rest) targetIndex
+    in
+    case moving of
+        Just t ->
+            { project | tracks = List.take clampedIndex rest ++ t :: List.drop clampedIndex rest }
+
+        Nothing ->
+            project
 
 
 updateTrack : Int -> (Track -> Track) -> Project -> Project
