@@ -6341,7 +6341,54 @@ ghostContent model =
                                 Nothing
 
                         Nothing ->
-                            Nothing
+                            case model.dragState of
+                                Dragging d ->
+                                    let
+                                        anchorNote =
+                                            selectedTrackKind model
+                                                |> Maybe.map notesOf
+                                                |> Maybe.withDefault []
+                                                |> List.filter (\n -> n.id == d.anchorId)
+                                                |> List.head
+                                    in
+                                    case anchorNote of
+                                        Just n ->
+                                            let
+                                                barBeat =
+                                                    Data.Timeline.ticksToBarBeat n.start (Data.Project.timeline model.project)
+                                            in
+                                            Just
+                                                (Data.Note.pitchLabel n.pitch
+                                                    ++ "  "
+                                                    ++ String.fromInt barBeat.bar
+                                                    ++ ":"
+                                                    ++ String.fromInt barBeat.beat
+                                                )
+
+                                        Nothing ->
+                                            Nothing
+
+                                NoDrag ->
+                                    case model.velocityDrag of
+                                        Just vd ->
+                                            let
+                                                liveVelocity =
+                                                    vd.origVelocities
+                                                        |> Dict.keys
+                                                        |> List.head
+                                                        |> Maybe.andThen
+                                                            (\noteId ->
+                                                                selectedTrackKind model
+                                                                    |> Maybe.map notesOf
+                                                                    |> Maybe.withDefault []
+                                                                    |> List.filter (\n -> n.id == noteId)
+                                                                    |> List.head
+                                                            )
+                                            in
+                                            liveVelocity |> Maybe.map (\n -> String.fromInt n.velocity ++ "%")
+
+                                        Nothing ->
+                                            Nothing
 
 
 {-| ノートホバー時のツールチップ。ホバー中ノートと同じトラック（通常ピアノロールなら選択中トラック、
