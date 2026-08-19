@@ -243,6 +243,7 @@ type alias Model =
     , toastCounter : Int
     , chordSheetError : Maybe Data.ChordSheet.ParseError
     , helpModalOpen : Bool
+    , dragCursor : Maybe { x : Float, y : Float }
     }
 
 
@@ -562,6 +563,7 @@ init flags =
       , toastCounter = 0
       , chordSheetError = Nothing
       , helpModalOpen = False
+      , dragCursor = Nothing
       }
     , Task.perform (\vp -> ResizedWindow (round vp.viewport.width) (round vp.viewport.height)) Browser.Dom.getViewport
     )
@@ -1566,6 +1568,13 @@ releasedDragNoteOrRubberBand model =
 
         Nothing ->
             ( { model | dragState = NoDrag }, Cmd.none )
+
+{-| DraggedTo の全分岐に共通で、現在のポインタ座標を dragCursor へ反映する。ドラッグゴースト（viewDragGhost）の座標源になる。
+-}
+withDragCursor : Float -> Float -> ( Model, Cmd Msg ) -> ( Model, Cmd Msg )
+withDragCursor x y ( m, cmd ) =
+    ( { m | dragCursor = Just { x = x, y = y } }, cmd )
+
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
@@ -3207,7 +3216,7 @@ updateCore msg model =
             )
 
         DraggedTo pos ->
-            case model.pendingNoteDrag of
+            (case model.pendingNoteDrag of
                 Just info ->
                     let
                         dx =
@@ -3252,6 +3261,8 @@ updateCore msg model =
 
                                 Nothing ->
                                     legacyDraggedTo pos model
+            )
+                |> withDragCursor pos.clientX pos.clientY
 
         DraggedOverChordBar bar ->
             case model.chordDrag of
@@ -3262,7 +3273,7 @@ updateCore msg model =
                     ( model, Cmd.none )
 
         ReleasedDrag ->
-            case model.pendingEmptyTouch of
+            (case model.pendingEmptyTouch of
                 Just p ->
                     {- タッチで空白を押したまま指を動かさず離した（＝スワイプではなくタップ）と判断し、ここで初めてノートを確定配置する。
                        pendingNoteDragは付けず（指は既に離れているため）、押したまま伸ばすジェスチャはタッチでは提供しない。
@@ -3275,6 +3286,8 @@ updateCore msg model =
 
                 Nothing ->
                     releasedDragFallback model
+            )
+                |> Tuple.mapFirst (\m -> { m | dragCursor = Nothing })
 
         CanceledNotePress ->
             {- タッチで空白を押したものの指が動いてブラウザがネイティブスクロールに切り替えた（pointercancel）。配置せず保留を
@@ -6160,6 +6173,7 @@ view model =
 
           else
             text ""
+        , viewDragGhost model
         , case model.toast of
             Just t ->
                 Toast.view DismissedToast t
@@ -6187,6 +6201,42 @@ viewDragOverlay =
         , Html.Events.on "pointercancel" (Decode.succeed ReleasedDrag)
         ]
         []
+
+
+{-| ドラッグ中の対象をマウスに追従するチップ。pointer-events: none でクリック/pointerenterを吐かず、
+下のDOM要素（ChordBlocksのセルの pointerenter など）にイベントを透過させる。dragCursor と ghostContent が
+両方 Just のときだけ描画されるので、ドラッグ終了後に残らない。
+-}
+viewDragGhost : Model -> Html Msg
+viewDragGhost model =
+    case ( model.dragCursor, ghostContent model ) of
+        ( Just pos, Just label ) ->
+            div
+                [ style "position" "fixed"
+                , style "left" (String.fromFloat (pos.x + 12) ++ "px")
+                , style "top" (String.fromFloat (pos.y + 12) ++ "px")
+                , style "background" Theme.inverseSurface
+                , style "color" Theme.inverseOnSurface
+                , style "padding" "0.35rem 0.55rem"
+                , style "border-radius" Theme.shapeXS
+                , style "font-size" "0.75rem"
+                , style "font-weight" "600"
+                , style "pointer-events" "none"
+                , style "z-index" Theme.zDragGhost
+                , style "white-space" "nowrap"
+                , style "box-shadow" Theme.elevation2
+                ]
+                [ text label ]
+
+        _ ->
+            text ""
+
+
+{-| 現在ドラッグ中の対象の表示ラベル。各種ドラッグ状態が増えるたびここに分岐を足す。
+-}
+ghostContent : Model -> Maybe String
+ghostContent model =
+    Nothing
 
 
 {-| ノートホバー時のツールチップ。ホバー中ノートと同じトラック（通常ピアノロールなら選択中トラック、

@@ -70,6 +70,7 @@ module View.Theme exposing
     , typeTitleLarge
     , typeTitleSmall
     , withAlpha
+    , zDragGhost
     , zDragOverlay
     , zModal
     , zToast
@@ -543,6 +544,11 @@ shapeFull =
 zDragOverlay : String
 zDragOverlay =
     "900"
+
+
+zDragGhost : String
+zDragGhost =
+    "910"
 
 
 zModal : String
