@@ -2076,7 +2076,10 @@ initialCenterPitch model =
         |> clamp PianoRoll.minPitch PianoRoll.maxPitch
 
 
-{-| 起動直後の1回だけ、ピアノロールを `initialCenterPitch` が枠の中央に来るよう縦スクロールする。
+{-| ピアノロールを `initialCenterPitch` が枠の中央に来るよう縦スクロールする。起動直後の ResizedWindow（セッションに1回だけ）と、
+`resetToProject`（新規プロジェクト・JSON読込でプロジェクトを別物に差し替える度に）の両方から呼ばれる。
+横位置は現在の DOM の scrollLeft（`vp.viewport.x`）ではなく `model.pianoRollScrollX` を使う。
+（resetToProject はこの値を 0 にリセットしてから呼ぶので、プロジェクト切替時は必ず先頭に戻る）。
 `restorePianoRollScrollCmd` と同じ形で `Process.sleep 0` を挟む。既存の `GotPianoRollViewportMeasured` を
 再利用するので新規 Msg は不要（Err は同 Msg が握り潰す）。
 -}
@@ -2089,7 +2092,7 @@ centerPianoRollCmd model pitch =
             |> Task.andThen
                 (\vp ->
                     Browser.Dom.setViewportOf PianoRoll.pianoRollScrollId
-                        vp.viewport.x
+                        model.pianoRollScrollX
                         (PianoRoll.centerScrollTop (pianoRollDims model) vp.viewport.height pitch)
                 )
             |> Task.andThen (\_ -> Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId)
@@ -2142,10 +2145,11 @@ resetToProject project maybeSelectedTrackId model =
                 , pendingChordDrag = Nothing
                 , chordRubberBand = Nothing
                 , pianoRollScrollX = 0
+                , pianoRollCentered = True
             }
     in
     ( newModel
-    , Cmd.batch [ Ports.toAudio Performance.encodeStop, restorePianoRollScrollCmd newModel ]
+    , Cmd.batch [ Ports.toAudio Performance.encodeStop, centerPianoRollCmd newModel (initialCenterPitch newModel) ]
     )
 
 
