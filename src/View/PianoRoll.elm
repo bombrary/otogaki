@@ -1,12 +1,17 @@
 module View.PianoRoll exposing
     ( Config
+    , Dims
     , ResizeHandle(..)
     , RulerHandlers
     , RulerOpts
     , SectionSpan
     , Tool(..)
+    , centerScrollTop
     , chordTrackView
     , defaultPxPerSixteenth
+    , frameContentHeight
+    , headerHeight
+    , keyColumnWidth
     , maxPitch
     , maxPxPerSixteenth
     , minPitch
@@ -252,29 +257,205 @@ gridHeight isNarrow =
     (maxPitch - minPitch + 1) * rowHeight isNarrow
 
 
+{-| ピアノロール枠の高さ計算に必要な「どの帯があるか」の情報。view と Main.elm の初期センタリング計算の
+両方が同じ値を参照できるようにするのが目的（二重管理を避ける）。
+-}
+type alias Dims =
+    { isNarrow : Bool
+    , hasChords : Bool
+    , hasWave : Bool
+    , hasVelocityLane : Bool
+    }
+
+
+{-| ヘッダ帯（ルーラー + コード帯 + 波形）の高さ(px)。
+-}
+headerHeight : Dims -> Int
+headerHeight dims =
+    rulerHeight
+        + (if dims.hasChords then
+            ChordStrip.height
+
+           else
+            0
+          )
+        + (if dims.hasWave then
+            waveHeight
+
+           else
+            0
+          )
+
+
+{-| ピアノロール枠の内容全体（ヘッダ + グリッド + Velレーン）の高さ(px)。枠の max-height に使う。
+-}
+frameContentHeight : Dims -> Int
+frameContentHeight dims =
+    headerHeight dims + gridHeight dims.isNarrow + (if dims.hasVelocityLane then velocityLaneHeight else 0)
+
+
+{-| 指定の音高の行が、ヘッダ帯と Vel レーンを除いた「見えているグリッド領域」の中央に来る scrollTop。
+起動時の初期センタリングで使う（src/Main.elm の centerPianoRollCmd）。
+-}
+centerScrollTop : Dims -> Float -> Int -> Float
+centerScrollTop dims viewportHeight pitch =
+    let
+        rowH =
+            toFloat (rowHeight dims.isNarrow)
+
+        rowTop =
+            toFloat (maxPitch - clamp minPitch maxPitch pitch) * rowH
+
+        velH =
+            if dims.hasVelocityLane then
+                toFloat velocityLaneHeight
+
+            else
+                0
+
+        gridVpH =
+            Basics.max rowH (viewportHeight - toFloat (headerHeight dims) - velH)
+    in
+    Basics.max 0 (rowTop + rowH / 2 - gridVpH / 2)
+
+
+type alias FrameOpts msg =
+    { scrollId : String
+    , ariaLabel : String
+    , scrolled : { scrollLeft : Float, scrollTop : Float, clientWidth : Float } -> msg
+    , leftWidth : Int
+    , contentWidth : Int
+    , maxHeight : Maybe Int
+    , corner : Html msg
+    , header : List (Html msg)
+    , leftRows : List (Html msg)
+    , body : Html msg
+    , footer : Maybe { left : Html msg, cell : Html msg }
+    }
+
+
+pxStr : Int -> String
+pxStr n =
+    String.fromInt n ++ "px"
+
+
+{-| 鍵盤列/ラベル列を sticky-left、ルーラー/コード帯/波形を sticky-top で固定した専用の縦スクロール枠。
+ピアノロール本体と、コード進行トラックの鍵盤列あり表示で共有する。
+sticky を持つのは全部 Html.div（SVG には効かせない）。corner は親のヘッダ行が既に sticky top なので left だけでよい。
+-}
+scrollFrame : FrameOpts msg -> Html msg
+scrollFrame f =
+    Html.div
+        [ HA.id f.scrollId
+        , HA.class "pr-fill"
+        , HA.style "overflow" "auto"
+        , HA.style "border" ("1px solid " ++ Theme.outlineVariant)
+        , HA.style "box-sizing" "border-box"
+        , HA.style "margin-top" "1rem"
+        , HA.style "background" Theme.surface
+        , HA.style "min-height" (pxStr (Basics.min 160 (Maybe.withDefault 160 f.maxHeight)))
+        , HA.style "max-height"
+            (case f.maxHeight of
+                Just h ->
+                    pxStr h
+
+                Nothing ->
+                    "none"
+            )
+        , HA.tabindex 0
+        , HA.attribute "aria-label" f.ariaLabel
+        , Html.Events.on "scroll" (scrollDecoder f.scrolled)
+        ]
+        [ Html.div
+            [ HA.style "width" (pxStr f.contentWidth)
+            , HA.style "position" "relative"
+            ]
+            ([ Html.div
+                [ HA.style "display" "flex"
+                , HA.style "position" "sticky"
+                , HA.style "top" "0"
+                , HA.style "z-index" "3"
+                , HA.style "background" Theme.surfaceContainer
+                ]
+                [ Html.div
+                    [ HA.style "flex" ("0 0 " ++ pxStr f.leftWidth)
+                    , HA.style "position" "sticky"
+                    , HA.style "left" "0"
+                    , HA.style "z-index" "1"
+                    , HA.style "background" Theme.surfaceContainer
+                    , HA.style "border-right" ("1px solid " ++ Theme.outline)
+                    , HA.style "border-bottom" ("1px solid " ++ Theme.outlineVariant)
+                    , HA.style "box-sizing" "border-box"
+                    ]
+                    [ f.corner ]
+                , Html.div [ HA.style "flex" "0 0 auto" ] f.header
+                ]
+             , Html.div [ HA.style "display" "flex" ]
+                [ Html.div
+                    [ HA.style "flex" ("0 0 " ++ pxStr f.leftWidth)
+                    , HA.style "position" "sticky"
+                    , HA.style "left" "0"
+                    , HA.style "z-index" "2"
+                    , HA.style "background" Theme.surfaceContainerLow
+                    , HA.style "border-right" ("1px solid " ++ Theme.outline)
+                    , HA.style "box-sizing" "border-box"
+                    ]
+                    f.leftRows
+                , Html.div [ HA.style "flex" "0 0 auto" ] [ f.body ]
+                ]
+             ]
+                ++ (case f.footer of
+                        Nothing ->
+                            []
+
+                        Just ft ->
+                            [ Html.div
+                                [ HA.style "display" "flex"
+                                , HA.style "position" "sticky"
+                                , HA.style "bottom" "0"
+                                , HA.style "z-index" "3"
+                                , HA.style "background" Theme.surfaceContainerLow
+                                ]
+                                [ Html.div
+                                    [ HA.style "flex" ("0 0 " ++ pxStr f.leftWidth)
+                                    , HA.style "position" "sticky"
+                                    , HA.style "left" "0"
+                                    , HA.style "z-index" "1"
+                                    , HA.style "background" Theme.surfaceContainerLow
+                                    , HA.style "border-right" ("1px solid " ++ Theme.outline)
+                                    , HA.style "box-sizing" "border-box"
+                                    ]
+                                    [ ft.left ]
+                                , Html.div [ HA.style "flex" "0 0 auto" ] [ ft.cell ]
+                                ]
+                            ]
+                   )
+            )
+        ]
+
+
 view : Config msg -> ViewOpts -> Html msg
 view config opts =
-    Html.div
-        [ HA.style "display" "flex"
-        , HA.style "margin-top" "1rem"
-        , HA.style "border" ("1px solid " ++ Theme.outlineVariant)
-        ]
-        [ keyColumn config (opts.waveform /= Nothing) (not (List.isEmpty opts.chordSpans)) True opts.highlightedPitch opts.scalePitchClasses opts.isNarrow
-        , Html.div
-            [ HA.id pianoRollScrollId
-            , HA.style "overflow-x" "auto"
-            , HA.style "flex" "1"
-            , HA.tabindex 0
-            , HA.attribute "aria-label" "ピアノロール（矢印キーでノートを選択・移動）"
-            , Html.Events.on "scroll" (scrollDecoder config.scrolled)
-            ]
-            [ rulerView config opts
-            , chordStripView config opts
-            , waveformView opts
-            , gridView config opts
-            , velocityLaneView config opts
-            ]
-        ]
+    let
+        dims =
+            { isNarrow = opts.isNarrow, hasChords = not (List.isEmpty opts.chordSpans), hasWave = opts.waveform /= Nothing, hasVelocityLane = True }
+    in
+    scrollFrame
+        { scrollId = pianoRollScrollId
+        , ariaLabel = "ピアノロール（矢印キーでノートを選択・移動）"
+        , scrolled = config.scrolled
+        , leftWidth = keyColumnWidth
+        , contentWidth = keyColumnWidth + gridWidth opts.pxPerSixteenth opts.totalBars
+        , maxHeight = Just (frameContentHeight dims)
+        , corner = Html.text ""
+        , header = [ rulerView config opts, chordStripView config opts, waveformView opts ]
+        , leftRows =
+            List.range minPitch maxPitch
+                |> List.reverse
+                |> List.map (keyRow config opts.highlightedPitch opts.scalePitchClasses opts.isNarrow)
+        , body = gridView config opts
+        , footer = Just { left = velLabelCell, cell = velocityLaneView config opts }
+        }
 
 
 {-| 共通の View.ChordStrip を、このモジュールの坐標系（pxPerSixteenth ベースの線形変換）で呼び出すラッパー。
@@ -344,32 +525,36 @@ chordTrackView config opts previewNotes chordLane =
                 ]
 
         Just notes ->
-            Html.div
-                [ HA.style "margin-top" "1rem"
-                , HA.style "border" ("1px solid " ++ Theme.outlineVariant)
-                , HA.style "display" "flex"
-                ]
-                [ keyColumn config (opts.waveform /= Nothing) True False opts.highlightedPitch opts.scalePitchClasses opts.isNarrow
-                , Html.div
-                    [ HA.id pianoRollScrollId
-                    , HA.style "overflow-x" "auto"
-                    , HA.style "flex" "1"
-                    , HA.tabindex 0
-                    , HA.attribute "aria-label" "コード進行トラック"
-                    , Html.Events.on "scroll" (scrollDecoder config.scrolled)
-                    ]
-                    [ rulerView config opts
-                    , laneHtml ChordStrip.height
-                    , waveformView opts
-                    , chordTrackNoteGrid config opts notes
-                    , velocityLaneViewReadOnly
-                        { pxPerSixteenth = opts.pxPerSixteenth
-                        , totalBars = opts.totalBars
-                        , notes = notes
-                        , playheadTicks = opts.playheadTicks
+            let
+                dims =
+                    { isNarrow = opts.isNarrow, hasChords = True, hasWave = opts.waveform /= Nothing, hasVelocityLane = True }
+            in
+            scrollFrame
+                { scrollId = pianoRollScrollId
+                , ariaLabel = "コード進行トラック"
+                , scrolled = config.scrolled
+                , leftWidth = keyColumnWidth
+                , contentWidth = keyColumnWidth + gridWidth opts.pxPerSixteenth opts.totalBars
+                , maxHeight = Just (frameContentHeight dims)
+                , corner = Html.text ""
+                , header = [ rulerView config opts, laneHtml ChordStrip.height, waveformView opts ]
+                , leftRows =
+                    List.range minPitch maxPitch
+                        |> List.reverse
+                        |> List.map (keyRow config opts.highlightedPitch opts.scalePitchClasses opts.isNarrow)
+                , body = chordTrackNoteGrid config opts notes
+                , footer =
+                    Just
+                        { left = Html.text ""
+                        , cell =
+                            velocityLaneViewReadOnly
+                                { pxPerSixteenth = opts.pxPerSixteenth
+                                , totalBars = opts.totalBars
+                                , notes = notes
+                                , playheadTicks = opts.playheadTicks
+                                }
                         }
-                    ]
-                ]
+                }
 
 
 {-| コード進行トラックのMIDIプレビュー用の読み取り専用ノートグリッド。通常の `gridView` と違い
@@ -470,51 +655,19 @@ waveStrip peaks peakDt secsPerTick offsetMs totalBars pxPerSixteenth =
         )
 
 
-keyColumn : Config msg -> Bool -> Bool -> Bool -> Set Int -> Set Int -> Bool -> Html msg
-keyColumn config hasWave hasChords hasVelocityLane highlightedPitch scalePitchClasses isNarrow =
-    let
-        spacerHeight =
-            rulerHeight
-                + (if hasChords then
-                    ChordStrip.height
-
-                   else
-                    0
-                  )
-                + (if hasWave then
-                    waveHeight
-
-                   else
-                    0
-                  )
-    in
+{-| 左下の Vel ラベルセル。scrollFrame の footer.left に渡す。
+-}
+velLabelCell : Html msg
+velLabelCell =
     Html.div
-        [ HA.style "flex" "0 0 44px"
-        , HA.style "border-right" ("1px solid " ++ Theme.outline)
+        [ HA.style "height" (String.fromInt velocityLaneHeight ++ "px")
+        , HA.style "box-sizing" "border-box"
+        , HA.style "font-size" "9px"
+        , HA.style "color" Theme.onSurfaceVariant
+        , HA.style "padding" "2px 3px"
+        , HA.style "text-align" "right"
         ]
-        ((Html.div [ HA.style "height" (String.fromInt spacerHeight ++ "px"), HA.style "box-sizing" "border-box", HA.style "border-bottom" ("1px solid " ++ Theme.outlineVariant) ] []
-            :: (List.range minPitch maxPitch
-                    |> List.reverse
-                    |> List.map (keyRow config highlightedPitch scalePitchClasses isNarrow)
-               )
-         )
-            ++ (if hasVelocityLane then
-                    [ Html.div
-                        [ HA.style "height" (String.fromInt velocityLaneHeight ++ "px")
-                        , HA.style "box-sizing" "border-box"
-                        , HA.style "border-top" ("1px solid " ++ Theme.outlineVariant)
-                        , HA.style "font-size" "9px"
-                        , HA.style "color" Theme.onSurfaceVariant
-                        , HA.style "padding" "2px 3px"
-                        , HA.style "text-align" "right"
-                        ]
-                        [ Html.text "Vel" ]
-                    ]
-
-                else
-                    []
-               )
-        )
+        [ Html.text "Vel" ]
 
 
 keyRow : Config msg -> Set Int -> Set Int -> Bool -> Int -> Html msg

@@ -757,6 +757,9 @@ cssRules =
     , ".m3-hit { transition: filter 0.1s; }"
     , ".m3-hit:hover { filter: brightness(0.94); }"
     , ".page-tabbar { padding-bottom: env(safe-area-inset-bottom); }"
+    , ".pr-col { display: flex; flex-direction: column; }"
+    , ".pr-col > * { flex: 0 0 auto; }"
+    , ".pr-col > .pr-fill { flex: 1 1 auto; min-height: 0; }"
     , rootBlock
     , darkMediaBlock
     , darkOverrideBlock

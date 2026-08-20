@@ -209,6 +209,7 @@ type alias Model =
     , pianoRollScrollX : Float
     , pianoRollScrollY : Float
     , pianoRollViewportWidth : Maybe Float
+    , pianoRollCentered : Bool
     , sectionResizeDrag : Maybe { sectionId : Int, startClientX : Float, origLengthBars : Int, curLengthBars : Int }
     , sectionMoveDrag : Maybe { sectionId : Int, lastClientX : Float, accumDx : Float, moved : Bool, wasSelected : Bool }
     , trackMoveDrag : Maybe { trackId : Int, lastClientY : Float, accumDy : Float, moved : Bool }
@@ -545,6 +546,7 @@ init flags =
       , pianoRollScrollX = 0
       , pianoRollScrollY = 0
       , pianoRollViewportWidth = Nothing
+      , pianoRollCentered = False
       , sectionResizeDrag = Nothing
       , sectionMoveDrag = Nothing
       , trackMoveDrag = Nothing
@@ -2010,6 +2012,19 @@ pianoRollScrollMounted model =
     not (model.selectedTrackId == Data.ChordTrack.trackId && model.chordBlockView)
 
 
+{-| スクロールコンテナの内側に固定表示される左カラム（鍵盤列/ラベル列）の幅。scrollLeft の原点は変わらないが、
+「可視な譜面幅」は clientWidth からこの分を引いた値になる（src/View/PianoRoll.elmの keyColumnWidth）。
+非マウント時（コード進行ブロック表示中）は鍵盤列自体が描かれないので 0。
+-}
+pianoRollLeftInset : Model -> Float
+pianoRollLeftInset model =
+    if pianoRollScrollMounted model then
+        toFloat PianoRoll.keyColumnWidth
+
+    else
+        0
+
+
 {-| トラック切替等で `PianoRoll.pianoRollScrollId` の DOM が作り直された場合に備え、`model.pianoRollScrollX`
 の位置を明示的に復元し、その後再計測する。同種トラック同士の切替でDOMが再利用されるケースでも
 同値を再設定するだけで無害。`Process.sleep 0` で一拍待つのは、update 直後のCmd実行がDOM再描画より先行して旧ノード相手に
@@ -2021,6 +2036,62 @@ restorePianoRollScrollCmd model =
         Process.sleep 0
             |> Task.mapError never
             |> Task.andThen (\_ -> Browser.Dom.setViewportOf PianoRoll.pianoRollScrollId model.pianoRollScrollX model.pianoRollScrollY)
+            |> Task.andThen (\_ -> Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId)
+            |> Task.attempt GotPianoRollViewportMeasured
+
+    else
+        Cmd.none
+
+
+{-| 現在のピアノロール表示がどの帯を持つか。view 側のローカル `dims`（chordSpans/refWaveform 由来）と
+必ず一致させる必要があるので、同じ式をここにも持たせている（二重管理だが、両者を一つにまとめるには
+`view` の大規模な let 内の値を外から参照できない制約があるため、式自体を揃えて優先する）。
+-}
+pianoRollDims : Model -> PianoRoll.Dims
+pianoRollDims model =
+    { isNarrow = isTouchLayout model
+    , hasChords = not (List.isEmpty (Data.ChordTrack.namedSpans (Data.Project.timeline model.project) model.project.chordTrack))
+    , hasWave = not (Array.isEmpty model.refPeaks)
+    , hasVelocityLane = True
+    }
+
+
+{-| 起動時の初期センタリングで中央にしたい音高。選択中トラックにノートがあればその中央値、無ければ C4(60)。
+-}
+initialCenterPitch : Model -> Int
+initialCenterPitch model =
+    let
+        sorted =
+            trackNotes model |> List.map .pitch |> List.sort
+
+        n =
+            List.length sorted
+    in
+    (if n == 0 then
+        60
+
+     else
+        List.drop (n // 2) sorted |> List.head |> Maybe.withDefault 60
+    )
+        |> clamp PianoRoll.minPitch PianoRoll.maxPitch
+
+
+{-| 起動直後の1回だけ、ピアノロールを `initialCenterPitch` が枠の中央に来るよう縦スクロールする。
+`restorePianoRollScrollCmd` と同じ形で `Process.sleep 0` を挟む。既存の `GotPianoRollViewportMeasured` を
+再利用するので新規 Msg は不要（Err は同 Msg が握り潰す）。
+-}
+centerPianoRollCmd : Model -> Int -> Cmd Msg
+centerPianoRollCmd model pitch =
+    if pianoRollScrollMounted model then
+        Process.sleep 0
+            |> Task.mapError never
+            |> Task.andThen (\_ -> Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId)
+            |> Task.andThen
+                (\vp ->
+                    Browser.Dom.setViewportOf PianoRoll.pianoRollScrollId
+                        vp.viewport.x
+                        (PianoRoll.centerScrollTop (pianoRollDims model) vp.viewport.height pitch)
+                )
             |> Task.andThen (\_ -> Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId)
             |> Task.attempt GotPianoRollViewportMeasured
 
@@ -3446,7 +3517,7 @@ updateCore msg model =
                 insideViewRange =
                     if pianoRollScrollMounted model then
                         model.pianoRollViewportWidth
-                            |> Maybe.map (\w -> PianoRoll.visibleTickRange model.pianoRollZoom { scrollX = model.pianoRollScrollX, width = w })
+                            |> Maybe.map (\w -> PianoRoll.visibleTickRange model.pianoRollZoom { scrollX = model.pianoRollScrollX, width = w - pianoRollLeftInset model })
                             |> Maybe.map (\r -> pressTicks >= r.startTicks && pressTicks <= r.endTicks)
                             |> Maybe.withDefault False
 
@@ -5098,7 +5169,7 @@ updateCore msg model =
                             viewport.viewport.x
 
                         visRight =
-                            viewport.viewport.x + viewport.viewport.width
+                            viewport.viewport.x + viewport.viewport.width - pianoRollLeftInset model
                     in
                     if playheadPx < visLeft || playheadPx > visRight then
                         ( model, Task.attempt (\_ -> NoOp) (Browser.Dom.setViewportOf PianoRoll.pianoRollScrollId (Basics.max 0 (playheadPx - 40)) viewport.viewport.y) )
@@ -5119,7 +5190,7 @@ updateCore msg model =
                         newZoom =
                             PianoRoll.zoomStep w.deltaY model.pianoRollZoom
                     in
-                    ( { model | pianoRollZoom = newZoom }
+                    ( { model | pianoRollZoom = newZoom, pianoRollViewportWidth = Just viewport.viewport.width }
                     , zoomScrollCmd
                         { scrollId = PianoRoll.pianoRollScrollId
                         , offsetX = w.offsetX
@@ -5209,7 +5280,10 @@ updateCore msg model =
                     else
                         model2
             in
-            if pianoRollScrollMounted model3 then
+            if not model3.pianoRollCentered && pianoRollScrollMounted model3 then
+                ( { model3 | pianoRollCentered = True }, centerPianoRollCmd model3 (initialCenterPitch model3) )
+
+            else if pianoRollScrollMounted model3 then
                 ( model3, Task.attempt GotPianoRollViewportMeasured (Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId) )
 
             else
@@ -5745,7 +5819,7 @@ view model =
                 [ span [ style "font-size" "0.9rem" ] [ text ("編集中: " ++ selectedTrackName ++ selectionInfo) ], durationSelect, gridSelect, toolToggle, pianoRollZoomButtons, touchModeToggleView model ]
 
         pianoRollView =
-            div [] [ editToolbar, PianoRoll.view pianoRollConfig pianoRollOpts ]
+            div [ Html.Attributes.class "pr-col pr-fill" ] [ editToolbar, PianoRoll.view pianoRollConfig pianoRollOpts ]
 
         chordParseErrors =
             Data.ChordTrack.cells timeline model.project.chordTrack
@@ -5859,7 +5933,7 @@ view model =
         editContent =
             case selectedTrackKind model of
                 Just (DrumTrack _) ->
-                    div []
+                    div [ classList [ ( "pr-col", True ), ( "pr-fill", model.drumViewRoll ) ] ]
                         [ div [ style "display" "flex", style "gap" "0.2rem", style "margin-top" "0.5rem" ]
                             [ button
                                 (Style.toggleButton model.drumViewRoll
@@ -5976,7 +6050,7 @@ view model =
                 , viewRange =
                     if pianoRollScrollMounted model then
                         model.pianoRollViewportWidth
-                            |> Maybe.map (\w -> PianoRoll.visibleTickRange model.pianoRollZoom { scrollX = model.pianoRollScrollX, width = w })
+                            |> Maybe.map (\w -> PianoRoll.visibleTickRange model.pianoRollZoom { scrollX = model.pianoRollScrollX, width = w - pianoRollLeftInset model })
 
                     else
                         Nothing
@@ -6339,7 +6413,7 @@ view model =
             ]
         , if isPageLayout model then
             div [ style "flex" "1 1 auto", style "min-height" "0", style "display" "flex", style "flex-direction" "column", style "overflow" "hidden" ]
-                [ div [ style "flex" "1 1 auto", style "min-height" "0", style "overflow-y" "auto", style "padding" "0.5rem 1rem 1rem 1rem", style "box-sizing" "border-box" ]
+                [ div [ classList [ ( "pr-col", model.page == EditPage ) ], style "flex" "1 1 auto", style "min-height" "0", style "overflow-y" "auto", style "padding" "0.5rem 1rem 1rem 1rem", style "box-sizing" "border-box" ]
                     (case model.page of
                         SongPage ->
                             songPageChildren
@@ -6377,7 +6451,8 @@ view model =
                         [ text "▶" ]
                     ]
                 , div
-                    [ style "flex" "1 1 auto"
+                    [ Html.Attributes.class "pr-col"
+                    , style "flex" "1 1 auto"
                     , style "min-width" "0"
                     , style "overflow-y" "auto"
                     , style "padding" "0.5rem 1rem 1rem 1rem"
@@ -6417,7 +6492,8 @@ view model =
                     ]
                     []
                 , div
-                    [ style "flex" "1 1 auto"
+                    [ Html.Attributes.class "pr-col"
+                    , style "flex" "1 1 auto"
                     , style "min-width" "0"
                     , style "overflow-y" "auto"
                     , style "padding" "0.5rem 1rem 1rem 1rem"
