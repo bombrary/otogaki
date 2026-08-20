@@ -18,6 +18,8 @@ let refBuffer = null;
 let refPlayer = null;
 let refMeta = { offsetMs: 0, volume: 80, muted: false };
 let stopEventId = null;
+// play()/stopPlayback() のたびに進む世代カウンタ。ストール検知タイマーが古い再生を誤検知しないためのガード。
+let playGeneration = 0;
 
 export async function loadRefAudio(file) {
   await ensureAudio();
@@ -147,14 +149,56 @@ function send(msg) {
   if (sendToElm) sendToElm(msg);
 }
 
+// AudioContext が running かどうかを毎回確認し、中断されていれば復帰を試みる。
+// iOS は「タブ切替・画面ロック・他アプリの音声」等で AudioContext を suspended/interrupted に落とし、
+// 自動では戻らない。戻り値は「呼び出し元がこのまま音を鳴らしてよいか」。
 export async function ensureAudio() {
   if (!started) {
     await Tone.start();
     synth = new Tone.PolySynth(Tone.Synth).toDestination();
     synth.maxPolyphony = 64;
     started = true;
+    bindContextStatechange();
     send({ tag: "audioReady", payload: {} });
+    return true;
   }
+
+  const ctx = Tone.getContext().rawContext;
+  if (ctx.state === "running") return true;
+
+  // resume() の呼び出し開始は同期的に行う必要がある（iOS の user gesture 判定はコールスタックで見る）。
+  // ここは async 関数の先頭からすぐ呼んでいるので、呼び出し元が pointerdown/click ハンドラの
+  // 同期スタック内から ensureAudio を呼ぶ限りは gesture 内に収まる。
+  const resumed = await Promise.race([
+    ctx.resume().then(() => ctx.state === "running"),
+    new Promise((resolve) => setTimeout(() => resolve(false), 1500)),
+  ]).catch(() => false);
+
+  if (resumed) return true;
+
+  notifyAudioUnavailable();
+  return false;
+}
+
+// AudioContext が running でなくなった瞬間（呼び出し起点を問わず）に一度だけ登録する。
+let statechangeBound = false;
+function bindContextStatechange() {
+  if (statechangeBound) return;
+  statechangeBound = true;
+  const ctx = Tone.getContext().rawContext;
+  ctx.addEventListener("statechange", () => {
+    if (ctx.state !== "running") notifyAudioUnavailable();
+  });
+}
+
+// 音声が使えない（中断されたまま復帰できなかった／自動検知で落ちた）ことを Elm に伝える。
+export function notifyAudioUnavailable() {
+  send({ tag: "audioSuspended", payload: {} });
+}
+
+// 開発時のデバッグ用。DevTools から AudioContext を直接触って中断状態を決定論的に再現する。
+export function debugRawContext() {
+  return Tone.getContext().rawContext;
 }
 
 function loaderFor(name, ctx, extraOpts = {}) {
@@ -568,7 +612,24 @@ async function play(p) {
     send({ tag: "playhead", payload: { ticks: Math.round(t.ticks) } });
   }, "16n");
 
-  t.start(undefined, `${p.startTicks}i`);
+  // Elm 側（Main.elm の startPlay）でも同様のクランプをしているが、片方の修正漏れで再発しないように JS 側でも守る。
+  // ループなしで再生ヘッドが内容の終端以降にあると、scheduleNaturalStop の停止イベントが過去の時刻に積まれて発火しない。
+  const contentEndTicks = p.events
+    .filter((e) => e.trackId !== METRONOME_TRACK_ID)
+    .reduce((acc, e) => Math.max(acc, e.ticks + e.durationTicks), 0);
+  const effectiveStartTicks = !p.loop && p.startTicks >= contentEndTicks ? 0 : p.startTicks;
+
+  t.start(undefined, `${effectiveStartTicks}i`);
+
+  // AudioContext が中断されたままだと Transport のクロックが進まず、ボタンは反応しているのに音も再生ヘッドも動かない状態になる。
+  // ensureAudio で捕らえ切れなかったケースの保険として、実際に進んだかを短時間後に確認する。
+  const myGeneration = playGeneration;
+  setTimeout(() => {
+    if (playGeneration !== myGeneration) return;
+    const ctx = Tone.getContext().rawContext;
+    const stalled = ctx.state !== "running" || t.state !== "started" || t.ticks <= effectiveStartTicks;
+    if (stalled) notifyAudioUnavailable();
+  }, 300);
 }
 
 // 再生中にイベント列だけ差し替える（トランスポートは止めない）
@@ -591,6 +652,7 @@ function updateEvents(p) {
 }
 
 function stopPlayback() {
+  playGeneration++;
   const t = Tone.getTransport();
   t.stop();
   t.cancel();

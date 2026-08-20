@@ -8,6 +8,7 @@ type AudioEvent
     = Playhead Int
     | PlaybackStopped
     | AudioReady
+    | AudioSuspended
     | InstrumentLoaded String
     | InstrumentLoadFailed String
     | RefAudioReady { name : String, peaks : Array Float, peakDt : Float, durationSecs : Float }
@@ -37,6 +38,9 @@ decoder =
 
                     "audioReady" ->
                         Decode.succeed AudioReady
+
+                    "audioSuspended" ->
+                        Decode.succeed AudioSuspended
 
                     "instrumentLoaded" ->
                         Decode.map InstrumentLoaded (Decode.at [ "payload", "instrument" ] Decode.string)

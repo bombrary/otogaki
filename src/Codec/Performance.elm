@@ -11,6 +11,7 @@ module Codec.Performance exposing
     , encodeSetVolume
     , encodeStop
     , encodeUpdateEvents
+    , contentEndTicks
     , metronomeEvents
     , metronomeTrackId
     , toEvents
@@ -227,6 +228,18 @@ toEvents project =
                 []
     in
     List.concatMap trackEvents project.tracks ++ chordEvents project.guitarFormEnabled voicings (Data.Project.timeline project) project.chordTrack
+
+
+{-| ループなし再生を先頭にクランプする判定に使う、実際に鳴る内容の終端 tick。
+JS 側の audio.js scheduleNaturalStop と同じ定義（メトロノームは除く）にする。
+toEvents にはそもそもメトロノームが混ざらないが、定義を対称に保つために念のため trackId で除外しておく。
+ノート・コードが一つもない空プロジェクトなら 0。
+-}
+contentEndTicks : Project -> Int
+contentEndTicks project =
+    toEvents project
+        |> List.filter (\e -> e.trackId /= metronomeTrackId)
+        |> List.foldl (\e acc -> Basics.max acc (e.ticks + e.durationTicks)) 0
 
 
 {-| メトロノームのクリックイベントに予約している trackId。コードトラックの -1 の隣。

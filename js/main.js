@@ -1,5 +1,5 @@
 import { Elm } from "../src/Main.elm";
-import { ensureAudio, handleCommand, loadRefAudio, setElmSender } from "./audio.js";
+import { debugRawContext, ensureAudio, handleCommand, loadRefAudio, setElmSender } from "./audio.js";
 import { loadProject, saveProject } from "./storage.js";
 import { loadTheme, saveTheme } from "./theme.js";
 
@@ -15,9 +15,24 @@ const app = Elm.Main.init({
 setElmSender((msg) => app.ports.fromAudio.send(msg));
 
 app.ports.toAudio.subscribe(async (msg) => {
-  await ensureAudio();
+  const ready = await ensureAudio();
+  if (!ready) return;
   handleCommand(msg);
 });
+
+// タブが前面に戻ったタイミングで AudioContext の復帰を試みる（iOS はバックグラウンドで中断する）。
+// user gesture 外なので失敗しうるが、成功すれば次の再生操作を待たずに直る。
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    ensureAudio().catch(() => {});
+  }
+});
+
+// 開発時のみ: DevTools から __otogaki.audioContext().suspend() を叩いて、iOS での
+// AudioContext 中断をデスクトップで決定論的に再現する。
+if (import.meta.env.DEV) {
+  window.__otogaki = { audioContext: debugRawContext };
+}
 
 app.ports.saveToLocalStorage.subscribe(saveProject);
 

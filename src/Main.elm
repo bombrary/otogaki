@@ -1708,6 +1708,21 @@ update msg model =
 startPlay : Maybe Performance.Loop -> Int -> Model -> ( Model, Cmd Msg )
 startPlay loop startTicks model =
     let
+        -- ループなしで再生ヘッドが実際の内容の終端以降にあると、メトロノームを除いて一切鳴らないまま
+        -- Transport が延々と走り続ける（JS の scheduleNaturalStop の停止イベントが過去の時刻に積まれて発火しないため）。
+        -- ループありの経路（playWithLoop）は既にループ範囲内にクランプ済みなのでここでは触らない。
+        clampedStartTicks =
+            case loop of
+                Nothing ->
+                    if startTicks >= Performance.contentEndTicks model.project then
+                        0
+
+                    else
+                        startTicks
+
+                Just _ ->
+                    startTicks
+
         instrumentNames =
             if model.metronomeEnabled then
                 "drumKit" :: Performance.usedInstrumentNames model.project
@@ -1717,9 +1732,10 @@ startPlay loop startTicks model =
     in
     ( { model
         | playState = Playing
+        , playheadTicks = clampedStartTicks
         , instrumentLoad = markLoading instrumentNames model.instrumentLoad
       }
-    , Ports.toAudio (Performance.encodePlay { loop = loop, startTicks = startTicks, metronome = model.metronomeEnabled, metronomeVolume = model.metronomeVolume } model.project)
+    , Ports.toAudio (Performance.encodePlay { loop = loop, startTicks = clampedStartTicks, metronome = model.metronomeEnabled, metronomeVolume = model.metronomeVolume } model.project)
     )
 
 
@@ -2870,6 +2886,9 @@ updateCore msg model =
 
                 PlaybackStopped ->
                     ( { model | playState = Idle, playheadTicks = 0 }, Cmd.none )
+
+                AudioSuspended ->
+                    showToast Toast.Error "音声が中断されました。もう一度 ▶ を押してください" { model | playState = Idle }
 
                 InstrumentLoaded name ->
                     ( { model | instrumentLoad = Dict.insert name "ready" model.instrumentLoad }, Cmd.none )
