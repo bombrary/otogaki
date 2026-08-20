@@ -9,7 +9,12 @@ document.documentElement.setAttribute("data-theme", initialTheme);
 
 const app = Elm.Main.init({
   node: document.getElementById("app"),
-  flags: { ...(loadProject() ?? {}), theme: initialTheme },
+  flags: {
+    ...(loadProject() ?? {}),
+    theme: initialTheme,
+    // 幅だけでは iPad Pro 横向きなど幅の広いタッチ端末を拾えないので、pointer:coarse も併用する。
+    pointerCoarse: window.matchMedia("(pointer: coarse)").matches,
+  },
 });
 
 setElmSender((msg) => app.ports.fromAudio.send(msg));

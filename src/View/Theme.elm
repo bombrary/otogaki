@@ -756,6 +756,7 @@ cssRules =
     , "@media (pointer: coarse) { body { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; } input, textarea, select { -webkit-user-select: text; user-select: text; } }"
     , ".m3-hit { transition: filter 0.1s; }"
     , ".m3-hit:hover { filter: brightness(0.94); }"
+    , ".page-tabbar { padding-bottom: env(safe-area-inset-bottom); }"
     , rootBlock
     , darkMediaBlock
     , darkOverrideBlock
