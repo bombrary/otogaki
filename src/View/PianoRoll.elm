@@ -66,7 +66,7 @@ type alias Config msg =
     , doubleClickedChord : Int -> msg
     , hoveredNote : Note -> Float -> Float -> msg
     , unhoveredNote : msg
-    , scrolled : { scrollLeft : Float, clientWidth : Float } -> msg
+    , scrolled : { scrollLeft : Float, scrollTop : Float, clientWidth : Float } -> msg
     , pressedVelocityBar : Int -> { clientX : Float, clientY : Float } -> msg
     , movedCutGuide : { offsetX : Float } -> msg
     , clearedCutGuide : msg
@@ -196,6 +196,13 @@ pianoRollScrollId =
     "piano-roll-scroll"
 
 
+{-| 左固定列（鍵盤列 / ラベル列）の幅(px)。可視範囲の計算ではこの分を clientWidth から引く必要がある。
+-}
+keyColumnWidth : Int
+keyColumnWidth =
+    44
+
+
 barWidth : Int -> Int
 barWidth pxPerSixteenth =
     16 * pxPerSixteenth
@@ -211,12 +218,13 @@ ticksToPixels pxPerSixteenth ticks =
     toFloat ticks * toFloat pxPerSixteenth / toFloat Data.Time.ticksPerSixteenth
 
 
-{-| スクロールコンテナの scroll イベントから scrollLeft と clientWidth を取り出して msg に変換するデコーダー。
+{-| スクロールコンテナの scroll イベントから scrollLeft・scrollTop・clientWidth を取り出して msg に変換するデコーダー。
 -}
-scrollDecoder : ({ scrollLeft : Float, clientWidth : Float } -> msg) -> Decode.Decoder msg
+scrollDecoder : ({ scrollLeft : Float, scrollTop : Float, clientWidth : Float } -> msg) -> Decode.Decoder msg
 scrollDecoder toMsg =
-    Decode.map2 (\l w -> toMsg { scrollLeft = l, clientWidth = w })
+    Decode.map3 (\l t w -> toMsg { scrollLeft = l, scrollTop = t, clientWidth = w })
         (Decode.at [ "target", "scrollLeft" ] Decode.float)
+        (Decode.at [ "target", "scrollTop" ] Decode.float)
         (Decode.at [ "target", "clientWidth" ] Decode.float)
 
 

@@ -207,6 +207,7 @@ type alias Model =
     , pianoRollZoom : Int
     , gridUnit : Data.Time.GridUnit
     , pianoRollScrollX : Float
+    , pianoRollScrollY : Float
     , pianoRollViewportWidth : Maybe Float
     , sectionResizeDrag : Maybe { sectionId : Int, startClientX : Float, origLengthBars : Int, curLengthBars : Int }
     , sectionMoveDrag : Maybe { sectionId : Int, lastClientX : Float, accumDx : Float, moved : Bool, wasSelected : Bool }
@@ -330,7 +331,7 @@ type Msg
     | ReleasedKey String
     | SelectedTrack Int
     | ClickedAddTrack
-    | ScrolledPianoRoll { scrollLeft : Float, clientWidth : Float }
+    | ScrolledPianoRoll { scrollLeft : Float, scrollTop : Float, clientWidth : Float }
     | GotPianoRollViewportMeasured (Result Browser.Dom.Error Browser.Dom.Viewport)
     | ResizedWindow Int Int
     | SelectedPage Page
@@ -542,6 +543,7 @@ init flags =
       , pianoRollZoom = PianoRoll.defaultPxPerSixteenth
       , gridUnit = Data.Time.Sixteenth
       , pianoRollScrollX = 0
+      , pianoRollScrollY = 0
       , pianoRollViewportWidth = Nothing
       , sectionResizeDrag = Nothing
       , sectionMoveDrag = Nothing
@@ -1267,7 +1269,7 @@ legacyDraggedToRest pos model =
                         Basics.max 0 (PianoRoll.ticksToPixels model.pianoRollZoom newStartTicks)
                 in
                 ( { model | viewRangeDrag = Just { d | moved = True } }
-                , Task.attempt (\_ -> NoOp) (Browser.Dom.setViewportOf PianoRoll.pianoRollScrollId newScrollX 0)
+                , Task.attempt (\_ -> NoOp) (Browser.Dom.setViewportOf PianoRoll.pianoRollScrollId newScrollX model.pianoRollScrollY)
                 )
 
         Nothing ->
@@ -1866,6 +1868,7 @@ releaseSectionMoveDrag model =
 
 {-| 再生位置を動かす共通入口。再生中なら音のエンジンにも同じ位置を伝える。
 複数の場所（ルーラー・ピアノロール・セクションジャンプ・コードクリックなど）から呼ばれる。
+手動シークのたびにピアノロールの視界も動かす（`revealPlayheadCmd` 参照）。
 -}
 seekTo : Int -> Model -> ( Model, Cmd Msg )
 seekTo ticks model =
@@ -1874,12 +1877,24 @@ seekTo ticks model =
             Basics.max 0 ticks
     in
     ( { model | playheadTicks = clamped }
-    , if model.playState == Playing then
-        Ports.toAudio (Performance.encodeSeek clamped)
+    , Cmd.batch
+        [ if model.playState == Playing then
+            Ports.toAudio (Performance.encodeSeek clamped)
 
-      else
-        Cmd.none
+          else
+            Cmd.none
+        , revealPlayheadCmd clamped
+        ]
     )
+
+
+{-| 手動シーク時にプレイヘッドを視界に入れる。`followPlayhead`（📌 追従）は再生中の自動追従だけを
+制御する設定なので、ここでは参照しない。ピアノロールが非マウント（コード進行のブロック表示中など）
+なら `getViewportOf` が Err になり `GotPianoRollViewport` 側で無視される。
+-}
+revealPlayheadCmd : Int -> Cmd Msg
+revealPlayheadCmd ticks =
+    Task.attempt (GotPianoRollViewport ticks) (Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId)
 
 
 {-| 全セクションの開始 tick を並び順のまま。前後セクション移動の探索に使う。
@@ -1971,6 +1986,7 @@ zoomScrollCmd :
     { scrollId : String
     , offsetX : Float
     , viewportX : Float
+    , viewportY : Float
     , oldPxToTicks : Float -> Int
     , newTicksToPx : Int -> Float
     }
@@ -1983,7 +1999,7 @@ zoomScrollCmd cfg =
         newScrollLeft =
             Basics.max 0 (cfg.newTicksToPx anchorTicks - cfg.offsetX)
     in
-    Task.attempt (\_ -> NoOp) (Browser.Dom.setViewportOf cfg.scrollId newScrollLeft 0)
+    Task.attempt (\_ -> NoOp) (Browser.Dom.setViewportOf cfg.scrollId newScrollLeft cfg.viewportY)
 
 
 {-| ピアノロールのスクロールコンテナ（`PianoRoll.pianoRollScrollId`）が現在の選択状態で実際にマウントされているか。
@@ -2004,7 +2020,7 @@ restorePianoRollScrollCmd model =
     if pianoRollScrollMounted model then
         Process.sleep 0
             |> Task.mapError never
-            |> Task.andThen (\_ -> Browser.Dom.setViewportOf PianoRoll.pianoRollScrollId model.pianoRollScrollX 0)
+            |> Task.andThen (\_ -> Browser.Dom.setViewportOf PianoRoll.pianoRollScrollId model.pianoRollScrollX model.pianoRollScrollY)
             |> Task.andThen (\_ -> Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId)
             |> Task.attempt GotPianoRollViewportMeasured
 
@@ -5085,7 +5101,7 @@ updateCore msg model =
                             viewport.viewport.x + viewport.viewport.width
                     in
                     if playheadPx < visLeft || playheadPx > visRight then
-                        ( model, Task.attempt (\_ -> NoOp) (Browser.Dom.setViewportOf PianoRoll.pianoRollScrollId (Basics.max 0 (playheadPx - 40)) 0) )
+                        ( model, Task.attempt (\_ -> NoOp) (Browser.Dom.setViewportOf PianoRoll.pianoRollScrollId (Basics.max 0 (playheadPx - 40)) viewport.viewport.y) )
 
                     else
                         ( model, Cmd.none )
@@ -5108,6 +5124,7 @@ updateCore msg model =
                         { scrollId = PianoRoll.pianoRollScrollId
                         , offsetX = w.offsetX
                         , viewportX = viewport.viewport.x
+                        , viewportY = viewport.viewport.y
                         , oldPxToTicks = PianoRoll.pixelsToTicks model.pianoRollZoom
                         , newTicksToPx = PianoRoll.ticksToPixels newZoom
                         }
@@ -5135,6 +5152,7 @@ updateCore msg model =
                         { scrollId = SectionBar.sectionBarScrollId
                         , offsetX = w.offsetX
                         , viewportX = viewport.viewport.x
+                        , viewportY = viewport.viewport.y
                         , oldPxToTicks = \px -> Data.Timeline.fractionalBarToTicks (px / toFloat model.sectionBarZoom) timeline
                         , newTicksToPx = \ticks -> Data.Timeline.ticksToFractionalBar ticks timeline * toFloat newZoom
                         }
@@ -5144,12 +5162,12 @@ updateCore msg model =
                     ( { model | sectionBarZoom = SectionBar.regionZoomStep w.deltaY model.sectionBarZoom }, Cmd.none )
 
         ScrolledPianoRoll v ->
-            ( { model | pianoRollScrollX = v.scrollLeft, pianoRollViewportWidth = Just v.clientWidth }, Cmd.none )
+            ( { model | pianoRollScrollX = v.scrollLeft, pianoRollScrollY = v.scrollTop, pianoRollViewportWidth = Just v.clientWidth }, Cmd.none )
 
         GotPianoRollViewportMeasured result ->
             case result of
                 Ok viewport ->
-                    ( { model | pianoRollScrollX = viewport.viewport.x, pianoRollViewportWidth = Just viewport.viewport.width }, Cmd.none )
+                    ( { model | pianoRollScrollX = viewport.viewport.x, pianoRollScrollY = viewport.viewport.y, pianoRollViewportWidth = Just viewport.viewport.width }, Cmd.none )
 
                 Err _ ->
                     ( model, Cmd.none )
@@ -6098,7 +6116,7 @@ view model =
                 [ button
                     (Style.toggleButton model.followPlayhead
                         ++ [ onClick ToggledFollowPlayhead
-                           , Html.Attributes.title "プレイヘッドが画面外に出たら自動でスクロールする"
+                           , Html.Attributes.title "再生中、プレイヘッドが画面外に出たら自動でスクロールする（手動シーク時は常にスクロールします）"
                            ]
                     )
                     [ text "📌 追従" ]

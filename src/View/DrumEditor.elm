@@ -27,7 +27,7 @@ type alias Config msg =
     , pressedRuler : { offsetX : Float, clientX : Float, shift : Bool } -> msg
     , pressedLoopHandle : Bool -> Float -> msg
     , wheelZoomedRuler : { deltaY : Float, offsetX : Float } -> msg
-    , scrolled : { scrollLeft : Float, clientWidth : Float } -> msg
+    , scrolled : { scrollLeft : Float, scrollTop : Float, clientWidth : Float } -> msg
     }
 
 
