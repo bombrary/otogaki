@@ -401,6 +401,7 @@ type Msg
     | HoveredFretCell { pitch : Int, interval : Int, x : Float, y : Float }
     | UnhoveredFretCell
     | ChangedMemo String
+    | ChangedProjectName String
     | ChangedSectionKey Int String
     | ChangedSectionMode Int String
     | ChangedSectionMeter Int String
@@ -982,6 +983,9 @@ isCoalescing msg =
             True
 
         ChangedMemo _ ->
+            True
+
+        ChangedProjectName _ ->
             True
 
         ChangedInsertCount _ ->
@@ -4039,7 +4043,7 @@ updateCore msg model =
 
         ClickedExport ->
             ( model
-            , File.Download.string (model.project.name ++ ".json")
+            , File.Download.string (Data.Project.sanitizeFileName model.project.name ++ ".json")
                 "application/json"
                 (Encode.encode 2 (ProjectJson.encode model.project))
             )
@@ -4612,6 +4616,9 @@ updateCore msg model =
             in
             ( { model | project = { project | memo = raw } }, Cmd.none )
 
+        ChangedProjectName raw ->
+            ( { model | project = Data.Project.renameProject raw model.project }, Cmd.none )
+
         MovedSection sectionId delta ->
             ( { model | project = Data.Project.moveSection sectionId delta model.project }, Cmd.none )
 
@@ -4716,7 +4723,7 @@ updateCore msg model =
 
         ClickedExportMidi ->
             ( model
-            , File.Download.bytes (model.project.name ++ ".mid") "audio/midi" (Midi.Encode.fromProject model.project)
+            , File.Download.bytes (Data.Project.sanitizeFileName model.project.name ++ ".mid") "audio/midi" (Midi.Encode.fromProject model.project)
             )
 
         ClickedExportWav ->
@@ -4735,7 +4742,7 @@ updateCore msg model =
                         Nothing
             in
             ( { model | wavExportState = WavExportRendering }
-            , Ports.toAudio (Performance.encodeRenderWav { loop = loop, fileName = model.project.name ++ ".wav" } model.project)
+            , Ports.toAudio (Performance.encodeRenderWav { loop = loop, fileName = Data.Project.sanitizeFileName model.project.name ++ ".wav" } model.project)
             )
 
         ToggledKeyboard ->
@@ -5441,6 +5448,19 @@ view model =
                     , offsetMs = model.project.referenceAudio.offsetMs
                     }
 
+        nameInput =
+            input
+                [ type_ "text"
+                , value model.project.name
+                , onInput ChangedProjectName
+                , Html.Attributes.placeholder "プロジェクト名"
+                , style "width" "98%"
+                , style "font-family" "inherit"
+                , style "font-size" "0.95rem"
+                , style "font-weight" "bold"
+                ]
+                []
+
         memoTextarea =
             textarea
                 [ value model.project.memo
@@ -5528,7 +5548,7 @@ view model =
                 ]
 
         leftPaneChildren =
-            [ memoTextarea, trackListPanel, chordEditorPanel, scaleGuidePanel, refAudioPanel, scrapShelfPanel, helpRow ]
+            [ nameInput, memoTextarea, trackListPanel, chordEditorPanel, scaleGuidePanel, refAudioPanel, scrapShelfPanel, helpRow ]
 
         durationSelect =
             div [ style "display" "flex", style "align-items" "center", style "gap" "0.4rem" ]
@@ -5927,7 +5947,7 @@ view model =
         {- タッチレイアウト（isPageLayout）の4ページ別子リスト。既存の leftPaneChildren/rightPaneChildrenと同じ変数を
            共有しているので、デスクトップ、2ペインと描画内容は一致する。 -}
         songPageChildren =
-            [ sectionBarPanel, memoTextarea, chordTrackMainView ]
+            [ sectionBarPanel, nameInput, memoTextarea, chordTrackMainView ]
 
         editPageChildren =
             [ editContent

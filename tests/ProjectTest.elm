@@ -42,6 +42,37 @@ suite =
         , moveTrackToIndexSuite
         , reorderSectionsWithContentSuite
         , voicingIndexByNameSuite
+        , sanitizeFileNameSuite
+        ]
+
+
+sanitizeFileNameSuite : Test
+sanitizeFileNameSuite =
+    describe "Data.Project.sanitizeFileName"
+        [ test "スラッシュやバックスラッシュを除去する" <|
+            \_ ->
+                Project.sanitizeFileName "a/b\\c"
+                    |> Expect.equal "abc"
+        , test "改行やタブを除去する" <|
+            \_ ->
+                Project.sanitizeFileName "a\nb\tc"
+                    |> Expect.equal "abc"
+        , test "前後の空白を trim する" <|
+            \_ ->
+                Project.sanitizeFileName "  曲名  "
+                    |> Expect.equal "曲名"
+        , test "除去後に空になったら「無題」にフォールバックする" <|
+            \_ ->
+                Project.sanitizeFileName "///"
+                    |> Expect.equal "無題"
+        , test "空文字列は「無題」にフォールバックする" <|
+            \_ ->
+                Project.sanitizeFileName ""
+                    |> Expect.equal "無題"
+        , test "日本語や絵文字などの通常文字はそのまま残す" <|
+            \_ ->
+                Project.sanitizeFileName "ひらめの曲 \u{1F41F}"
+                    |> Expect.equal "ひらめの曲 \u{1F41F}"
         ]
 
 

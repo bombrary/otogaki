@@ -23,7 +23,9 @@ module Data.Project exposing
     , moveTrackToIndex
     , removeTrack
     , removeVoicing
+    , renameProject
     , reorderSectionsWithContent
+    , sanitizeFileName
     , sectionBounds
     , timeline
     , updateChordTrack
@@ -209,6 +211,29 @@ empty =
 updateChordTrack : (ChordTrack -> ChordTrack) -> Project -> Project
 updateChordTrack f project =
     { project | chordTrack = f project.chordTrack }
+
+
+renameProject : String -> Project -> Project
+renameProject name project =
+    { project | name = name }
+
+
+{-| 書き出しファイル名に使う前にファイルシステム上問題になりやすい文字（ / 、\ 、改行・タブ）を除去し trimする。
+空になったら「無題」にフォールバックする。
+-}
+sanitizeFileName : String -> String
+sanitizeFileName raw =
+    let
+        cleaned =
+            raw
+                |> String.filter (\c -> c /= '/' && c /= '\\' && c /= '\n' && c /= '\u{000D}' && c /= '\t')
+                |> String.trim
+    in
+    if String.isEmpty cleaned then
+        "無題"
+
+    else
+        cleaned
 
 
 addVoicing : String -> Project -> Project
