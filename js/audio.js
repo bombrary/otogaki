@@ -1,5 +1,6 @@
 import * as Tone from "tone";
 import { DrumMachine, ElectricPiano, Mallet, Mellotron, Smolken, Soundfont, SplendidGrandPiano } from "smplr";
+import * as audioCache from "./audioCache.js";
 
 // Elm 側 Codec.Performance.metronomeTrackId と一致させる。自然停止の終端計算からメトロノームの
 // クリックを除外するために使う（timeline 末尾の余白小節に食い込むのを防ぐ）。
@@ -40,6 +41,37 @@ export async function loadRefAudio(file) {
       duration: refBuffer.duration,
     },
   });
+  audioCache.saveRefAudio(file, file.name).catch((err) =>
+    console.error("[audio] 参考オーディオのキャッシュ保存に失敗:", err)
+  );
+}
+
+// 起動直後の自動復元用。ensureAudioを通さず（user gesture 外で失敗しうるため）、
+// decodeAudioData は AudioContext が suspended でも動くので直接 Tone.getContext().rawContext を使う。
+export async function restoreRefAudioFromCache(blob, name) {
+  const ctx = Tone.getContext().rawContext;
+  const arrayBuffer = await blob.arrayBuffer();
+  refBuffer = await ctx.decodeAudioData(arrayBuffer);
+  const peakDt = Math.max(0.02, refBuffer.duration / 6000);
+  send({
+    tag: "refAudioReady",
+    payload: {
+      name: name,
+      peaks: computePeaks(refBuffer, peakDt),
+      peakDt: peakDt,
+      duration: refBuffer.duration,
+    },
+  });
+}
+
+// 「読み込み解除」ボタン用。メモリ上のバッファと同期中の refPlayer を破棄する。IndexedDB 側の削除は呼び出し側（main.js）の責任。
+export function clearRefBuffer() {
+  refBuffer = null;
+  if (refPlayer) {
+    refPlayer.unsync();
+    refPlayer.dispose();
+    refPlayer = null;
+  }
 }
 
 // 波形表示用に dt 秒ごとのピーク振幅（0..1）を計算する

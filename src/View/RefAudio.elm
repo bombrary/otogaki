@@ -13,6 +13,7 @@ type alias Config msg =
     , blurredOffset : msg
     , changedVolume : String -> msg
     , toggledMute : msg
+    , clearedRefAudio : msg
     }
 
 
@@ -27,7 +28,7 @@ view config offsetInput loaded ra =
         ]
         [ Html.summary (HA.style "cursor" "pointer" :: Style.headingText) [ text "🎧 参考オーディオ" ]
         , span [ HA.style "font-size" "0.75rem", HA.style "color" Theme.onSurfaceVariant, HA.style "display" "block", HA.style "margin-top" "0.3rem" ]
-            [ text "耳コピ・分析用。音声データは保存されないので、リロード後はファイルを選び直してね" ]
+            [ text "耳コピ・分析用。音声データはブラウザ内（IndexedDB）に保存されるので、リロード後も自動で読み込まれるよ" ]
         , div [ HA.style "display" "flex", HA.style "gap" "0.7rem", HA.style "align-items" "center", HA.style "flex-wrap" "wrap", HA.style "margin-top" "0.4rem" ]
             [ input
                 [ HA.type_ "file"
@@ -36,6 +37,7 @@ view config offsetInput loaded ra =
                 ]
                 []
             , statusView loaded ra
+            , clearButton config ra
             , label [ HA.style "font-size" "0.85rem" ]
                 [ text "オフセット(ms): "
                 , input
@@ -87,3 +89,21 @@ statusView loaded ra =
 
         ( False, Nothing ) ->
             text ""
+
+
+{-| 読み込み済み・前回のファイル名が残っている間は「解除」ボタンを出す。曲データは消えないので、
+断片棚・トラック削除のような二段階確認は不要。
+-}
+clearButton : Config msg -> ReferenceAudio -> Html msg
+clearButton config ra =
+    if ra.fileName == Nothing then
+        text ""
+
+    else
+        button
+            (Style.baseButton
+                ++ [ HE.onClick config.clearedRefAudio
+                   , HA.title "参考オーディオの読み込みを解除"
+                   ]
+            )
+            [ text "解除" ]

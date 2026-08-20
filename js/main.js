@@ -1,5 +1,6 @@
 import { Elm } from "../src/Main.elm";
-import { debugRawContext, ensureAudio, handleCommand, loadRefAudio, setElmSender } from "./audio.js";
+import { clearRefBuffer, debugRawContext, ensureAudio, handleCommand, loadRefAudio, restoreRefAudioFromCache, setElmSender } from "./audio.js";
+import * as audioCache from "./audioCache.js";
 import { loadProject, saveProject } from "./storage.js";
 import { loadTheme, saveTheme } from "./theme.js";
 
@@ -18,6 +19,14 @@ const app = Elm.Main.init({
 });
 
 setElmSender((msg) => app.ports.fromAudio.send(msg));
+
+// 参考オーディオの自動復元。IndexedDB に前回のファイルが残っていれば、リロード後も選び直さずに波形が出る。
+audioCache
+  .loadRefAudio()
+  .then((cached) => {
+    if (cached) return restoreRefAudioFromCache(cached.blob, cached.name);
+  })
+  .catch((err) => console.error("[audio] 参考オーディオの自動復元に失敗:", err));
 
 app.ports.toAudio.subscribe(async (msg) => {
   const ready = await ensureAudio();
@@ -40,6 +49,16 @@ if (import.meta.env.DEV) {
 }
 
 app.ports.saveToLocalStorage.subscribe(saveProject);
+
+app.ports.clearRefAudio.subscribe(() => {
+  clearRefBuffer();
+  audioCache.clearRefAudio().catch((err) =>
+    console.error("[audio] 参考オーディオキャッシュの削除に失敗:", err)
+  );
+  // 同じファイルを選び直せるように input の値を空にする（値が残ったままだと change イベントが発火しない）。
+  const el = document.getElementById("ref-audio-input");
+  if (el) el.value = "";
+});
 
 app.ports.setTheme.subscribe((theme) => {
   document.documentElement.setAttribute("data-theme", theme);

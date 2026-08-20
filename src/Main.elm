@@ -22,6 +22,7 @@ import Data.Key
 import Data.Meter
 import Data.Note
 import Data.Project exposing (Project)
+import Data.ReferenceAudio
 import Data.Time
 import Data.Timeline exposing (Timeline)
 import Data.Track exposing (TrackKind(..))
@@ -395,6 +396,7 @@ type Msg
     | BlurredRefOffset
     | ChangedRefVolume String
     | ToggledRefMute
+    | ClickedClearRefAudio
     | ToggledDrumView
     | ToggledChordBlockView
     | HoveredNote Data.Note.Note Float Float
@@ -4879,6 +4881,20 @@ updateCore msg model =
             , Cmd.none
             )
 
+        ClickedClearRefAudio ->
+            let
+                project =
+                    model.project
+            in
+            ( { model
+                | project = { project | referenceAudio = Data.ReferenceAudio.empty }
+                , refLoaded = False
+                , refPeaks = Array.empty
+                , refPeakDt = 0.02
+              }
+            , Ports.clearRefAudio ()
+            )
+
         ToggledDrumView ->
             let
                 newModel =
@@ -5536,6 +5552,7 @@ view model =
                 , blurredOffset = BlurredRefOffset
                 , changedVolume = ChangedRefVolume
                 , toggledMute = ToggledRefMute
+                , clearedRefAudio = ClickedClearRefAudio
                 }
                 model.refOffsetInput
                 model.refLoaded

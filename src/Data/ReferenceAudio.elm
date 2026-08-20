@@ -2,8 +2,9 @@ module Data.ReferenceAudio exposing (ReferenceAudio, empty)
 
 
 {-| 耳コピ・分析用の参考オーディオ。
-音声データ自体は保存しない（localStorage の容量制限のため）が、長さ（durationMs）は保存する。
-リロード直後（波形未読込でも）グリッドの長さを保ちたいため（「24小節の壁」の再発防止）。
+音声データ自体は localStorage ではなくブラウザの IndexedDB（js/audioCache.js）に保存されるので、
+リロード後も自動復元される。この型自体（JSONに乗る方）にはファイル名と長さ（durationMs）だけを保持する。
+リロード直後（波形自動復元前でも）グリッドの長さを保ちたいため（「24小節の壁」の再発防止）。
 offsetMs は「オーディオのどこを小節1・拍1に合わせるか」。
 正なら頭を削る、負ならオーディオ全体を後ろにずらす。
 -}
