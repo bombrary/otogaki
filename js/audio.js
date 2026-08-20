@@ -20,6 +20,9 @@ let refMeta = { offsetMs: 0, volume: 80, muted: false };
 let stopEventId = null;
 // play()/stopPlayback() のたびに進む世代カウンタ。ストール検知タイマーが古い再生を誤検知しないためのガード。
 let playGeneration = 0;
+// 断片棚プレビュー用の予約。Transportを使わず setTimeout でスケジュールするので、新規プレビュー時に自前でキャンセルする。
+let previewTimeouts = [];
+let previewInstrument = null;
 
 export async function loadRefAudio(file) {
   await ensureAudio();
@@ -532,6 +535,9 @@ export function handleCommand(msg) {
     case "previewNote":
       previewNote(msg.payload);
       break;
+    case "previewScrap":
+      previewScrap(msg.payload);
+      break;
     default:
       console.warn("[audio] unknown command:", msg);
   }
@@ -653,6 +659,8 @@ function updateEvents(p) {
 
 function stopPlayback() {
   playGeneration++;
+  previewTimeouts.forEach(clearTimeout);
+  previewTimeouts = [];
   const t = Tone.getTransport();
   t.stop();
   t.cancel();
@@ -686,4 +694,41 @@ function previewNote(payload) {
     return;
   }
   synth.triggerAttackRelease(Tone.Frequency(payload.pitch, "midi"), "8n");
+}
+
+// 断片棚のメロディを、通常再生の Transport に依存せず即時プレビューする。
+// 既に予約済みのプレビューがあれば先に自前で止めてから、rawContext.currentTime 基準で各ノートをスケジュールする。
+function stopPreview() {
+  previewTimeouts.forEach(clearTimeout);
+  previewTimeouts = [];
+  if (previewInstrument && previewInstrument !== "synthLead") {
+    const player = players[previewInstrument];
+    if (player && player.stop) player.stop();
+  } else {
+    synth.releaseAll();
+  }
+}
+
+function previewScrap(payload) {
+  stopPreview();
+  previewInstrument = payload.instrument;
+  const player = players[payload.instrument];
+  payload.notes.forEach((n) => {
+    const delayMs = ticksToSeconds(n.startTicks, payload.bpm, payload.ppq) * 1000;
+    const id = setTimeout(() => {
+      const now = Tone.getContext().rawContext.currentTime;
+      const durSec = ticksToSeconds(n.durationTicks, payload.bpm, payload.ppq);
+      if (payload.instrument === "drumKit" && player) {
+        const sample = resolveDrumSample(n.pitch);
+        if (sample) player.start({ note: sample, time: now, velocity: n.velocity });
+        return;
+      }
+      if (player) {
+        player.start({ note: n.pitch, time: now, duration: durSec, velocity: n.velocity });
+        return;
+      }
+      synth.triggerAttackRelease(Tone.Frequency(n.pitch, "midi"), durSec, now, n.velocity / 127);
+    }, delayMs);
+    previewTimeouts.push(id);
+  });
 }

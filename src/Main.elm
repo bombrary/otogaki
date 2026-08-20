@@ -388,6 +388,7 @@ type Msg
     | ClickedAddScrap
     | ClickedPlaceScrap Int
     | ClickedRemoveScrap Int
+    | ClickedPreviewScrap Int
     | ChangedScrapName Int String
     | ChangedTrackName Int String
     | ChangedRefOffset String
@@ -4809,6 +4810,16 @@ updateCore msg model =
                 , confirm = ( { model | project = Data.Project.removeScrap scrapId model.project, pendingScrapDelete = Nothing }, Cmd.none )
                 }
 
+        ClickedPreviewScrap scrapId ->
+            case model.project.scraps |> List.filter (\s -> s.id == scrapId) |> List.head of
+                Nothing ->
+                    ( model, Cmd.none )
+
+                Just scrap ->
+                    ( model
+                    , Ports.toAudio (Performance.encodePreviewScrap (selectedInstrumentName model) model.project.bpm scrap.notes)
+                    )
+
         ChangedScrapName scrapId newName ->
             ( { model | project = Data.Project.updateScrap scrapId (\s -> { s | name = newName }) model.project, pendingScrapDelete = Nothing }, Cmd.none )
 
@@ -5536,6 +5547,7 @@ view model =
                 , place = ClickedPlaceScrap
                 , remove = ClickedRemoveScrap
                 , rename = ChangedScrapName
+                , preview = ClickedPreviewScrap
                 }
                 (Set.size model.selectedNoteIds)
                 model.project.scraps

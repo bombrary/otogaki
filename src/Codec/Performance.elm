@@ -4,6 +4,7 @@ module Codec.Performance exposing
     , encodeLoadInstruments
     , encodePlay
     , encodePreviewNote
+    , encodePreviewScrap
     , encodeRenderWav
     , encodeSeek
     , encodeSetBpm
@@ -21,6 +22,7 @@ module Codec.Performance exposing
 import Array
 import Data.ChordTrack exposing (ChordTrack)
 import Data.Meter
+import Data.Note exposing (Note)
 import Data.Project exposing (Project)
 import Data.ReferenceAudio exposing (ReferenceAudio)
 import Data.StrumExpand
@@ -185,6 +187,31 @@ encodePreviewNote instrument pitch =
             , ( "pitch", Encode.int pitch )
             ]
         )
+
+
+{-| 断片棚のメロディを、通常再生の Transport に依存せず即時プレビューする。notes は scrap の保存形式と同じ、
+先頭が 0 tick に正規化された相対位置を想定する。
+-}
+encodePreviewScrap : String -> Float -> List Note -> Encode.Value
+encodePreviewScrap instrument bpm notes =
+    command "previewScrap"
+        (Encode.object
+            [ ( "instrument", Encode.string instrument )
+            , ( "bpm", Encode.float bpm )
+            , ( "ppq", Encode.int Data.Time.ppq )
+            , ( "notes", Encode.list encodeScrapNote notes )
+            ]
+        )
+
+
+encodeScrapNote : Note -> Encode.Value
+encodeScrapNote n =
+    Encode.object
+        [ ( "pitch", Encode.int n.pitch )
+        , ( "startTicks", Encode.int n.start )
+        , ( "durationTicks", Encode.int n.duration )
+        , ( "velocity", Encode.int n.velocity )
+        ]
 
 
 usedInstrumentNames : Project -> List String

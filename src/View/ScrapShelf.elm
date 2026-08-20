@@ -17,6 +17,7 @@ type alias Config msg =
     , place : Int -> msg
     , remove : Int -> msg
     , rename : Int -> String -> msg
+    , preview : Int -> msg
     }
 
 
@@ -65,7 +66,8 @@ scrapCard config pendingDeleteId scrap =
             []
         , preview scrap.notes
         , div [ HA.style "display" "flex", HA.style "gap" "0.5rem", HA.style "margin-top" "0.2rem", HA.style "align-items" "center" ]
-            [ button (Style.baseButton ++ [ HE.onClick (config.place scrap.id), HA.title "選択中のトラックの再生位置に配置" ]) [ text "配置" ]
+            [ button (Style.baseButton ++ [ HE.onClick (config.preview scrap.id), HA.title "断片を試し聞き" ]) [ text "▶" ]
+            , button (Style.baseButton ++ [ HE.onClick (config.place scrap.id), HA.title "選択中のトラックの再生位置に配置" ]) [ text "配置" ]
             , Style.divider
             , if pendingDeleteId == Just scrap.id then
                 button (Style.armedDangerButton ++ [ HE.onClick (config.remove scrap.id), HA.title "断片を削除", HA.attribute "aria-label" "断片を本当に削除" ]) [ text "本当に？" ]
