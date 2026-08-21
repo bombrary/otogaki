@@ -14,6 +14,7 @@ module View.PianoRoll exposing
     , keyColumnWidth
     , maxPitch
     , maxPxPerSixteenth
+    , medianPitch
     , minPitch
     , minPxPerSixteenth
     , noteMoveDecoder
@@ -292,6 +293,27 @@ headerHeight dims =
 frameContentHeight : Dims -> Int
 frameContentHeight dims =
     headerHeight dims + gridHeight dims.isNarrow + (if dims.hasVelocityLane then velocityLaneHeight else 0)
+
+
+{-| ノート列の中央値の音高。空なら C4(60)。ピアノロールの初期センタリング対象を決めるのに使う
+（src/Main.elm の initialCenterPitch）。偶数個のときは上寄りの中央（ソート後 n//2 番目）を採る。
+-}
+medianPitch : List Int -> Int
+medianPitch pitches =
+    let
+        sorted =
+            List.sort pitches
+
+        n =
+            List.length sorted
+    in
+    (if n == 0 then
+        60
+
+     else
+        List.drop (n // 2) sorted |> List.head |> Maybe.withDefault 60
+    )
+        |> clamp minPitch maxPitch
 
 
 {-| 指定の音高の行が、ヘッダ帯と Vel レーンを除いた「見えているグリッド領域」の中央に来る scrollTop。

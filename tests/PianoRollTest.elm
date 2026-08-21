@@ -106,4 +106,28 @@ suite =
                 PianoRoll.ticksToPixels zoom ticks
                     |> PianoRoll.pixelsToTicks zoom
                     |> Expect.equal ticks
+        , test "medianPitch は空リストで C4(60) を返す" <|
+            \_ ->
+                PianoRoll.medianPitch []
+                    |> Expect.equal 60
+        , test "medianPitch は奇数個で中央値を返す（未ソート入力でも）" <|
+            \_ ->
+                PianoRoll.medianPitch [ 48, 72, 60 ]
+                    |> Expect.equal 60
+        , test "medianPitch は偶数個で n // 2 番目（上側の中央値）を返す" <|
+            \_ ->
+                PianoRoll.medianPitch [ 60, 61, 62, 63 ]
+                    |> Expect.equal 62
+        , test "medianPitch は minPitch より低い値を minPitch にクランプする" <|
+            \_ ->
+                PianoRoll.medianPitch [ -100 ]
+                    |> Expect.equal PianoRoll.minPitch
+        , test "medianPitch は maxPitch より高い値を maxPitch にクランプする" <|
+            \_ ->
+                PianoRoll.medianPitch [ 300 ]
+                    |> Expect.equal PianoRoll.maxPitch
+        , test "medianPitch は重複を含むリストでも壊れない" <|
+            \_ ->
+                PianoRoll.medianPitch [ 60, 60, 60 ]
+                    |> Expect.equal 60
         ]

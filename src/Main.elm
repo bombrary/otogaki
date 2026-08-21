@@ -208,6 +208,8 @@ type alias Model =
     , gridUnit : Data.Time.GridUnit
     , pianoRollScrollX : Float
     , pianoRollScrollY : Float
+    , chordTrackScrollX : Float
+    , chordTrackScrollY : Float
     , pianoRollViewportWidth : Maybe Float
     , pianoRollCentered : Bool
     , sectionResizeDrag : Maybe { sectionId : Int, startClientX : Float, origLengthBars : Int, curLengthBars : Int }
@@ -545,6 +547,8 @@ init flags =
       , gridUnit = Data.Time.Sixteenth
       , pianoRollScrollX = 0
       , pianoRollScrollY = 0
+      , chordTrackScrollX = 0
+      , chordTrackScrollY = 0
       , pianoRollViewportWidth = Nothing
       , pianoRollCentered = False
       , sectionResizeDrag = Nothing
@@ -1271,7 +1275,7 @@ legacyDraggedToRest pos model =
                         Basics.max 0 (PianoRoll.ticksToPixels model.pianoRollZoom newStartTicks)
                 in
                 ( { model | viewRangeDrag = Just { d | moved = True } }
-                , Task.attempt (\_ -> NoOp) (Browser.Dom.setViewportOf PianoRoll.pianoRollScrollId newScrollX model.pianoRollScrollY)
+                , Task.attempt (\_ -> NoOp) (Browser.Dom.setViewportOf PianoRoll.pianoRollScrollId newScrollX (currentPianoRollScrollY model))
                 )
 
         Nothing ->
@@ -2012,6 +2016,42 @@ pianoRollScrollMounted model =
     not (model.selectedTrackId == Data.ChordTrack.trackId && model.chordBlockView)
 
 
+{-| 現在ピアノロール枠に映しているトラックのスクロール位置。コード進行トラックは `Data.StrumExpand.previewNotes`
+由来の別音域・別の見え方になるので、通常トラック（互いに位置を共有する）とは独立したフィールド
+`chordTrackScrollX` / `chordTrackScrollY` を使う。DOM 上は同じ `PianoRoll.pianoRollScrollId` を使い回しているため、
+model 側で持ち分けないとトラック1の横位置がそのままコード進行トラックに引き継がれてしまう。
+-}
+currentPianoRollScrollX : Model -> Float
+currentPianoRollScrollX model =
+    if model.selectedTrackId == Data.ChordTrack.trackId then
+        model.chordTrackScrollX
+
+    else
+        model.pianoRollScrollX
+
+
+currentPianoRollScrollY : Model -> Float
+currentPianoRollScrollY model =
+    if model.selectedTrackId == Data.ChordTrack.trackId then
+        model.chordTrackScrollY
+
+    else
+        model.pianoRollScrollY
+
+
+{-| DOM から観測したスクロール位置を、現在の選択トラックに対応するフィールドへ書き戻す。
+scroll イベント・`getViewportOf` の結果は「今マウントされている枠」＝現在の選択トラックのものなので、
+`model.selectedTrackId` をそのまま信頼してよい。
+-}
+setCurrentPianoRollScroll : Float -> Float -> Model -> Model
+setCurrentPianoRollScroll x y model =
+    if model.selectedTrackId == Data.ChordTrack.trackId then
+        { model | chordTrackScrollX = x, chordTrackScrollY = y }
+
+    else
+        { model | pianoRollScrollX = x, pianoRollScrollY = y }
+
+
 {-| スクロールコンテナの内側に固定表示される左カラム（鍵盤列/ラベル列）の幅。scrollLeft の原点は変わらないが、
 「可視な譜面幅」は clientWidth からこの分を引いた値になる（src/View/PianoRoll.elmの keyColumnWidth）。
 非マウント時（コード進行ブロック表示中）は鍵盤列自体が描かれないので 0。
@@ -2025,8 +2065,8 @@ pianoRollLeftInset model =
         0
 
 
-{-| トラック切替等で `PianoRoll.pianoRollScrollId` の DOM が作り直された場合に備え、`model.pianoRollScrollX`
-の位置を明示的に復元し、その後再計測する。同種トラック同士の切替でDOMが再利用されるケースでも
+{-| トラック切替等で `PianoRoll.pianoRollScrollId` の DOM が作り直された場合に備え、選択中トラックに対応する
+`currentPianoRollScrollX`/`currentPianoRollScrollY` の位置を明示的に復元し、その後再計測する。同種トラック同士の切替でDOMが再利用されるケースでも
 同値を再設定するだけで無害。`Process.sleep 0` で一拍待つのは、update 直後のCmd実行がDOM再描画より先行して旧ノード相手に
 `setViewportOf` してしまうのを避けるため。マウントされていないときはCmd.none。
 -}
@@ -2035,7 +2075,7 @@ restorePianoRollScrollCmd model =
     if pianoRollScrollMounted model then
         Process.sleep 0
             |> Task.mapError never
-            |> Task.andThen (\_ -> Browser.Dom.setViewportOf PianoRoll.pianoRollScrollId model.pianoRollScrollX model.pianoRollScrollY)
+            |> Task.andThen (\_ -> Browser.Dom.setViewportOf PianoRoll.pianoRollScrollId (currentPianoRollScrollX model) (currentPianoRollScrollY model))
             |> Task.andThen (\_ -> Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId)
             |> Task.attempt GotPianoRollViewportMeasured
 
@@ -2057,23 +2097,18 @@ pianoRollDims model =
 
 
 {-| 起動時の初期センタリングで中央にしたい音高。選択中トラックにノートがあればその中央値、無ければ C4(60)。
+コード進行トラック選択中は `trackNotes`（常に空）ではなく、実際に鳴る展開済みプレビューノートを見る。
 -}
 initialCenterPitch : Model -> Int
 initialCenterPitch model =
-    let
-        sorted =
-            trackNotes model |> List.map .pitch |> List.sort
-
-        n =
-            List.length sorted
-    in
-    (if n == 0 then
-        60
+    (if model.selectedTrackId == Data.ChordTrack.trackId then
+        Data.StrumExpand.previewNotes model.project.guitarFormEnabled (effectiveVoicings model) (Data.Project.timeline model.project) model.project.chordTrack
 
      else
-        List.drop (n // 2) sorted |> List.head |> Maybe.withDefault 60
+        trackNotes model
     )
-        |> clamp PianoRoll.minPitch PianoRoll.maxPitch
+        |> List.map .pitch
+        |> PianoRoll.medianPitch
 
 
 {-| ピアノロールを `initialCenterPitch` が枠の中央に来るよう縦スクロールする。起動直後の ResizedWindow（セッションに1回だけ）と、
@@ -2092,7 +2127,7 @@ centerPianoRollCmd model pitch =
             |> Task.andThen
                 (\vp ->
                     Browser.Dom.setViewportOf PianoRoll.pianoRollScrollId
-                        model.pianoRollScrollX
+                        (currentPianoRollScrollX model)
                         (PianoRoll.centerScrollTop (pianoRollDims model) vp.viewport.height pitch)
                 )
             |> Task.andThen (\_ -> Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId)
@@ -2145,6 +2180,9 @@ resetToProject project maybeSelectedTrackId model =
                 , pendingChordDrag = Nothing
                 , chordRubberBand = Nothing
                 , pianoRollScrollX = 0
+                , pianoRollScrollY = 0
+                , chordTrackScrollX = 0
+                , chordTrackScrollY = 0
                 , pianoRollCentered = True
             }
     in
@@ -3521,7 +3559,7 @@ updateCore msg model =
                 insideViewRange =
                     if pianoRollScrollMounted model then
                         model.pianoRollViewportWidth
-                            |> Maybe.map (\w -> PianoRoll.visibleTickRange model.pianoRollZoom { scrollX = model.pianoRollScrollX, width = w - pianoRollLeftInset model })
+                            |> Maybe.map (\w -> PianoRoll.visibleTickRange model.pianoRollZoom { scrollX = currentPianoRollScrollX model, width = w - pianoRollLeftInset model })
                             |> Maybe.map (\r -> pressTicks >= r.startTicks && pressTicks <= r.endTicks)
                             |> Maybe.withDefault False
 
@@ -3532,7 +3570,7 @@ updateCore msg model =
                 ( { model | sectionLoopDrag = Just { fixedTicks = pressTicks, baseTicks = pressTicks, startClientX = pos.clientX, curTicks = pressTicks } }, Cmd.none )
 
             else if insideViewRange then
-                ( { model | viewRangeDrag = Just { startClientX = pos.clientX, pressOffsetX = pos.offsetX, origScrollX = model.pianoRollScrollX, moved = False } }, Cmd.none )
+                ( { model | viewRangeDrag = Just { startClientX = pos.clientX, pressOffsetX = pos.offsetX, origScrollX = currentPianoRollScrollX model, moved = False } }, Cmd.none )
 
             else
                 seekTo pressTicks model
@@ -3550,7 +3588,17 @@ updateCore msg model =
 
         ToggledChordProgressionModal ->
             if model.chordProgressionModalOpen then
-                ( { model | chordProgressionModalOpen = False, chordSheetDraft = Nothing }, Cmd.none )
+                let
+                    closed =
+                        { model | chordProgressionModalOpen = False, chordSheetDraft = Nothing }
+                in
+                ( closed
+                , if closed.selectedTrackId == Data.ChordTrack.trackId then
+                    centerPianoRollCmd closed (initialCenterPitch closed)
+
+                  else
+                    Cmd.none
+                )
 
             else
                 ( { model
@@ -4045,7 +4093,14 @@ updateCore msg model =
                 newModel =
                     { model | selectedTrackId = trackId, selectedNoteIds = Set.empty, selectedChordKeys = Set.empty, pendingTrackDelete = Nothing, page = newPage }
             in
-            ( newModel, restorePianoRollScrollCmd newModel )
+            {- コード進行トラックへの切替は常に再センタリングする（previewNotes は他トラックと違って
+               `trackNotes` に乗らないので、位置を維持するだけでは直前トラックの位置が残ってしまう）。
+               それ以外のトラック間の切替は従来どおり位置を維持する。 -}
+            if trackId == Data.ChordTrack.trackId then
+                ( newModel, centerPianoRollCmd newModel (initialCenterPitch newModel) )
+
+            else
+                ( newModel, restorePianoRollScrollCmd newModel )
 
         ClickedAddTrack ->
             let
@@ -4998,7 +5053,11 @@ updateCore msg model =
                 newModel =
                     { model | chordBlockView = not model.chordBlockView }
             in
-            ( newModel, restorePianoRollScrollCmd newModel )
+            if newModel.selectedTrackId == Data.ChordTrack.trackId && not newModel.chordBlockView then
+                ( newModel, centerPianoRollCmd newModel (initialCenterPitch newModel) )
+
+            else
+                ( newModel, restorePianoRollScrollCmd newModel )
 
         HoveredNote note x y ->
             ( { model | hoveredNote = Just { note = note, x = x, y = y } }, Cmd.none )
@@ -5237,12 +5296,12 @@ updateCore msg model =
                     ( { model | sectionBarZoom = SectionBar.regionZoomStep w.deltaY model.sectionBarZoom }, Cmd.none )
 
         ScrolledPianoRoll v ->
-            ( { model | pianoRollScrollX = v.scrollLeft, pianoRollScrollY = v.scrollTop, pianoRollViewportWidth = Just v.clientWidth }, Cmd.none )
+            ( { model | pianoRollViewportWidth = Just v.clientWidth } |> setCurrentPianoRollScroll v.scrollLeft v.scrollTop, Cmd.none )
 
         GotPianoRollViewportMeasured result ->
             case result of
                 Ok viewport ->
-                    ( { model | pianoRollScrollX = viewport.viewport.x, pianoRollScrollY = viewport.viewport.y, pianoRollViewportWidth = Just viewport.viewport.width }, Cmd.none )
+                    ( { model | pianoRollViewportWidth = Just viewport.viewport.width } |> setCurrentPianoRollScroll viewport.viewport.x viewport.viewport.y, Cmd.none )
 
                 Err _ ->
                     ( model, Cmd.none )
@@ -6054,7 +6113,7 @@ view model =
                 , viewRange =
                     if pianoRollScrollMounted model then
                         model.pianoRollViewportWidth
-                            |> Maybe.map (\w -> PianoRoll.visibleTickRange model.pianoRollZoom { scrollX = model.pianoRollScrollX, width = w - pianoRollLeftInset model })
+                            |> Maybe.map (\w -> PianoRoll.visibleTickRange model.pianoRollZoom { scrollX = currentPianoRollScrollX model, width = w - pianoRollLeftInset model })
 
                     else
                         Nothing
