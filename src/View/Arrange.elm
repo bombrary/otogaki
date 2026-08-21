@@ -1,6 +1,7 @@
 module View.Arrange exposing (Config, trackDragTargetIndex, view)
 
 import Data.ChordTrack exposing (ChordTrack)
+import Data.Help as Help
 import Data.Note exposing (Note)
 import Data.Time
 import Data.Track exposing (Track, TrackKind(..))
@@ -27,6 +28,7 @@ type alias Config msg =
     , toggledGhost : Int -> msg
     , pressedTrackHandle : Int -> Float -> msg
     , chordRow : ChordRowConfig msg
+    , openedHelp : Help.TopicId -> msg
     }
 
 
@@ -46,7 +48,7 @@ view : Config msg -> Int -> Int -> Dict String String -> Set Int -> Maybe Int ->
 view config totalBars selectedTrackId loadStates ghostTrackIds pendingDeleteId movingTrackId chordTrack tracks =
     Html.details
         [ HA.attribute "open" "", HA.style "margin-top" "1rem" ]
-        (Html.summary (HA.style "cursor" "pointer" :: Style.headingText) [ text "トラック" ]
+        (Html.summary (HA.style "cursor" "pointer" :: Style.headingText) [ text "トラック", Style.helpButton { onClick = config.openedHelp Help.TrackOps, label = "トラック一覧" } ]
             :: chordTrackRow config selectedTrackId loadStates ghostTrackIds chordTrack
             :: List.map (trackRow config totalBars selectedTrackId loadStates ghostTrackIds pendingDeleteId movingTrackId) tracks
             ++ [ button (Style.baseButton ++ [ HE.onClick config.addTrack, HA.style "margin-top" "0.5rem" ]) [ text "+ トラック" ] ]

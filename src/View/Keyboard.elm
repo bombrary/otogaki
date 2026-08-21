@@ -1,5 +1,6 @@
 module View.Keyboard exposing (Config, view)
 
+import Data.Help as Help
 import Html exposing (Html, button, div, span, text)
 import Html.Attributes as HA
 import Html.Events as HE
@@ -12,6 +13,7 @@ import View.Theme as Theme
 type alias Config msg =
     { pressedKey : Int -> msg
     , toggled : msg
+    , openedHelp : Help.TopicId -> msg
     }
 
 
@@ -47,6 +49,7 @@ view config highlighted open =
                     "🎹 鍵盤を開く"
                 )
             ]
+            :: Style.helpButton { onClick = config.openedHelp Help.KeyboardPlay, label = "鍵盤" }
             :: (if open then
                     [ pianoView config highlighted
                     , div [ HA.style "font-size" "0.75rem", HA.style "color" Theme.onSurfaceVariant, HA.style "margin-top" "0.3rem" ]

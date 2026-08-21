@@ -6075,6 +6075,7 @@ view model =
                     , changeVolume = ChangedChordVolume
                     , toggledGhost = ToggledGhostTrack Data.ChordTrack.trackId
                     }
+                , openedHelp = OpenedHelpTopic
                 }
                 (totalBarsFor model.project)
                 model.selectedTrackId
@@ -6109,6 +6110,7 @@ view model =
                 , changedVolume = ChangedRefVolume
                 , toggledMute = ToggledRefMute
                 , clearedRefAudio = ClickedClearRefAudio
+                , openedHelp = OpenedHelpTopic
                 }
                 model.refOffsetInput
                 model.refLoaded
@@ -6121,6 +6123,7 @@ view model =
                 , remove = ClickedRemoveScrap
                 , rename = ChangedScrapName
                 , preview = ClickedPreviewScrap
+                , openedHelp = OpenedHelpTopic
                 }
                 (Set.size model.selectedNoteIds)
                 model.project.scraps
@@ -6474,6 +6477,7 @@ view model =
             Keyboard.view
                 { pressedKey = PressedPianoKey
                 , toggled = ToggledKeyboard
+                , openedHelp = OpenedHelpTopic
                 }
                 (Set.union model.highlightedPitches model.heldKeyPitches)
                 model.showKeyboard
@@ -6514,6 +6518,7 @@ view model =
                 , clickedChord = ClickedChordAt
                 , doubleClickedChord = DoubleClickedChordStripAt
                 , toggledEditPanel = ToggledSectionEditPanel
+                , openedHelp = OpenedHelpTopic
                 }
                 { pxPerBar = model.sectionBarZoom
                 , loopEditable = model.loopMode == LoopRange

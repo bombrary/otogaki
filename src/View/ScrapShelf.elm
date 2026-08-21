@@ -1,5 +1,6 @@
 module View.ScrapShelf exposing (Config, view)
 
+import Data.Help as Help
 import Data.Note exposing (Note)
 import Data.Scrap exposing (Scrap)
 import Data.Time
@@ -18,6 +19,7 @@ type alias Config msg =
     , remove : Int -> msg
     , rename : Int -> String -> msg
     , preview : Int -> msg
+    , openedHelp : Help.TopicId -> msg
     }
 
 
@@ -30,7 +32,7 @@ view config selectionCount scraps pendingDeleteId =
         , HA.style "border" ("1px dashed " ++ Theme.outline)
         , HA.style "border-radius" "4px"
         ]
-        [ Html.summary (HA.style "cursor" "pointer" :: Style.headingText) [ text "📋 断片棚" ]
+        [ Html.summary (HA.style "cursor" "pointer" :: Style.headingText) [ text "📋 断片棚", Style.helpButton { onClick = config.openedHelp Help.ScrapOps, label = "断片棚" } ]
         , span [ HA.style "font-size" "0.75rem", HA.style "color" Theme.onSurfaceVariant, HA.style "display" "block", HA.style "margin-top" "0.3rem" ]
             [ text "思いついたフレーズを曲に置く前にここへ貯めておける。「配置」で選択中のトラックの再生位置に置く" ]
         , div [ HA.style "display" "flex", HA.style "gap" "0.5rem", HA.style "flex-wrap" "wrap", HA.style "margin-top" "0.4rem" ]

@@ -1,5 +1,6 @@
 module View.RefAudio exposing (Config, view)
 
+import Data.Help as Help
 import Data.ReferenceAudio exposing (ReferenceAudio)
 import Html exposing (Html, button, div, input, label, span, text)
 import Html.Attributes as HA
@@ -14,6 +15,7 @@ type alias Config msg =
     , changedVolume : String -> msg
     , toggledMute : msg
     , clearedRefAudio : msg
+    , openedHelp : Help.TopicId -> msg
     }
 
 
@@ -26,7 +28,7 @@ view config offsetInput loaded ra =
         , HA.style "border" ("1px solid " ++ Theme.outlineVariant)
         , HA.style "border-radius" "4px"
         ]
-        [ Html.summary (HA.style "cursor" "pointer" :: Style.headingText) [ text "🎧 参考オーディオ" ]
+        [ Html.summary (HA.style "cursor" "pointer" :: Style.headingText) [ text "🎧 参考オーディオ", Style.helpButton { onClick = config.openedHelp Help.RefAudioOps, label = "参考オーディオ" } ]
         , span [ HA.style "font-size" "0.75rem", HA.style "color" Theme.onSurfaceVariant, HA.style "display" "block", HA.style "margin-top" "0.3rem" ]
             [ text "耳コピ・分析用。音声データはブラウザ内（IndexedDB）に保存されるので、リロード後も自動で読み込まれるよ" ]
         , div [ HA.style "display" "flex", HA.style "gap" "0.7rem", HA.style "align-items" "center", HA.style "flex-wrap" "wrap", HA.style "margin-top" "0.4rem" ]

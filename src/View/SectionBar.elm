@@ -16,6 +16,7 @@ module View.SectionBar exposing
 
 import Array exposing (Array)
 import Data.ChordTrack exposing (ChordSpan)
+import Data.Help as Help
 import Data.Key
 import Data.Meter
 import Data.Section exposing (Section)
@@ -54,6 +55,7 @@ type alias Config msg =
     , clickedChord : Int -> msg
     , doubleClickedChord : Int -> msg
     , toggledEditPanel : msg
+    , openedHelp : Help.TopicId -> msg
     }
 
 
@@ -305,7 +307,15 @@ view layout config rulerData chordSpans waveform extras selectedId sections pend
         totalBars =
             List.sum (List.map .lengthBars sections)
     in
-    div [ HA.style "margin-top" (if layout.isShort then "0.25rem" else "1rem") ]
+    div
+        [ HA.style "margin-top"
+            (if layout.isShort then
+                "0.25rem"
+
+             else
+                "1rem"
+            )
+        ]
         [ if layout.isShort then
             text ""
 
@@ -326,6 +336,7 @@ view layout config rulerData chordSpans waveform extras selectedId sections pend
                            ]
                     )
                     [ text "🔍＋" ]
+                , Style.helpButton { onClick = config.openedHelp Help.SectionOps, label = "セクション" }
                 ]
         , div
             [ HA.id sectionBarScrollId
@@ -672,8 +683,9 @@ blockView isNarrow config pxPerBar selectedId resizePreview extras movingSection
         , HA.style "overflow" "hidden"
         , HA.style "white-space" "nowrap"
         , {- pan-xにすることで、タッチの横スワイプだけはブラウザにスクロールとして任せる。touch-actionはマウスのPointer Eventsには
-           影響しないのでPCのドラッグ並べ替えは無影響。タッチでの並べ替えはできなくなるが、pointercancelが
-           viewDragOverlay経由でReleasedDragに接続済みなので状態は固着しない。 -}
+             影響しないのでPCのドラッグ並べ替えは無影響。タッチでの並べ替えはできなくなるが、pointercancelが
+             viewDragOverlay経由でReleasedDragに接続済みなので状態は固着しない。
+          -}
           HA.style "touch-action" "pan-x"
         , HE.on "pointerdown" (Decode.map (config.pressedBlock section.id) (Decode.field "clientX" Decode.float))
         , HA.title baseTitle
