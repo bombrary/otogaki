@@ -1,4 +1,4 @@
-module View.DrumEditor exposing (Config, ViewOpts, pitchesInYRange, rowPitches, rowsFor, view)
+module View.DrumEditor exposing (Config, ViewOpts, cellAt, pitchesInYRange, rowPitches, rowsFor, view)
 
 import Data.DrumPattern
 import Data.Note exposing (Note)

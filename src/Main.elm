@@ -97,6 +97,25 @@ type alias RubberBand =
     }
 
 
+{-| ドラムステップグリッドのドラッグ開始点。pointermove は offsetX/offsetY を持たないので、
+レードツーカーソルと同じ手法（anchorOffset + (現在clientX - anchorClientX)）で現在セルを得る。
+-}
+type alias DrumDragAnchor =
+    { anchorOffsetX : Float
+    , anchorOffsetY : Float
+    , anchorClientX : Float
+    , anchorClientY : Float
+    }
+
+
+{-| ステップグリッド上のドラッグ操作。空セルからのドラッグは連続入力（visited で重複追加を防ぐ）、
+既存ノートからのドラッグは移動。
+-}
+type DrumDrag
+    = DrumPaintDrag DrumDragAnchor (Set ( Int, Int ))
+    | DrumMoveNoteDrag DrumDragAnchor Int
+
+
 {-| コードトークンのドラッグ移動中の状態。origText/origKeys はドラッグ開始時のスナップショットで、
 moveTokens は毎 move でこのスナップショットから再計算する（累積誤差を防ぐため）。anchorCenterTicksは
 トークンの開始tickではなく中心tick（startTicks + durationTicks // 2）。開始tickを基準にするとticksToBarBeatの
@@ -167,6 +186,7 @@ type alias Model =
     , selectedNoteIds : Set Int
     , clipboard : List Data.Note.Note
     , rubberBand : Maybe RubberBand
+    , drumDrag : Maybe DrumDrag
     , showKeyboard : Bool
     , drumFillBars : Int
     , drumApplyTarget : DrumApplyTarget
@@ -521,6 +541,7 @@ init flags =
       , selectedNoteIds = Set.empty
       , clipboard = []
       , rubberBand = Nothing
+      , drumDrag = Nothing
       , showKeyboard = False
       , drumFillBars = 4
       , drumApplyTarget = ApplySection
@@ -851,6 +872,25 @@ placeNoteWithResizePending pos model =
       }
     , cmd
     )
+
+
+{-| DrumDragAnchor と現在の ClientPos から、ドラッグ中のセル（pitch, tick）を得る。
+pointermove は offsetX/offsetY を持たないので、press 時に捕捉した offset と client の差分を
+保ち続けて現在の offset を復元する（rubberBand の curX/curY と同じ手法）。
+-}
+currentDrumCell : DrumDragAnchor -> ClientPos -> Model -> { pitch : Int, tick : Int }
+currentDrumCell anchor pos model =
+    let
+        ox =
+            anchor.anchorOffsetX + (pos.clientX - anchor.anchorClientX)
+
+        oy =
+            anchor.anchorOffsetY + (pos.clientY - anchor.anchorClientY)
+
+        rows =
+            DrumEditor.rowsFor (trackNotes model)
+    in
+    DrumEditor.cellAt rows model.gridUnit model.pianoRollZoom ox oy
 
 
 {-| ドラムグリッドのセル（pitch, グリッドにスナップした tick）に該当するノートを探す。
@@ -1243,8 +1283,120 @@ rubberBandRect band =
             )
 
 
-{-| trackMoveDrag 中ならトラック並び替えを優先し、それ以外は既存の legacyDraggedToRest（旧 legacyDraggedTo）に委ねる。
+{-| ドラムドラッグ（塗り・移動）を進行中の pointermove で処理する。DraggedTo から、他のレガシードラッグ
+（pendingNoteDrag 等）より先に分岐される。
 -}
+drumDragMoved : ClientPos -> Model -> ( Model, Cmd Msg )
+drumDragMoved pos model =
+    case model.drumDrag of
+        Just (DrumPaintDrag anchor visited) ->
+            let
+                cell =
+                    currentDrumCell anchor pos model
+
+                key =
+                    ( cell.pitch, cell.tick )
+            in
+            if Set.member key visited || findDrumNoteAt cell model /= Nothing then
+                ( { model | drumDrag = Just (DrumPaintDrag anchor (Set.insert key visited)) }, Cmd.none )
+
+            else
+                let
+                    grid =
+                        Data.Time.gridTicks model.gridUnit
+
+                    newNote =
+                        { id = model.project.nextId, pitch = cell.pitch, start = cell.tick, duration = grid, velocity = 100 }
+                in
+                ( { model
+                    | project = Data.Project.addNote model.selectedTrackId newNote model.project
+                    , selectedNoteIds = Set.singleton newNote.id
+                    , drumDrag = Just (DrumPaintDrag anchor (Set.insert key visited))
+                  }
+                , Cmd.none
+                )
+
+        Just (DrumMoveNoteDrag anchor noteId) ->
+            let
+                cell =
+                    currentDrumCell anchor pos model
+            in
+            ( { model
+                | project =
+                    Data.Project.mapNotes model.selectedTrackId
+                        (List.map
+                            (\n ->
+                                if n.id == noteId then
+                                    { n | pitch = cell.pitch, start = cell.tick }
+
+                                else
+                                    n
+                            )
+                        )
+                        model.project
+              }
+            , Cmd.none
+            )
+
+        Nothing ->
+            ( model, Cmd.none )
+
+
+{-| ドラムドラッグ中でないときの DraggedTo の元の実装。トップレベルに切り出してあるのは、
+case-of のネストをこれ以上深くしずに drumDrag の分岐を入れるため（レイアウトのレイヤー制約を
+変えずに済む）。
+-}
+legacyDraggedToTop : ClientPos -> Model -> ( Model, Cmd Msg )
+legacyDraggedToTop pos model =
+    (case model.pendingNoteDrag of
+        Just info ->
+            let
+                dx =
+                    pos.clientX - info.startClientX
+
+                dy =
+                    pos.clientY - info.startClientY
+
+                dist =
+                    sqrt (dx * dx + dy * dy)
+
+                threshold =
+                    if info.isTouch then
+                        touchDragThreshold
+
+                    else
+                        dragThreshold
+            in
+            if dist < threshold then
+                ( model, Cmd.none )
+
+            else
+                ( { model | pendingNoteDrag = Nothing, dragState = Dragging info, longPress = Nothing }, Cmd.none )
+
+        Nothing ->
+            case model.pendingChordDrag of
+                Just cd ->
+                    if exceedsDragThreshold cd pos then
+                        ( { model | pendingChordDrag = Nothing, chordDrag = Just cd }, Cmd.none )
+
+                    else
+                        ( model, Cmd.none )
+
+                Nothing ->
+                    case model.pendingVoicingDrag of
+                        Just vd ->
+                            if exceedsDragThreshold vd pos then
+                                ( { model | pendingVoicingDrag = Nothing, voicingDragState = DraggingVoicingOffsets vd, longPress = Nothing }, Cmd.none )
+
+                            else
+                                ( model, Cmd.none )
+
+                        Nothing ->
+                            legacyDraggedTo pos model
+    )
+        |> withDragCursor pos.clientX pos.clientY
+
+
 legacyDraggedTo : ClientPos -> Model -> ( Model, Cmd Msg )
 legacyDraggedTo pos model =
     case model.trackMoveDrag of
@@ -1455,6 +1607,16 @@ legacyDraggedToRest pos model =
 -}
 releasedDragFallback : Model -> ( Model, Cmd Msg )
 releasedDragFallback model =
+    case model.drumDrag of
+        Just _ ->
+            ( { model | drumDrag = Nothing }, Cmd.none )
+
+        Nothing ->
+            releasedDragFallbackRest model
+
+
+releasedDragFallbackRest : Model -> ( Model, Cmd Msg )
+releasedDragFallbackRest model =
     case model.pendingNoteDrag of
         Just _ ->
             ( { model | pendingNoteDrag = Nothing, longPress = Nothing }, Cmd.none )
@@ -3637,53 +3799,12 @@ updateCore msg model =
             )
 
         DraggedTo pos ->
-            (case model.pendingNoteDrag of
-                Just info ->
-                    let
-                        dx =
-                            pos.clientX - info.startClientX
-
-                        dy =
-                            pos.clientY - info.startClientY
-
-                        dist =
-                            sqrt (dx * dx + dy * dy)
-
-                        threshold =
-                            if info.isTouch then
-                                touchDragThreshold
-
-                            else
-                                dragThreshold
-                    in
-                    if dist < threshold then
-                        ( model, Cmd.none )
-
-                    else
-                        ( { model | pendingNoteDrag = Nothing, dragState = Dragging info, longPress = Nothing }, Cmd.none )
+            case model.drumDrag of
+                Just _ ->
+                    drumDragMoved pos model
 
                 Nothing ->
-                    case model.pendingChordDrag of
-                        Just cd ->
-                            if exceedsDragThreshold cd pos then
-                                ( { model | pendingChordDrag = Nothing, chordDrag = Just cd }, Cmd.none )
-
-                            else
-                                ( model, Cmd.none )
-
-                        Nothing ->
-                            case model.pendingVoicingDrag of
-                                Just vd ->
-                                    if exceedsDragThreshold vd pos then
-                                        ( { model | pendingVoicingDrag = Nothing, voicingDragState = DraggingVoicingOffsets vd, longPress = Nothing }, Cmd.none )
-
-                                    else
-                                        ( model, Cmd.none )
-
-                                Nothing ->
-                                    legacyDraggedTo pos model
-            )
-                |> withDragCursor pos.clientX pos.clientY
+                    legacyDraggedToTop pos model
 
         DraggedOverChordBar bar ->
             case model.chordDrag of
@@ -4975,6 +5096,7 @@ updateCore msg model =
 
                             else
                                 Set.insert note.id model.selectedNoteIds
+                        , drumDrag = Nothing
                       }
                     , Cmd.none
                     )
@@ -4990,6 +5112,7 @@ updateCore msg model =
                                 , curX = offsetX
                                 , curY = offsetY
                                 }
+                        , drumDrag = Nothing
                       }
                     , Cmd.none
                     )
@@ -4999,7 +5122,11 @@ updateCore msg model =
                         armLongPress (LongPressDrumNote { pitch = pitch, tick = tick }) { model | selectedNoteIds = Set.singleton note.id }
 
                     else
-                        ( { model | selectedNoteIds = Set.singleton note.id }, Cmd.none )
+                        let
+                            anchor =
+                                { anchorOffsetX = offsetX, anchorOffsetY = offsetY, anchorClientX = clientX, anchorClientY = clientY }
+                        in
+                        ( { model | selectedNoteIds = Set.singleton note.id, drumDrag = Just (DrumMoveNoteDrag anchor note.id) }, Cmd.none )
 
                 ( Nothing, False ) ->
                     let
@@ -5013,10 +5140,19 @@ updateCore msg model =
                             , duration = grid
                             , velocity = 100
                             }
+
+                        anchor =
+                            { anchorOffsetX = offsetX, anchorOffsetY = offsetY, anchorClientX = clientX, anchorClientY = clientY }
                     in
                     ( { model
                         | project = Data.Project.addNote model.selectedTrackId note model.project
                         , selectedNoteIds = Set.singleton note.id
+                        , drumDrag =
+                            if isTouch then
+                                Nothing
+
+                            else
+                                Just (DrumPaintDrag anchor (Set.singleton ( pitch, tick )))
                       }
                     , Ports.toAudio (Performance.encodePreviewNote "drumKit" pitch)
                     )
