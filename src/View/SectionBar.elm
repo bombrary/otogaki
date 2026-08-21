@@ -688,7 +688,7 @@ blockView isNarrow config pxPerBar selectedId resizePreview extras movingSection
           -}
           HA.style "touch-action" "pan-x"
         , HE.on "pointerdown" (Decode.map (config.pressedBlock section.id) (Decode.field "clientX" Decode.float))
-        , HA.title baseTitle
+        , HA.title (baseTitle ++ "（ドラッグで並べ替え、右端をドラッグで小節数変更）")
         ]
         [ text section.name
         , if section.memo /= "" then
@@ -712,6 +712,7 @@ blockView isNarrow config pxPerBar selectedId resizePreview extras movingSection
             , HA.style "background" (Palette.sectionColor idx)
             , HA.style "border-radius" "0 3px 3px 0"
             , HA.style "touch-action" "none"
+            , HA.title "ドラッグで小節数を変える"
             , HE.stopPropagationOn "pointerdown"
                 (Decode.map (\cx -> ( config.pressedResizeHandle section.id cx, True )) (Decode.field "clientX" Decode.float))
             ]

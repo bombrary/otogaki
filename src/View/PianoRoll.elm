@@ -22,8 +22,8 @@ module View.PianoRoll exposing
     , pixelsToTicks
     , playheadLine
     , rowHeight
-    , rulerHeight
     , rubberBandView
+    , rulerHeight
     , rulerViewWith
     , scrollDecoder
     , sectionTintWithHeight
@@ -43,7 +43,6 @@ import Data.Time
 import Html exposing (Html)
 import Html.Attributes as HA
 import Html.Events
-import View.Zoom
 import Json.Decode as Decode
 import Set exposing (Set)
 import Svg
@@ -54,6 +53,7 @@ import View.ChordStrip as ChordStrip
 import View.Palette as Palette
 import View.Style as Style
 import View.Theme as Theme
+import View.Zoom
 
 
 type alias Config msg =
@@ -138,7 +138,8 @@ waveHeight =
     44
 
 
-{-| ベロシティレーンの高さ(px)。Main.elm 側のドラッグ量→velocity換算にも使う。-}
+{-| ベロシティレーンの高さ(px)。Main.elm 側のドラッグ量→velocity換算にも使う。
+-}
 velocityLaneHeight : Int
 velocityLaneHeight =
     60
@@ -292,7 +293,14 @@ headerHeight dims =
 -}
 frameContentHeight : Dims -> Int
 frameContentHeight dims =
-    headerHeight dims + gridHeight dims.isNarrow + (if dims.hasVelocityLane then velocityLaneHeight else 0)
+    headerHeight dims
+        + gridHeight dims.isNarrow
+        + (if dims.hasVelocityLane then
+            velocityLaneHeight
+
+           else
+            0
+          )
 
 
 {-| ノート列の中央値の音高。空なら C4(60)。ピアノロールの初期センタリング対象を決めるのに使う
@@ -688,6 +696,7 @@ velLabelCell =
         , HA.style "color" Theme.onSurfaceVariant
         , HA.style "padding" "2px 3px"
         , HA.style "text-align" "right"
+        , HA.title "ベロシティ（音の強さ）。バーを上下ドラッグで変えられます"
         ]
         [ Html.text "Vel" ]
 
@@ -923,6 +932,7 @@ loopHandle isNarrow pressedLoopHandle isEnd x =
         , SA.fill Style.colorLoopHandle
         , SA.cursor "ew-resize"
         , HA.style "touch-action" "none"
+        , HA.title "ドラッグでループ範囲を伸縮（ループ:範囲 のときだけ）"
         , Html.Events.stopPropagationOn "pointerdown"
             (Decode.field "button" Decode.int
                 |> Decode.andThen
@@ -1141,6 +1151,7 @@ velocityBarView handlers pxPerSixteenth selectedIds note =
             )
         , HA.style "cursor" "ns-resize"
         , HA.style "touch-action" "none"
+        , HA.title "上下ドラッグで強さ（velocity）を変える"
         , Html.Events.stopPropagationOn "pointerdown"
             (Decode.map (\pos -> ( handlers.pressedVelocityBar note.id pos, True )) velocityPressDecoder)
         ]
@@ -1519,6 +1530,7 @@ pointerdown後の強制ポインターキャプチャ（js/main.js の data-poin
 ポインターが要素外に出た瞬間 pointermove/pointerup が届かなくなる。data-pointer-capture 属性で
 限定することで、他のオーバーレイ方式のドラッグと干渉せずに共存できる。
 pointercancelも pointerup と同じ扱いにする（ドラッグ中のスクロールジェスチャ等で中断された場合に状態を残さないため）。
+
 -}
 notePointerListeners : Config msg -> List (Html.Attribute msg)
 notePointerListeners config =
@@ -1679,6 +1691,13 @@ noteView isNarrow config pxPerSixteenth selectedIds tool note =
              else
                 "auto"
             )
+         , HA.title
+            (if interactive then
+                "ドラッグで長さを変える"
+
+             else
+                ""
+            )
          ]
             ++ cutOnlyAttrs
             ++ (if interactive then
@@ -1716,6 +1735,13 @@ noteView isNarrow config pxPerSixteenth selectedIds tool note =
 
                          else
                             "auto"
+                        )
+                     , HA.title
+                        (if interactive then
+                            "ドラッグで長さを変える"
+
+                         else
+                            ""
                         )
                      ]
                         ++ cutOnlyAttrs

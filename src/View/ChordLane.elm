@@ -48,6 +48,7 @@ view config opts spans =
         , HA.style "border-bottom" ("1px solid " ++ Theme.outlineVariant)
         , HA.style "cursor" "crosshair"
         , HA.style "touch-action" "none"
+        , HA.title "ドラッグで範囲選択、クリックで再生位置を移動"
         , Html.Events.on "pointerdown" (Decode.map config.pressedLane laneEmptyPressDecoder)
         ]
         (List.concatMap (tokenView config opts) spans
@@ -142,7 +143,7 @@ tokenView config opts span =
             )
         , HA.style "cursor" "move"
         , HA.style "touch-action" "none"
-        , HA.title span.token
+        , HA.title (span.token ++ "（ドラッグで小節を入れ替え／ダブルクリックでコード編集）")
         , HA.attribute "data-pointer-capture" ""
         , Html.Events.stopPropagationOn "pointerdown"
             (Decode.map (\pos -> ( config.pressedToken span.key pos, True )) tokenPressDecoder)
