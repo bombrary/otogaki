@@ -1,6 +1,7 @@
 module View.DrumEditor exposing (Config, ViewOpts, cellAt, pitchesInYRange, rowPitches, rowsFor, view)
 
 import Data.DrumPattern
+import Data.Help as Help
 import Data.Note exposing (Note)
 import Data.Time
 import Html exposing (Html, button, div, option, select, span, text)
@@ -31,6 +32,7 @@ type alias Config msg =
     , pressedLoopHandle : Bool -> Float -> msg
     , wheelZoomedRuler : { deltaY : Float, offsetX : Float } -> msg
     , scrolled : { scrollLeft : Float, scrollTop : Float, clientWidth : Float } -> msg
+    , openedHelp : Help.TopicId -> msg
     }
 
 
@@ -53,7 +55,7 @@ type alias ViewOpts =
     }
 
 
-{-| 常に表示するコア行。js/audio.js の DRUM_ROLES のうち、ドラフトで実際に使う中心的な音。
+{-| 常に表示するコア行。js/audio.js の DRUM\_ROLES のうち、ドラフトで実際に使う中心的な音。
 -}
 coreRows : List ( Int, String )
 coreRows =
@@ -72,7 +74,7 @@ rowHeight =
     22
 
 
-{-| DRUM_ROLES に載っている全 pitch のラベル。コア行に無い pitch でも、ここにあればライド・クラップなど
+{-| DRUM\_ROLES に載っている全 pitch のラベル。コア行に無い pitch でも、ここにあればライド・クラップなど
 意味のある名前がつく。
 -}
 labelFor : Int -> String
@@ -244,15 +246,30 @@ modeOptions =
     [ ( "replaceLanes", "差し替え" ), ( "merge", "重ねる" ), ( "replace", "全消去して差し替え" ) ]
 
 
-labeledSelect : (String -> msg) -> String -> List ( String, String ) -> Html msg
-labeledSelect toMsg currentValue options =
-    select [ Html.Events.onInput toMsg ]
+labeledSelect : (String -> msg) -> String -> String -> List ( String, String ) -> Html msg
+labeledSelect toMsg titleText currentValue options =
+    select [ Html.Events.onInput toMsg, HA.title titleText ]
         (List.map
             (\( value, label ) ->
                 option [ HA.value value, HA.selected (value == currentValue) ] [ text label ]
             )
             options
         )
+
+
+{-| フルキット（名前に接頭辞がない）・レーン単体（「XX: ...」）・フィル（「フィル: ...」）の別を title で伝える。
+`Data.DrumPattern.Pattern` に分類フィールドを足すほどではないので、名前の接頭辞で判定する。
+-}
+presetHelpTitle : String -> String
+presetHelpTitle name =
+    if String.startsWith "フィル" name then
+        "小節後半のフィルインを書き込みます"
+
+    else if String.contains ":" name then
+        "このレーンだけ書き込みます"
+
+    else
+        "キック・スネア・ハットなどを一括で書き込みます"
 
 
 view : Config msg -> ViewOpts -> Html msg
@@ -264,21 +281,23 @@ view config opts =
     div [ HA.style "margin-top" "1rem" ]
         [ div [ HA.style "display" "flex", HA.style "gap" "0.4rem", HA.style "align-items" "center", HA.style "flex-wrap" "wrap" ]
             [ span [ HA.style "font-size" "0.85rem" ] [ text "適用先: " ]
-            , labeledSelect config.changedApplyTarget opts.applyTargetValue targetOptions
+            , labeledSelect config.changedApplyTarget "プリセットを書き込む範囲（セクション＝選択中のセクション／ループ範囲／プレイヘッドから指定小節数／曲全体）" opts.applyTargetValue targetOptions
             , span [ HA.style "font-size" "0.85rem", HA.style "color" Theme.onSurfaceVariant ] [ text opts.rangeLabel ]
             , span [ HA.style "font-size" "0.85rem" ] [ text " 適用方法: " ]
-            , labeledSelect config.changedApplyMode opts.applyModeValue modeOptions
+            , labeledSelect config.changedApplyMode "差し替え＝そのパターンが使う楽器の行だけ範囲内を消してから書く（何度押しても同じ結果）／重ねる＝既存を消さずに足す／全消去して差し替え＝楽器を問わず範囲内を全部消してから書く" opts.applyModeValue modeOptions
+            , Style.helpButton { onClick = config.openedHelp Help.DrumApply, label = "ドラムの適用先・適用方法" }
             ]
         , div [ HA.style "display" "flex", HA.style "gap" "0.4rem", HA.style "align-items" "center", HA.style "flex-wrap" "wrap", HA.style "margin-top" "0.3rem" ]
             (List.map
                 (\pattern ->
-                    button (Style.baseButton ++ [ Html.Events.onClick (config.appliedPreset pattern.name) ]) [ text pattern.name ]
+                    button (Style.baseButton ++ [ Html.Events.onClick (config.appliedPreset pattern.name), HA.title (presetHelpTitle pattern.name) ]) [ text pattern.name ]
                 )
                 Data.DrumPattern.patterns
                 ++ [ span [ HA.style "font-size" "0.85rem" ] [ text " 長さ:" ]
                    , select
                         [ Html.Events.onInput config.changedFillBars
                         , HA.disabled (opts.applyTargetValue /= "playhead")
+                        , HA.title "適用先が「プレイヘッドから」のときだけ使えます"
                         ]
                         (List.map
                             (\n ->
@@ -290,6 +309,7 @@ view config opts =
                             )
                             [ 1, 2, 4, 8, 16, 32, 64 ]
                         )
+                   , Style.helpButton { onClick = config.openedHelp Help.DrumPresets, label = "ドラムのプリセットの種類" }
                    ]
             )
         , div
@@ -348,6 +368,7 @@ labelColumn rows config opts =
             , HA.style "align-items" "flex-end"
             , HA.style "justify-content" "flex-end"
             , HA.style "padding-bottom" "2px"
+            , HA.title "下のレーン名をクリックすると、そのレーンをプリセット適用の対象から外せます"
             ]
             [ text "適用" ]
             :: List.map

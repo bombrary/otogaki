@@ -6445,6 +6445,7 @@ view model =
                                     , pressedLoopHandle = PressedLoopHandle
                                     , wheelZoomedRuler = WheelZoomedRuler
                                     , scrolled = ScrolledPianoRoll
+                                    , openedHelp = OpenedHelpTopic
                                     }
                                     { sections = sectionSpans model.project
                                     , totalBars = totalBarsFor model.project
