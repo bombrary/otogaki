@@ -1635,7 +1635,7 @@ releasedDragNoteOrRubberBand model =
                                     Data.Time.gridTicks model.gridUnit
 
                                 pitches =
-                                    DrumEditor.pitchesInYRange y0 y1
+                                    DrumEditor.pitchesInYRange (DrumEditor.rowsFor (trackNotes model)) y0 y1
                             in
                             trackNotes model
                                 |> List.filter
@@ -5032,7 +5032,7 @@ updateCore msg model =
                 ( Just pattern, Just range ) ->
                     let
                         rowPitches =
-                            Set.fromList DrumEditor.rowPitches
+                            Set.fromList (DrumEditor.rowPitches (trackNotes model))
 
                         project2 =
                             Data.DrumPattern.apply

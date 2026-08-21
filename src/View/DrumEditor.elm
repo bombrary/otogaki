@@ -1,4 +1,4 @@
-module View.DrumEditor exposing (Config, ViewOpts, pitchesInYRange, rowPitches, view)
+module View.DrumEditor exposing (Config, ViewOpts, pitchesInYRange, rowPitches, rowsFor, view)
 
 import Data.DrumPattern
 import Data.Note exposing (Note)
@@ -53,9 +53,12 @@ type alias ViewOpts =
     }
 
 
-rows : List ( Int, String )
-rows =
+{-| 常に表示するコア行。js/audio.js の DRUM_ROLES のうち、ドラフトで実際に使う中心的な音。
+-}
+coreRows : List ( Int, String )
+coreRows =
     [ ( 49, "クラッシュ" )
+    , ( 51, "ライド" )
     , ( 46, "オープンHH" )
     , ( 42, "ハイハット" )
     , ( 45, "タム" )
@@ -69,11 +72,64 @@ rowHeight =
     22
 
 
+{-| DRUM_ROLES に載っている全 pitch のラベル。コア行に無い pitch でも、ここにあればライド・クラップなど
+意味のある名前がつく。
+-}
+labelFor : Int -> String
+labelFor pitch =
+    case pitch of
+        35 ->
+            "キック(低)"
+
+        37 ->
+            "リムショット"
+
+        39 ->
+            "クラップ"
+
+        41 ->
+            "ロータム"
+
+        48 ->
+            "ハイタム"
+
+        54 ->
+            "シェイカー"
+
+        56 ->
+            "カウベル"
+
+        _ ->
+            "pitch " ++ String.fromInt pitch
+
+
+{-| 表示する行。コア行は常に出し、それ以外はノートが実在する pitch だけを高い順に上に足す。
+固定行だけだと「置いたのに見えない」（例：バラードのライド 51）が起きうるのを構造的になくす。
+extra 行はコア行より上にまとめ、コア行の相対位置が動かないようにする。
+-}
+rowsFor : List Note -> List ( Int, String )
+rowsFor notes =
+    let
+        core =
+            Set.fromList (List.map Tuple.first coreRows)
+
+        extra =
+            notes
+                |> List.map .pitch
+                |> Set.fromList
+                |> (\s -> Set.diff s core)
+                |> Set.toList
+                |> List.sortBy negate
+                |> List.map (\p -> ( p, labelFor p ))
+    in
+    extra ++ coreRows
+
+
 {-| 現在の行の pitch 一覧。レーン絞り込み UI の既定集合（全行含む）を求めるのに Main から使う。
 -}
-rowPitches : List Int
-rowPitches =
-    List.map Tuple.first rows
+rowPitches : List Note -> List Int
+rowPitches notes =
+    List.map Tuple.first (rowsFor notes)
 
 
 totalSteps : Int -> Int
@@ -86,13 +142,13 @@ gridWidth pxPerSixteenth totalBars =
     totalSteps totalBars * pxPerSixteenth
 
 
-gridHeight : Int
-gridHeight =
+gridHeight : List ( Int, String ) -> Int
+gridHeight rows =
     List.length rows * rowHeight
 
 
-rowIndexOf : Int -> Maybe Int
-rowIndexOf pitch =
+rowIndexOf : List ( Int, String ) -> Int -> Maybe Int
+rowIndexOf rows pitch =
     rows
         |> List.indexedMap Tuple.pair
         |> List.filter (\( _, ( p, _ ) ) -> p == pitch)
@@ -101,10 +157,10 @@ rowIndexOf pitch =
 
 
 {-| ラバーバンド選択のY範囲（ピクセル座標）に交差する行のpitch集合を返す。
-`rows` は非連続・非単調なpitchリストなので、行indexとの交差判定を経由する。
+`rows` は非連続・非単調のpitchリストなので、行indexとの交差判定を経由する。
 -}
-pitchesInYRange : Float -> Float -> Set Int
-pitchesInYRange y0 y1 =
+pitchesInYRange : List ( Int, String ) -> Float -> Float -> Set Int
+pitchesInYRange rows y0 y1 =
     rows
         |> List.indexedMap (\i ( pitch, _ ) -> ( i, pitch ))
         |> List.filter (\( i, _ ) -> toFloat (i * rowHeight) < y1 && toFloat ((i + 1) * rowHeight) > y0)
@@ -114,8 +170,8 @@ pitchesInYRange y0 y1 =
 
 {-| ピクセル座標(offsetX, offsetY)からグリッドセルのpitch/tickを求める共通ヘルパー。
 -}
-cellAt : Data.Time.GridUnit -> Int -> Float -> Float -> { pitch : Int, tick : Int }
-cellAt gridUnit pxPerSixteenth ox oy =
+cellAt : List ( Int, String ) -> Data.Time.GridUnit -> Int -> Float -> Float -> { pitch : Int, tick : Int }
+cellAt rows gridUnit pxPerSixteenth ox oy =
     let
         tick =
             Data.Time.snapFloor (Data.Time.gridTicks gridUnit) (PianoRoll.pixelsToTicks pxPerSixteenth ox)
@@ -139,10 +195,11 @@ buttonフィルタを必ず入れる: これがないと右クリック（contex
 セル要素まで届かず右クリック削除が動かなくなる。
 -}
 cellPressDecoder :
-    Data.Time.GridUnit
+    List ( Int, String )
+    -> Data.Time.GridUnit
     -> Int
     -> Decode.Decoder { pitch : Int, tick : Int, offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, isTouch : Bool, timeStamp : Float }
-cellPressDecoder gridUnit pxPerSixteenth =
+cellPressDecoder rows gridUnit pxPerSixteenth =
     Decode.field "button" Decode.int
         |> Decode.andThen
             (\button ->
@@ -151,7 +208,7 @@ cellPressDecoder gridUnit pxPerSixteenth =
                         (\ox oy cx cy sh touch ts ->
                             let
                                 cell =
-                                    cellAt gridUnit pxPerSixteenth ox oy
+                                    cellAt rows gridUnit pxPerSixteenth ox oy
                             in
                             { pitch = cell.pitch, tick = cell.tick, offsetX = ox, offsetY = oy, clientX = cx, clientY = cy, shift = sh, isTouch = touch, timeStamp = ts }
                         )
@@ -170,9 +227,9 @@ cellPressDecoder gridUnit pxPerSixteenth =
 
 {-| dblclick / contextmenu 用。pitch/tickだけあればよい。
 -}
-cellClickDecoder : Data.Time.GridUnit -> Int -> Decode.Decoder { pitch : Int, tick : Int }
-cellClickDecoder gridUnit pxPerSixteenth =
-    Decode.map2 (cellAt gridUnit pxPerSixteenth)
+cellClickDecoder : List ( Int, String ) -> Data.Time.GridUnit -> Int -> Decode.Decoder { pitch : Int, tick : Int }
+cellClickDecoder rows gridUnit pxPerSixteenth =
+    Decode.map2 (cellAt rows gridUnit pxPerSixteenth)
         (Decode.field "offsetX" Decode.float)
         (Decode.field "offsetY" Decode.float)
 
@@ -200,6 +257,10 @@ labeledSelect toMsg currentValue options =
 
 view : Config msg -> ViewOpts -> Html msg
 view config opts =
+    let
+        rows =
+            rowsFor opts.notes
+    in
     div [ HA.style "margin-top" "1rem" ]
         [ div [ HA.style "display" "flex", HA.style "gap" "0.4rem", HA.style "align-items" "center", HA.style "flex-wrap" "wrap" ]
             [ span [ HA.style "font-size" "0.85rem" ] [ text "適用先: " ]
@@ -236,7 +297,7 @@ view config opts =
             , HA.style "margin-top" "0.4rem"
             , HA.style "border" ("1px solid " ++ Theme.outlineVariant)
             ]
-            [ labelColumn config opts
+            [ labelColumn rows config opts
             , div
                 [ HA.id PianoRoll.pianoRollScrollId
                 , HA.style "overflow-x" "auto"
@@ -258,7 +319,7 @@ view config opts =
                     , loopEditable = opts.loopEditable
                     , playheadTicks = opts.playheadTicks
                     }
-                , gridView config opts
+                , gridView rows config opts
                 , PianoRoll.velocityLaneViewWith
                     { pressedVelocityBar = config.pressedVelocityBar }
                     { pxPerSixteenth = opts.pxPerSixteenth
@@ -272,8 +333,8 @@ view config opts =
         ]
 
 
-labelColumn : Config msg -> ViewOpts -> Html msg
-labelColumn config opts =
+labelColumn : List ( Int, String ) -> Config msg -> ViewOpts -> Html msg
+labelColumn rows config opts =
     div [ HA.style "flex" "0 0 90px", HA.style "border-right" ("1px solid " ++ Theme.outline) ]
         (div
             [ HA.style "height" (String.fromInt PianoRoll.rulerHeight ++ "px")
@@ -283,7 +344,6 @@ labelColumn config opts =
             , HA.style "color" Theme.onSurfaceVariant
             , HA.style "text-align" "right"
             , HA.style "padding-right" "0.4rem"
-            , HA.style "box-sizing" "border-box"
             , HA.style "display" "flex"
             , HA.style "align-items" "flex-end"
             , HA.style "justify-content" "flex-end"
@@ -338,38 +398,42 @@ labelColumn config opts =
         )
 
 
-gridView : Config msg -> ViewOpts -> Html msg
-gridView config opts =
+gridView : List ( Int, String ) -> Config msg -> ViewOpts -> Html msg
+gridView rows config opts =
+    let
+        h =
+            gridHeight rows
+    in
     Svg.svg
         [ SA.width (String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars))
-        , SA.height (String.fromInt gridHeight)
-        , SA.viewBox ("0 0 " ++ String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars) ++ " " ++ String.fromInt gridHeight)
+        , SA.height (String.fromInt h)
+        , SA.viewBox ("0 0 " ++ String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars) ++ " " ++ String.fromInt h)
         , HA.style "display" "block"
         , HA.style "cursor" "pointer"
         , HA.style "touch-action" "none"
         , Html.Events.on "pointerdown"
-            (Decode.map config.pressedCell (cellPressDecoder opts.gridUnit opts.pxPerSixteenth))
+            (Decode.map config.pressedCell (cellPressDecoder rows opts.gridUnit opts.pxPerSixteenth))
         , HA.attribute "data-pointer-capture" ""
         , Html.Events.on "pointermove"
             (Decode.map config.draggedWhilePressingCell PianoRoll.noteMoveDecoder)
         , Html.Events.on "pointerup" (Decode.succeed config.releasedCellPress)
         , Html.Events.on "pointercancel" (Decode.succeed config.releasedCellPress)
         , Html.Events.on "dblclick"
-            (Decode.map config.doubleClickedCell (cellClickDecoder opts.gridUnit opts.pxPerSixteenth))
+            (Decode.map config.doubleClickedCell (cellClickDecoder rows opts.gridUnit opts.pxPerSixteenth))
         , Html.Events.preventDefaultOn "contextmenu"
-            (Decode.map (\cell -> ( config.rightClickedCell cell, True )) (cellClickDecoder opts.gridUnit opts.pxPerSixteenth))
+            (Decode.map (\cell -> ( config.rightClickedCell cell, True )) (cellClickDecoder rows opts.gridUnit opts.pxPerSixteenth))
         ]
-        (backgroundRows opts.pxPerSixteenth opts.totalBars
-            ++ List.concat (List.indexedMap (PianoRoll.sectionTintWithHeight gridHeight opts.pxPerSixteenth) opts.sections)
-            ++ verticalLines opts.gridUnit opts.pxPerSixteenth opts.totalBars
-            ++ List.filterMap (activeCell opts.gridUnit opts.pxPerSixteenth opts.selectedIds) opts.notes
-            ++ [ PianoRoll.playheadLine opts.pxPerSixteenth gridHeight opts.playheadTicks ]
+        (backgroundRows rows opts.pxPerSixteenth opts.totalBars
+            ++ List.concat (List.indexedMap (PianoRoll.sectionTintWithHeight h opts.pxPerSixteenth) opts.sections)
+            ++ verticalLines opts.gridUnit opts.pxPerSixteenth opts.totalBars h
+            ++ List.filterMap (activeCell rows opts.gridUnit opts.pxPerSixteenth opts.selectedIds) opts.notes
+            ++ [ PianoRoll.playheadLine opts.pxPerSixteenth h opts.playheadTicks ]
             ++ PianoRoll.rubberBandView opts.rubberBand
         )
 
 
-backgroundRows : Int -> Int -> List (Svg.Svg msg)
-backgroundRows pxPerSixteenth totalBars =
+backgroundRows : List ( Int, String ) -> Int -> Int -> List (Svg.Svg msg)
+backgroundRows rows pxPerSixteenth totalBars =
     List.indexedMap
         (\i _ ->
             Svg.rect
@@ -392,8 +456,8 @@ backgroundRows pxPerSixteenth totalBars =
         rows
 
 
-verticalLines : Data.Time.GridUnit -> Int -> Int -> List (Svg.Svg msg)
-verticalLines gridUnit pxPerSixteenth totalBars =
+verticalLines : Data.Time.GridUnit -> Int -> Int -> Int -> List (Svg.Svg msg)
+verticalLines gridUnit pxPerSixteenth totalBars h =
     let
         grid =
             Data.Time.gridTicks gridUnit
@@ -415,7 +479,7 @@ verticalLines gridUnit pxPerSixteenth totalBars =
                     [ SA.x1 (String.fromFloat x)
                     , SA.y1 "0"
                     , SA.x2 (String.fromFloat x)
-                    , SA.y2 (String.fromInt gridHeight)
+                    , SA.y2 (String.fromInt h)
                     , SA.stroke
                         (if modBy Data.Time.ticksPerBar t == 0 then
                             Theme.outline
@@ -431,9 +495,9 @@ verticalLines gridUnit pxPerSixteenth totalBars =
             )
 
 
-activeCell : Data.Time.GridUnit -> Int -> Set Int -> Note -> Maybe (Svg.Svg msg)
-activeCell gridUnit pxPerSixteenth selectedIds note =
-    rowIndexOf note.pitch
+activeCell : List ( Int, String ) -> Data.Time.GridUnit -> Int -> Set Int -> Note -> Maybe (Svg.Svg msg)
+activeCell rows gridUnit pxPerSixteenth selectedIds note =
+    rowIndexOf rows note.pitch
         |> Maybe.map
             (\rowIdx ->
                 let
