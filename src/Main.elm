@@ -6248,6 +6248,7 @@ view model =
                            ]
                     )
                     [ text "✂ カット" ]
+                , Style.helpButton { onClick = OpenedHelpTopic Help.PianoRollOps, label = "ピアノロールの操作" }
                 ]
 
         {- ホイールが使えないタッチ環境向けのズームボタン。既存のWheelZoomedRulerを直接呼び、offsetXは0（左端を基準にズーム）。
@@ -6644,7 +6645,7 @@ view model =
 
         loopOnlyGroup =
             div groupStyle
-                [ label []
+                [ label [ Html.Attributes.title "Space で再生したときの繰り返し範囲。「範囲」以外はルーラーの帯をドラッグして編集できません" ]
                     [ text "🔁 ループ: "
                     , Html.select [ onInput ChangedLoopMode ]
                         [ Html.option [ value "off", Html.Attributes.selected (model.loopMode == NoLoop) ] [ text "オフ" ]
@@ -6653,6 +6654,12 @@ view model =
                         , Html.option [ value "range", Html.Attributes.selected (model.loopMode == LoopRange) ] [ text "範囲" ]
                         ]
                     ]
+                , Style.helpButton { onClick = OpenedHelpTopic Help.LoopOps, label = "ループ" }
+                , if model.loopMode /= LoopRange then
+                    span Style.hintText [ text "範囲を選ぶと帯を編集できます" ]
+
+                  else
+                    text ""
                 ]
 
         followGroup =
@@ -6752,10 +6759,11 @@ view model =
                             "新規"
                         )
                     ]
-                , button (Style.baseButton ++ [ onClick ClickedExport ]) [ text "JSON書出" ]
-                , button (Style.baseButton ++ [ onClick ClickedImport ]) [ text "JSON読込" ]
-                , button (Style.baseButton ++ [ onClick ClickedExportMidi ]) [ text "MIDI書出" ]
-                , button (Style.baseButton ++ [ onClick ClickedExportWav ]) [ text "WAV書出" ]
+                , button (Style.baseButton ++ [ onClick ClickedExport, Html.Attributes.title "プロジェクト全体をファイルに保存（この形式だけが読み込めます）" ]) [ text "JSON書出" ]
+                , button (Style.baseButton ++ [ onClick ClickedImport, Html.Attributes.title "JSON書出で保存したファイルを読み込む（今の内容は置き換わります。Ctrl/Cmd+Zで戻せます）" ]) [ text "JSON読込" ]
+                , button (Style.baseButton ++ [ onClick ClickedExportMidi, Html.Attributes.title ".mid を書き出す（書き出し専用。読み込みはできません）" ]) [ text "MIDI書出" ]
+                , button (Style.baseButton ++ [ onClick ClickedExportWav, Html.Attributes.title "音声ファイルを書き出す（書き出し専用。読み込みはできません）" ]) [ text "WAV書出" ]
+                , Style.helpButton { onClick = OpenedHelpTopic Help.FileOps, label = "保存と書き出し" }
                 ]
 
         positionGroup =
@@ -7368,7 +7376,7 @@ isPageLayout model =
 touchModeToggleView : Model -> Html Msg
 touchModeToggleView model =
     div [ style "display" "flex", style "align-items" "center", style "gap" "0.3rem", style "flex-wrap" "wrap" ]
-        [ span [ style "font-size" "0.85rem", Html.Attributes.title "Shift/Alt/Ctrlなどの物理修飾キーの代替操作" ] [ text "修飾: " ]
+        [ span [ style "font-size" "0.85rem", Html.Attributes.title "マウスなら Shift＝複数選択/矩形、Ctrl/Cmd＝空白クリックでシーク、Alt＝ドラッグ中スナップ無効。タッチではここで代わりに切り替えます" ] [ text "修飾キー: " ]
         , button
             (Style.toggleButton (model.touchMode == TouchNormal)
                 ++ [ onClick (SelectedTouchMode TouchNormal)
@@ -7397,6 +7405,7 @@ touchModeToggleView model =
                    ]
             )
             [ text "スナップOFF" ]
+        , Style.helpButton { onClick = OpenedHelpTopic Help.Modifiers, label = "修飾キー" }
         ]
 
 

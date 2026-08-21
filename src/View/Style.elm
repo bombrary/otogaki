@@ -13,6 +13,7 @@ module View.Style exposing
     , divider
     , focusCss
     , headingText
+    , helpButton
     , hintText
     , labelText
     , toggleButton
@@ -27,6 +28,8 @@ Material Design 3 のトークン（View.Theme）をラップする層。公開A
 
 import Html
 import Html.Attributes as HA
+import Html.Events as HE
+import Json.Decode as Decode
 import View.Theme as Theme
 
 
@@ -153,6 +156,25 @@ labelText =
 hintText : List (Html.Attribute msg)
 hintText =
     Theme.typeBodySmall ++ [ HA.style "color" Theme.onSurfaceVariant ]
+
+
+{-| パネル見出しの右に置く小さな「?」。<summary> の中に置いても details が開閉しないよう
+click を stopPropagation する。タッチの当たり判定として最低 24px を確保する。
+-}
+helpButton : { onClick : msg, label : String } -> Html.Html msg
+helpButton config =
+    Html.button
+        (baseButton
+            ++ [ HE.stopPropagationOn "click" (Decode.succeed ( config.onClick, True ))
+               , HA.style "padding" "0.05rem 0.3rem"
+               , HA.style "min-width" "24px"
+               , HA.style "min-height" "24px"
+               , HA.style "line-height" "1"
+               , HA.title ("ヘルプ: " ++ config.label)
+               , HA.attribute "aria-label" ("ヘルプ: " ++ config.label)
+               ]
+        )
+        [ Html.text "?" ]
 
 
 divider : Html.Html msg
