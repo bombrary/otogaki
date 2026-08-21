@@ -169,6 +169,9 @@ type alias Model =
     , rubberBand : Maybe RubberBand
     , showKeyboard : Bool
     , drumFillBars : Int
+    , drumApplyTarget : DrumApplyTarget
+    , drumApplyMode : Data.DrumPattern.Mode
+    , drumApplyExcludedLanes : Set Int
     , refOffsetInput : String
     , refLoaded : Bool
     , refPeaks : Array Float
@@ -301,6 +304,15 @@ type LoopMode
     | LoopRange
 
 
+{-| ドラムパターンの適用先。いずれも Model の既存状態（選択セクション・ループ範囲・プレイヘッド）をそのまま読むだけで、
+専用の範囲指定 UI は持たない。
+-}
+type DrumApplyTarget
+    = ApplySection
+    | ApplyLoop
+    | ApplyFromPlayhead
+
+
 type WavExportState
     = WavExportIdle
     | WavExportRendering
@@ -385,6 +397,9 @@ type Msg
     | DoubleClickedDrumCell { pitch : Int, tick : Int }
     | AppliedDrumPreset String
     | ChangedDrumFillBars String
+    | ChangedDrumApplyTarget String
+    | ChangedDrumApplyMode String
+    | ToggledDrumLane Int
     | ClickedExportMidi
     | ClickedExportWav
     | ClosedWavExportModal
@@ -508,6 +523,9 @@ init flags =
       , rubberBand = Nothing
       , showKeyboard = False
       , drumFillBars = 4
+      , drumApplyTarget = ApplySection
+      , drumApplyMode = Data.DrumPattern.ReplaceLanes
+      , drumApplyExcludedLanes = Set.empty
       , refOffsetInput = String.fromInt project.referenceAudio.offsetMs
       , refLoaded = False
       , refPeaks = Array.empty
@@ -1133,6 +1151,9 @@ describeMsg msg =
 
         ChangedChordRhythm _ ->
             "コードリズム変更"
+
+        AppliedDrumPreset _ ->
+            "ドラムパターン適用"
 
         _ ->
             "編集"
@@ -1789,6 +1810,159 @@ loopModeFromString raw =
 
         _ ->
             NoLoop
+
+
+drumApplyTargetToString : DrumApplyTarget -> String
+drumApplyTargetToString target =
+    case target of
+        ApplySection ->
+            "section"
+
+        ApplyLoop ->
+            "loop"
+
+        ApplyFromPlayhead ->
+            "playhead"
+
+
+drumApplyTargetFromString : String -> DrumApplyTarget
+drumApplyTargetFromString raw =
+    case raw of
+        "loop" ->
+            ApplyLoop
+
+        "playhead" ->
+            ApplyFromPlayhead
+
+        _ ->
+            ApplySection
+
+
+drumApplyModeToString : Data.DrumPattern.Mode -> String
+drumApplyModeToString mode =
+    case mode of
+        Data.DrumPattern.ReplaceLanes ->
+            "replaceLanes"
+
+        Data.DrumPattern.Merge ->
+            "merge"
+
+        Data.DrumPattern.Replace ->
+            "replace"
+
+
+drumApplyModeFromString : String -> Data.DrumPattern.Mode
+drumApplyModeFromString raw =
+    case raw of
+        "merge" ->
+            Data.DrumPattern.Merge
+
+        "replace" ->
+            Data.DrumPattern.Replace
+
+        _ ->
+            Data.DrumPattern.ReplaceLanes
+
+
+{-| 選択中の適用先を実際の tick 範囲に解決する。対象が存在しない（セクション未選択・ループ未設定）なら
+ Nothing。プレイヘッド起点は「プレイヘッドを含む小節の頭」にそろえ、N 小節ぶんの長さは Timeline の実小節長を
+積む（`drumFillBars * ticksPerBar` の掛け算はしない。変拍子で壊れるため）。
+-}
+drumApplyRange : Model -> Maybe { startTicks : Int, endTicks : Int }
+drumApplyRange model =
+    let
+        tl =
+            Data.Project.timeline model.project
+    in
+    case model.drumApplyTarget of
+        ApplySection ->
+            model.selectedSectionId
+                |> Maybe.andThen (\sid -> Data.Project.sectionBounds sid model.project)
+
+        ApplyLoop ->
+            model.loopRange
+                |> Maybe.andThen
+                    (\l ->
+                        if l.endTicks > l.startTicks then
+                            Just { startTicks = l.startTicks, endTicks = l.endTicks }
+
+                        else
+                            Nothing
+                    )
+
+        ApplyFromPlayhead ->
+            let
+                startBarIndex =
+                    (Data.Timeline.ticksToBarBeat model.playheadTicks tl).bar - 1
+
+                barLength i =
+                    Data.Timeline.barAt i tl |> Maybe.map .lengthTicks |> Maybe.withDefault Data.Time.ticksPerBar
+            in
+            Data.Timeline.barAt startBarIndex tl
+                |> Maybe.map
+                    (\b ->
+                        { startTicks = b.startTicks
+                        , endTicks =
+                            List.range startBarIndex (startBarIndex + model.drumFillBars - 1)
+                                |> List.foldl (\i acc -> acc + barLength i) b.startTicks
+                        }
+                    )
+
+
+{-| 適用先の人間向けラベル。押す前に着地点が見えるよう、プリセットボタンの隣に出す。
+-}
+drumRangeLabel : Model -> String
+drumRangeLabel model =
+    let
+        tl =
+            Data.Project.timeline model.project
+
+        barsLabel range =
+            let
+                startBar =
+                    (Data.Timeline.ticksToBarBeat range.startTicks tl).bar
+
+                endBar =
+                    (Data.Timeline.ticksToBarBeat (Basics.max range.startTicks (range.endTicks - 1)) tl).bar
+            in
+            if startBar == endBar then
+                String.fromInt startBar ++ "小節"
+
+            else
+                String.fromInt startBar ++ "〜" ++ String.fromInt endBar ++ "小節"
+    in
+    case model.drumApplyTarget of
+        ApplySection ->
+            case
+                model.selectedSectionId
+                    |> Maybe.andThen (\sid -> model.project.sections |> List.filter (\s -> s.id == sid) |> List.head)
+            of
+                Just section ->
+                    case Data.Project.sectionBounds section.id model.project of
+                        Just range ->
+                            section.name ++ "（" ++ barsLabel range ++ "）"
+
+                        Nothing ->
+                            "なし"
+
+                Nothing ->
+                    "なし"
+
+        ApplyLoop ->
+            case drumApplyRange model of
+                Just range ->
+                    "ループ範囲（" ++ barsLabel range ++ "）"
+
+                Nothing ->
+                    "なし"
+
+        ApplyFromPlayhead ->
+            case drumApplyRange model of
+                Just range ->
+                    barsLabel range ++ "から"
+
+                Nothing ->
+                    "なし"
 
 
 sectionAtTicks : Int -> Project -> Maybe Int
@@ -4854,30 +5028,34 @@ updateCore msg model =
             removeDrumNoteAt target model
 
         AppliedDrumPreset presetName ->
-            case Data.DrumPattern.byName presetName of
-                Just pattern ->
+            case ( Data.DrumPattern.byName presetName, drumApplyRange model ) of
+                ( Just pattern, Just range ) ->
                     let
-                        range =
-                            model.selectedSectionId
-                                |> Maybe.andThen (\sid -> Data.Project.sectionBounds sid model.project)
-                                |> Maybe.withDefault { startTicks = 0, endTicks = model.drumFillBars * Data.Time.ticksPerBar }
-                    in
-                    ( { model
-                        | project =
+                        rowPitches =
+                            Set.fromList DrumEditor.rowPitches
+
+                        project2 =
                             Data.DrumPattern.apply
                                 { trackId = model.selectedTrackId
                                 , startTicks = range.startTicks
                                 , endTicks = range.endTicks
-                                , mode = Data.DrumPattern.Replace
-                                , lanes = Data.DrumPattern.AllLanes
+                                , mode = model.drumApplyMode
+                                , lanes = Data.DrumPattern.OnlyLanes (Set.diff rowPitches model.drumApplyExcludedLanes)
                                 }
                                 pattern
                                 model.project
-                      }
-                    , Cmd.none
-                    )
 
-                Nothing ->
+                        addedIds =
+                            Set.fromList (List.range model.project.nextId (project2.nextId - 1))
+                    in
+                    showToast Toast.Success
+                        (presetName ++ " を " ++ drumRangeLabel model ++ " に適用しました")
+                        { model | project = project2, selectedNoteIds = addedIds }
+
+                ( Just _, Nothing ) ->
+                    showToast Toast.Error "適用先がありません（セクションを選ぶかループ範囲を作ってください）" model
+
+                ( Nothing, _ ) ->
                     ( model, Cmd.none )
 
         ChangedDrumFillBars raw ->
@@ -4887,6 +5065,24 @@ updateCore msg model =
 
                 Nothing ->
                     ( model, Cmd.none )
+
+        ChangedDrumApplyTarget raw ->
+            ( { model | drumApplyTarget = drumApplyTargetFromString raw }, Cmd.none )
+
+        ChangedDrumApplyMode raw ->
+            ( { model | drumApplyMode = drumApplyModeFromString raw }, Cmd.none )
+
+        ToggledDrumLane pitch ->
+            ( { model
+                | drumApplyExcludedLanes =
+                    if Set.member pitch model.drumApplyExcludedLanes then
+                        Set.remove pitch model.drumApplyExcludedLanes
+
+                    else
+                        Set.insert pitch model.drumApplyExcludedLanes
+              }
+            , Cmd.none
+            )
 
         ClickedExportMidi ->
             ( model
@@ -6055,6 +6251,9 @@ view model =
                                     , pressedVelocityBar = PressedVelocityBar
                                     , appliedPreset = AppliedDrumPreset
                                     , changedFillBars = ChangedDrumFillBars
+                                    , changedApplyTarget = ChangedDrumApplyTarget
+                                    , changedApplyMode = ChangedDrumApplyMode
+                                    , toggledLane = ToggledDrumLane
                                     , pressedRuler = PressedRuler
                                     , pressedLoopHandle = PressedLoopHandle
                                     , wheelZoomedRuler = WheelZoomedRuler
@@ -6071,6 +6270,10 @@ view model =
                                     , loop = displayedLoop model.loopDrag model
                                     , loopEditable = model.loopMode == LoopRange
                                     , rubberBand = rubberBandRect model.rubberBand
+                                    , applyTargetValue = drumApplyTargetToString model.drumApplyTarget
+                                    , applyModeValue = drumApplyModeToString model.drumApplyMode
+                                    , rangeLabel = drumRangeLabel model
+                                    , excludedLanes = model.drumApplyExcludedLanes
                                     }
                                 ]
                         ]

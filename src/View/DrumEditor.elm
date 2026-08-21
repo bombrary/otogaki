@@ -1,4 +1,4 @@
-module View.DrumEditor exposing (Config, ViewOpts, pitchesInYRange, view)
+module View.DrumEditor exposing (Config, ViewOpts, pitchesInYRange, rowPitches, view)
 
 import Data.DrumPattern
 import Data.Note exposing (Note)
@@ -24,6 +24,9 @@ type alias Config msg =
     , pressedVelocityBar : Int -> { clientX : Float, clientY : Float } -> msg
     , appliedPreset : String -> msg
     , changedFillBars : String -> msg
+    , changedApplyTarget : String -> msg
+    , changedApplyMode : String -> msg
+    , toggledLane : Int -> msg
     , pressedRuler : { offsetX : Float, clientX : Float, shift : Bool } -> msg
     , pressedLoopHandle : Bool -> Float -> msg
     , wheelZoomedRuler : { deltaY : Float, offsetX : Float } -> msg
@@ -43,6 +46,10 @@ type alias ViewOpts =
     , loop : Maybe { startTicks : Int, endTicks : Int }
     , loopEditable : Bool
     , rubberBand : Maybe { x : Float, y : Float, w : Float, h : Float }
+    , applyTargetValue : String
+    , applyModeValue : String
+    , rangeLabel : String
+    , excludedLanes : Set Int
     }
 
 
@@ -60,6 +67,13 @@ rows =
 rowHeight : Int
 rowHeight =
     22
+
+
+{-| 現在の行の pitch 一覧。レーン絞り込み UI の既定集合（全行含む）を求めるのに Main から使う。
+-}
+rowPitches : List Int
+rowPitches =
+    List.map Tuple.first rows
 
 
 totalSteps : Int -> Int
@@ -163,18 +177,48 @@ cellClickDecoder gridUnit pxPerSixteenth =
         (Decode.field "offsetY" Decode.float)
 
 
+targetOptions : List ( String, String )
+targetOptions =
+    [ ( "section", "セクション" ), ( "loop", "ループ範囲" ), ( "playhead", "プレイヘッドから" ) ]
+
+
+modeOptions : List ( String, String )
+modeOptions =
+    [ ( "replaceLanes", "差し替え" ), ( "merge", "重ねる" ), ( "replace", "全消去して差し替え" ) ]
+
+
+labeledSelect : (String -> msg) -> String -> List ( String, String ) -> Html msg
+labeledSelect toMsg currentValue options =
+    select [ Html.Events.onInput toMsg ]
+        (List.map
+            (\( value, label ) ->
+                option [ HA.value value, HA.selected (value == currentValue) ] [ text label ]
+            )
+            options
+        )
+
+
 view : Config msg -> ViewOpts -> Html msg
 view config opts =
     div [ HA.style "margin-top" "1rem" ]
         [ div [ HA.style "display" "flex", HA.style "gap" "0.4rem", HA.style "align-items" "center", HA.style "flex-wrap" "wrap" ]
-            (span [ HA.style "font-size" "0.85rem" ] [ text "プリセット（選択セクションがあればその範囲、なければ先頭から右の長さ）: " ]
-                :: List.map
-                    (\pattern ->
-                        button (Style.baseButton ++ [ Html.Events.onClick (config.appliedPreset pattern.name) ]) [ text pattern.name ]
-                    )
-                    Data.DrumPattern.patterns
+            [ span [ HA.style "font-size" "0.85rem" ] [ text "適用先: " ]
+            , labeledSelect config.changedApplyTarget opts.applyTargetValue targetOptions
+            , span [ HA.style "font-size" "0.85rem", HA.style "color" Theme.onSurfaceVariant ] [ text opts.rangeLabel ]
+            , span [ HA.style "font-size" "0.85rem" ] [ text " 適用方法: " ]
+            , labeledSelect config.changedApplyMode opts.applyModeValue modeOptions
+            ]
+        , div [ HA.style "display" "flex", HA.style "gap" "0.4rem", HA.style "align-items" "center", HA.style "flex-wrap" "wrap", HA.style "margin-top" "0.3rem" ]
+            (List.map
+                (\pattern ->
+                    button (Style.baseButton ++ [ Html.Events.onClick (config.appliedPreset pattern.name) ]) [ text pattern.name ]
+                )
+                Data.DrumPattern.patterns
                 ++ [ span [ HA.style "font-size" "0.85rem" ] [ text " 長さ:" ]
-                   , select [ Html.Events.onInput config.changedFillBars ]
+                   , select
+                        [ Html.Events.onInput config.changedFillBars
+                        , HA.disabled (opts.applyTargetValue /= "playhead")
+                        ]
                         (List.map
                             (\n ->
                                 option
@@ -192,7 +236,7 @@ view config opts =
             , HA.style "margin-top" "0.4rem"
             , HA.style "border" ("1px solid " ++ Theme.outlineVariant)
             ]
-            [ labelColumn
+            [ labelColumn config opts
             , div
                 [ HA.id PianoRoll.pianoRollScrollId
                 , HA.style "overflow-x" "auto"
@@ -228,23 +272,54 @@ view config opts =
         ]
 
 
-labelColumn : Html msg
-labelColumn =
+labelColumn : Config msg -> ViewOpts -> Html msg
+labelColumn config opts =
     div [ HA.style "flex" "0 0 90px", HA.style "border-right" ("1px solid " ++ Theme.outline) ]
         (div
             [ HA.style "height" (String.fromInt PianoRoll.rulerHeight ++ "px")
             , HA.style "box-sizing" "border-box"
             , HA.style "border-bottom" ("1px solid " ++ Theme.outlineVariant)
+            , HA.style "font-size" "9px"
+            , HA.style "color" Theme.onSurfaceVariant
+            , HA.style "text-align" "right"
+            , HA.style "padding-right" "0.4rem"
+            , HA.style "box-sizing" "border-box"
+            , HA.style "display" "flex"
+            , HA.style "align-items" "flex-end"
+            , HA.style "justify-content" "flex-end"
+            , HA.style "padding-bottom" "2px"
             ]
-            []
+            [ text "適用" ]
             :: List.map
-                (\( _, label ) ->
+                (\( pitch, label ) ->
+                    let
+                        excluded =
+                            Set.member pitch opts.excludedLanes
+                    in
                     div
                         [ HA.style "height" (String.fromInt rowHeight ++ "px")
                         , HA.style "line-height" (String.fromInt rowHeight ++ "px")
                         , HA.style "font-size" "0.8rem"
                         , HA.style "text-align" "right"
                         , HA.style "padding-right" "0.4rem"
+                        , HA.style "cursor" "pointer"
+                        , HA.style "user-select" "none"
+                        , HA.style "opacity"
+                            (if excluded then
+                                "0.4"
+
+                             else
+                                "1"
+                            )
+                        , HA.style "text-decoration"
+                            (if excluded then
+                                "line-through"
+
+                             else
+                                "none"
+                            )
+                        , HA.title "プリセット適用の対象（クリックで除外）"
+                        , Html.Events.onClick (config.toggledLane pitch)
                         ]
                         [ text label ]
                 )
