@@ -331,6 +331,7 @@ type DrumApplyTarget
     = ApplySection
     | ApplyLoop
     | ApplyFromPlayhead
+    | ApplyWholeSong
 
 
 type WavExportState
@@ -1986,6 +1987,9 @@ drumApplyTargetToString target =
         ApplyFromPlayhead ->
             "playhead"
 
+        ApplyWholeSong ->
+            "wholeSong"
+
 
 drumApplyTargetFromString : String -> DrumApplyTarget
 drumApplyTargetFromString raw =
@@ -1995,6 +1999,9 @@ drumApplyTargetFromString raw =
 
         "playhead" ->
             ApplyFromPlayhead
+
+        "wholeSong" ->
+            ApplyWholeSong
 
         _ ->
             ApplySection
@@ -2070,6 +2077,17 @@ drumApplyRange model =
                         }
                     )
 
+        ApplyWholeSong ->
+            let
+                endTicks =
+                    Data.Timeline.contentEndTicks tl
+            in
+            if endTicks > 0 then
+                Just { startTicks = 0, endTicks = endTicks }
+
+            else
+                Nothing
+
 
 {-| 適用先の人間向けラベル。押す前に着地点が見えるよう、プリセットボタンの隣に出す。
 -}
@@ -2122,6 +2140,14 @@ drumRangeLabel model =
             case drumApplyRange model of
                 Just range ->
                     barsLabel range ++ "から"
+
+                Nothing ->
+                    "なし"
+
+        ApplyWholeSong ->
+            case drumApplyRange model of
+                Just range ->
+                    "曲全体（" ++ barsLabel range ++ "）"
 
                 Nothing ->
                     "なし"

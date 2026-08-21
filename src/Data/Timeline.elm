@@ -3,6 +3,7 @@ module Data.Timeline exposing
     , Timeline
     , barAt
     , barsInRange
+    , contentEndTicks
     , fractionalBarToTicks
     , fromSections
     , keyAt
@@ -137,6 +138,23 @@ totalTicks timeline =
 
         Nothing ->
             0
+
+
+{-| 実際に書かれたセクションの終端 tick。末尾の余白小節（`tailPaddingBars`）は含まない。
+セクションが1つもなければ `totalTicks` と同じ（余白も含めた全体）を返す。ドラムパターンの「曲全体」適用の範囲として使う。
+-}
+contentEndTicks : Timeline -> Int
+contentEndTicks timeline =
+    let
+        sectionBars =
+            Array.toList timeline.bars |> List.filter (\b -> b.sectionId /= Nothing)
+    in
+    case List.reverse sectionBars |> List.head of
+        Just bar ->
+            bar.startTicks + bar.lengthTicks
+
+        Nothing ->
+            totalTicks timeline
 
 
 {-| tick 位置が属する小節。最後の小節より後ろなら最後の小節を返す。

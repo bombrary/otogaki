@@ -236,7 +236,7 @@ cellClickDecoder rows gridUnit pxPerSixteenth =
 
 targetOptions : List ( String, String )
 targetOptions =
-    [ ( "section", "セクション" ), ( "loop", "ループ範囲" ), ( "playhead", "プレイヘッドから" ) ]
+    [ ( "section", "セクション" ), ( "loop", "ループ範囲" ), ( "playhead", "プレイヘッドから" ), ( "wholeSong", "曲全体" ) ]
 
 
 modeOptions : List ( String, String )

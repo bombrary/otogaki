@@ -241,4 +241,25 @@ suite =
                     , Meter.ticksPerBar { numerator = 3, denominator = 4 }
                     ]
                     lengths
+        , test "contentEndTicks は末尾の余白小節を含まず、実際のセクションの終端を返す" <|
+            \_ ->
+                let
+                    tl =
+                        Timeline.fromSections { minBars = 6 } [ section 1 2 Meter.default Key.default ]
+                in
+                Expect.equal (Meter.ticksPerBar Meter.default * 2) (Timeline.contentEndTicks tl)
+        , test "contentEndTicks は totalTicks より短い（余白分だけ差がある）" <|
+            \_ ->
+                let
+                    tl =
+                        Timeline.fromSections { minBars = 6 } [ section 1 2 Meter.default Key.default ]
+                in
+                Expect.lessThan (Timeline.totalTicks tl) (Timeline.contentEndTicks tl)
+        , test "セクションが1つもなければ contentEndTicks は totalTicks と一致（余白も含めた全体）" <|
+            \_ ->
+                let
+                    tl =
+                        Timeline.fromSections { minBars = 4 } []
+                in
+                Expect.equal (Timeline.totalTicks tl) (Timeline.contentEndTicks tl)
         ]
