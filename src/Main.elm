@@ -882,6 +882,16 @@ selectedTrackKind model =
         |> Maybe.map .kind
 
 
+isDrumTrackKind : Data.Track.TrackKind -> Bool
+isDrumTrackKind kind =
+    case kind of
+        DrumTrack _ ->
+            True
+
+        NoteTrack _ ->
+            False
+
+
 convertTrackKind : Data.Track.Instrument -> Data.Track.TrackKind -> Data.Track.TrackKind
 convertTrackKind inst kind =
     if inst == Data.Track.DrumKit then
@@ -2371,6 +2381,12 @@ clearHoveredNote noteId hovered =
 transposeSelection : KeyEvent -> Model -> ( Model, Cmd Msg )
 transposeSelection k model =
     if Set.isEmpty model.selectedNoteIds then
+        ( model, Cmd.none )
+
+    else if selectedTrackKind model |> Maybe.map isDrumTrackKind |> Maybe.withDefault False then
+        -- ドラムの pitch はドラムマップであり、音高ではない。↑↓ で移調するとノートが
+        -- ステップグリッドの行から外れて undo 以外に復旧手段がなくなるので（Data.Project.mapNoteTrackNotes
+        -- が曲全体移調で DrumTrack を除外しているのと同じ理由）、↑↓ を無視する。
         ( model, Cmd.none )
 
     else
