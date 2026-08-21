@@ -4868,6 +4868,8 @@ updateCore msg model =
                                 { trackId = model.selectedTrackId
                                 , startTicks = range.startTicks
                                 , endTicks = range.endTicks
+                                , mode = Data.DrumPattern.Replace
+                                , lanes = Data.DrumPattern.AllLanes
                                 }
                                 pattern
                                 model.project

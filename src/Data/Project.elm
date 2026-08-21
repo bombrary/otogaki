@@ -21,6 +21,7 @@ module Data.Project exposing
     , removeScrap
     , removeSection
     , moveTrackToIndex
+    , notesOf
     , removeTrack
     , removeVoicing
     , renameProject
@@ -127,6 +128,17 @@ trackNotes track =
 
         DrumTrack notes ->
             notes
+
+
+{-| 指定トラックのノート列。存在しない id なら []。
+-}
+notesOf : Int -> Project -> List Note
+notesOf trackId project =
+    project.tracks
+        |> List.filter (\t -> t.id == trackId)
+        |> List.head
+        |> Maybe.map trackNotes
+        |> Maybe.withDefault []
 
 
 demo : Project
