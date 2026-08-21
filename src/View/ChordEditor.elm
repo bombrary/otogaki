@@ -5,6 +5,7 @@ import Data.Chord.Format as Format
 import Data.ChordSheet
 import Data.ChordTrack exposing (ChordCell, ChordTrack, TokenKind(..))
 import Data.GuitarForm as GuitarForm
+import Data.Help as Help
 import Data.StrumExpand
 import Data.StrumPattern
 import Data.Timeline exposing (Timeline)
@@ -47,6 +48,7 @@ type alias Config msg =
     , clickedResetVoicing : Int -> msg
     , hoveredFretCell : { pitch : Int, interval : Int, x : Float, y : Float } -> msg
     , unhoveredFretCell : msg
+    , openedHelp : Help.TopicId -> msg
     }
 
 
@@ -90,7 +92,7 @@ currentChordView timeline playheadTicks voicingState track hover =
 
         Just chord ->
             div [ HA.style "margin-top" "0.5rem", HA.style "overflow-x" "auto" ]
-                [ div Style.headingText [ text ("\u{1F3B8} " ++ Format.format { preferFlat = False } chord) ]
+                [ div Style.headingText [ text ("🎸 " ++ Format.format { preferFlat = False } chord) ]
                 , case Data.StrumExpand.formFor voicingState.guitarFormEnabled effectiveVoicings chord of
                     Just form ->
                         Fretboard.viewReadOnly hover (formToFretboardData chord form)
@@ -114,7 +116,7 @@ view config timeline playheadTicks voicingState track =
         , HA.style "border" ("1px solid " ++ Theme.outlineVariant)
         , HA.style "border-radius" "4px"
         ]
-        [ Html.summary (HA.style "cursor" "pointer" :: Style.headingText) [ text "コード進行" ]
+        [ Html.summary (HA.style "cursor" "pointer" :: Style.headingText) [ text "コード進行", Style.helpButton { onClick = config.openedHelp Help.ChordSheet, label = "コード進行" } ]
         , div [ HA.style "display" "flex", HA.style "gap" "0.5rem", HA.style "align-items" "center", HA.style "flex-wrap" "wrap", HA.style "margin-top" "0.3rem" ]
             [ button
                 (Style.baseButton
@@ -134,7 +136,7 @@ view config timeline playheadTicks voicingState track =
             , button
                 (Style.toggleButton voicingState.guitarFormEnabled
                     ++ [ HE.onClick config.toggledGuitarFormEnabled
-                       , HA.title "登録ボイシングのないコードをどちらで鳴らす/表示するか（ON=ギターの実運指を優先、OFF=ピアノ的な理論値をそのまま）"
+                       , HA.title "登録ボイシングのないコードを今どちらで鳴らす/表示しているか（押すと切り替わる。ON=ギターの実運指優先、OFF=ピアノ的な理論値）"
                        ]
                 )
                 [ text
@@ -173,11 +175,9 @@ progressionEditorView config sheetText parseError =
     div []
         [ span [ HA.style "font-size" "0.75rem", HA.style "color" Theme.onSurfaceVariant, HA.style "display" "block", HA.style "margin-top" "0.3rem" ]
             [ text "空行でセクションを区切り、ブロック先頭の縦棒を含まない行がセクション名になります。縦棒で小節区切り、空白で小節内分割。% = 直前のコードを繰返し、_ = 休符、= = 直前のコードを伸ばす、// 以降は行末までコメント。入力するたびに自動反映されます（形式が崩れている間は反映されません）。コードをクリックすると再生位置がそこへ移動" ]
-        , Html.details [ HA.style "margin-top" "0.3rem", HA.style "font-size" "0.75rem", HA.style "color" Theme.onSurfaceVariant ]
-            [ Html.summary [ HA.style "cursor" "pointer" ] [ text "記法の詳細 ▾" ]
-            , div [ HA.style "margin-top" "0.3rem", HA.style "line-height" "1.6" ]
-                [ text "@NAME でボイシング辞書に登録した運指をコードに指定できます（例: FM7@drop2）。行頭に「リズム: 8ビート」のように書くと、そのセクションのコードが指定したリズムパターンで刻まれます（8ビート・16ビート・フォーク・アルペジオ・全音符・シンコペーション）。"
-                ]
+        , div [ HA.style "margin-top" "0.3rem", HA.style "font-size" "0.75rem", HA.style "color" Theme.onSurfaceVariant, HA.style "display" "flex", HA.style "align-items" "center", HA.style "gap" "0.3rem" ]
+            [ text "@NAME やリズム指定の詳しい書き方は"
+            , Style.helpButton { onClick = config.openedHelp Help.ChordSheet, label = "コード譜の記法" }
             ]
         , textarea
             [ HA.value sheetText
@@ -249,7 +249,7 @@ voicingsSection config voicingState cells =
         , HA.style "border" ("1px solid " ++ Theme.surfaceContainerHighest)
         , HA.style "border-radius" "4px"
         ]
-        (Html.summary [ HA.style "cursor" "pointer", HA.style "font-size" "0.85rem", HA.style "color" Theme.onSurfaceVariant ] [ text "ボイシング辞書" ]
+        (Html.summary [ HA.style "cursor" "pointer", HA.style "font-size" "0.85rem", HA.style "color" Theme.onSurfaceVariant, HA.title "@NAME でコードに指定できる、名前付きの運指の一覧" ] [ text "ボイシング辞書", Style.helpButton { onClick = config.openedHelp Help.VoicingNotation, label = "ボイシング辞書" } ]
             :: (if List.isEmpty missing then
                     []
 
@@ -306,7 +306,7 @@ voicingRow config voicingState index voicing =
                 ]
             , button
                 (Style.baseButton ++ [ HE.onClick (config.clickedPlayVoicing index), HA.title "このボイシングを和音で確かめる（試聴キーに従う）" ])
-                [ text "▶　全部同時発音" ]
+                [ text "▶ 和音で試聴" ]
             , if voicingState.pendingDelete == Just index then
                 button
                     (Style.armedDangerButton ++ [ HE.onClick (config.clickedRemoveVoicing index) ])
@@ -336,7 +336,10 @@ voicingEditorView config voicingState index voicing =
             Data.Voicing.displayRoot rootPitch voicing.offsets
     in
     div []
-        [ div Style.headingText [ text ("ボイシングを編集: " ++ voicing.name) ]
+        [ div [ HA.style "display" "flex", HA.style "align-items" "center", HA.style "gap" "0.3rem" ]
+            [ div Style.headingText [ text ("ボイシングを編集: " ++ voicing.name) ]
+            , Style.helpButton { onClick = config.openedHelp Help.VoicingEditorOps, label = "ボイシングの編集画面" }
+            ]
         , div
             [ HA.style "display" "flex"
             , HA.style "gap" "0.4rem"
@@ -359,11 +362,11 @@ voicingEditorView config voicingState index voicing =
                        ]
                 )
                 [ text "プリセットを適用" ]
-            , button (Style.dangerButton ++ [ HE.onClick (config.clickedResetVoicing index), HA.title "offsetsと弦選択を空にして最初からやり直す" ]) [ text "初期化" ]
+            , button (Style.dangerButton ++ [ HE.onClick (config.clickedResetVoicing index), HA.title "offsets と弦選択を空にして最初からやり直す（Ctrl/Cmd+Zで戻せます）" ]) [ text "初期化" ]
             , Style.divider
             , button
                 (Style.baseButton ++ [ HE.onClick (config.clickedPlayVoicing index), HA.title "このボイシングを和音で確かめる（試聴キーに従う）" ])
-                [ text "▶　全部同時発音" ]
+                [ text "▶ 和音で試聴" ]
             ]
         , div [ HA.style "display" "flex", HA.style "gap" "0.6rem", HA.style "align-items" "flex-start", HA.style "overflow-x" "auto", HA.style "margin-top" "0.6rem" ]
             [ VoicingKeyboard.view
@@ -395,7 +398,17 @@ voicingEditorView config voicingState index voicing =
 rhythmSelect : Config msg -> Maybe String -> Html msg
 rhythmSelect config rhythm =
     select
-        [ HE.onInput (\raw -> config.changedRhythm (if raw == "" then Nothing else Just raw)) ]
+        [ HE.onInput
+            (\raw ->
+                config.changedRhythm
+                    (if raw == "" then
+                        Nothing
+
+                     else
+                        Just raw
+                    )
+            )
+        ]
         (option [ HA.value "", HA.selected (rhythm == Nothing) ] [ text "ベタうち" ]
             :: List.map
                 (\p ->
@@ -408,7 +421,9 @@ rhythmSelect config rhythm =
 previewRootSelect : Config msg -> Int -> Html msg
 previewRootSelect config previewRootPc =
     select
-        [ HE.onInput config.changedVoicingPreviewRoot ]
+        [ HE.onInput config.changedVoicingPreviewRoot
+        , HA.title "▶ で試聴するときのルート音（保存される offsets はキーに依らない相対値です）"
+        ]
         (List.range 0 11
             |> List.map
                 (\pc ->
@@ -435,7 +450,9 @@ qualitySelect config presetQualityName =
 shapeSelect : Config msg -> String -> Html msg
 shapeSelect config presetShapeName =
     select
-        [ HE.onInput config.changedVoicingPresetShape ]
+        [ HE.onInput config.changedVoicingPresetShape
+        , HA.title "Closed/Drop2/Wide＝和音の積み方。テンション（#9 等）を含まない基本形になります"
+        ]
         (VoicingPreset.shapes
             |> List.map
                 (\( name, _ ) ->

@@ -47,7 +47,10 @@ colorReachable =
 
 
 type alias Config msg =
-    { pressedFret : Int -> Int -> msg -- 弦インデックス, フレット
+    { pressedFret :
+        Int
+        -> Int
+        -> msg -- 弦インデックス, フレット
     , doubleClickedFret : Int -> Int -> msg
     }
 
@@ -170,6 +173,7 @@ fretCell config hover rootPitch selected picks stringIndex openPitch column =
                 Just c ->
                     [ HA.class "m3-btn"
                     , HA.style "cursor" "pointer"
+                    , HA.title "クリックで押弦位置を置く（ダブルクリックで消す）"
                     , HE.onClick (c.pressedFret stringIndex column)
                     , HE.onDoubleClick (c.doubleClickedFret stringIndex column)
                     ]

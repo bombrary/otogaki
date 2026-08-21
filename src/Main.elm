@@ -6000,6 +6000,7 @@ view model =
             , clickedResetVoicing = ClickedResetVoicing
             , hoveredFretCell = HoveredFretCell
             , unhoveredFretCell = UnhoveredFretCell
+            , openedHelp = OpenedHelpTopic
             }
 
         voicingState =

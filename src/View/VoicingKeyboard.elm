@@ -263,6 +263,7 @@ laneRow config hover displayRootPitch rootPitch placed selectedPitches pitch =
         , HA.style "position" "relative"
         , HA.style "touch-action" "none"
         , HA.attribute "data-pointer-capture" ""
+        , HA.title "クリックで構成音を置く（ダブルクリックで消す）"
         , HE.stopPropagationOn "pointerdown"
             (Decode.map (\pos -> ( config.pressedOffset pitch pos, True )) pressDecoder)
         , HE.stopPropagationOn "pointermove"
