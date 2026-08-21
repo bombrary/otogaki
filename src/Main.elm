@@ -18,6 +18,7 @@ import Data.Voicing
 import Data.VoicingPreset
 import Data.ChordTrack
 import Data.DrumPattern
+import Data.Help as Help
 import Data.Key
 import Data.Meter
 import Data.Note
@@ -273,7 +274,7 @@ type alias Model =
     , toast : Maybe Toast.Toast
     , toastCounter : Int
     , chordSheetError : Maybe Data.ChordSheet.ParseError
-    , helpModalOpen : Bool
+    , helpModal : Maybe { tab : Help.Tab, focus : Maybe Help.TopicId }
     , dragCursor : Maybe { x : Float, y : Float }
     }
 
@@ -500,6 +501,8 @@ type Msg
     | ChangedGuideKeyMode String
     | DismissedToast Int
     | ToggledHelpModal
+    | OpenedHelpTopic Help.TopicId
+    | SelectedHelpTab Help.Tab
     | NoOp
 
 
@@ -629,7 +632,7 @@ init flags =
       , toast = Nothing
       , toastCounter = 0
       , chordSheetError = Nothing
-      , helpModalOpen = False
+      , helpModal = Nothing
       , dragCursor = Nothing
       }
     , Task.perform (\vp -> ResizedWindow (round vp.viewport.width) (round vp.viewport.height)) Browser.Dom.getViewport
@@ -3251,16 +3254,21 @@ showToast tone message model =
 
 isModalOpen : Model -> Bool
 isModalOpen model =
-    model.formPicker /= Nothing || model.editingVoicingIndex /= Nothing || model.wavExportModalOpen || model.helpModalOpen
+    model.formPicker /= Nothing || model.editingVoicingIndex /= Nothing || model.wavExportModalOpen || model.helpModal /= Nothing
 
 
-{-| 開いているモーダルを優先順（formPicker > editingVoicingIndex > wavExportModalOpen）で一つ閉じる。
+{-| 開いているモーダルを優先順（helpModal > formPicker > editingVoicingIndex > wavExportModalOpen）で一つ閉じる。
+helpModal を最優先にするのは、他のモーダル上に重ねて文脈ヘルプを開けるようにしたため（描画順も同じ優先度）、
+最後に開いたヘルプが Escape の第一対象になるのが自然だから。
 既存のクローズ用Msgハンドラを再利用することで、閉じる際の後処理（voicing選択解除等）を二重実装しない。
 WAV書出のレンダリング中は閉じない（状態が宙ぶらりになるのを防ぐ）。
 -}
 closeTopModal : Model -> ( Model, Cmd Msg )
 closeTopModal model =
-    if model.formPicker /= Nothing then
+    if model.helpModal /= Nothing then
+        updateCore ToggledHelpModal model
+
+    else if model.formPicker /= Nothing then
         updateCore ClosedFormPicker model
 
     else if model.editingVoicingIndex /= Nothing then
@@ -3272,9 +3280,6 @@ closeTopModal model =
 
     else if model.wavExportModalOpen && model.wavExportState /= WavExportRendering then
         updateCore ClosedWavExportModal model
-
-    else if model.helpModalOpen then
-        updateCore ToggledHelpModal model
 
     else
         ( model, Cmd.none )
@@ -4204,6 +4209,9 @@ updateCore msg model =
 
                     Nothing ->
                         ( model, Cmd.none )
+
+            else if k.key == "?" && model.helpModal /= Nothing then
+                updateCore ToggledHelpModal model
 
             else if isModalOpen model then
                 ( model, Cmd.none )
@@ -5778,7 +5786,23 @@ updateCore msg model =
                     ( model, Cmd.none )
 
         ToggledHelpModal ->
-            ( { model | helpModalOpen = not model.helpModalOpen }, Cmd.none )
+            ( { model
+                | helpModal =
+                    case model.helpModal of
+                        Just _ ->
+                            Nothing
+
+                        Nothing ->
+                            Just { tab = Help.ShortcutsTab, focus = Nothing }
+              }
+            , Cmd.none
+            )
+
+        OpenedHelpTopic topicId ->
+            ( { model | helpModal = Just { tab = Help.tabOf topicId, focus = Just topicId } }, Cmd.none )
+
+        SelectedHelpTab tab ->
+            ( { model | helpModal = Maybe.map (\h -> { h | tab = tab, focus = Nothing }) model.helpModal }, Cmd.none )
 
         NoOp ->
             ( model, Cmd.none )
@@ -6103,7 +6127,7 @@ view model =
 
         helpRow =
             div [ style "font-size" "0.75rem", style "color" Theme.onSurfaceVariant, style "margin-top" "0.6rem", style "display" "flex", style "align-items" "center", style "gap" "0.5rem", style "flex-wrap" "wrap" ]
-                [ button (Style.baseButton ++ [ onClick ToggledHelpModal ]) [ text "? ショートカット一覧" ]
+                [ button (Style.baseButton ++ [ onClick ToggledHelpModal ]) [ text "? ヘルプ" ]
                 , text "ルーラーやコードのクリックで再生位置を移動、ダブルクリック/右クリックでノート削除"
                 ]
 
@@ -6980,11 +7004,6 @@ view model =
 
           else
             text ""
-        , if model.helpModalOpen then
-            Modal.view { onClose = ToggledHelpModal, noOp = NoOp } [ HelpPanel.view ]
-
-          else
-            text ""
         , case ( model.formPicker, model.editingVoicingIndex ) of
             ( Nothing, Just index ) ->
                 case List.drop index model.project.voicings |> List.head of
@@ -7037,6 +7056,13 @@ view model =
 
                     Nothing ->
                         text ""
+
+            Nothing ->
+                text ""
+        , case model.helpModal of
+            Just helpState ->
+                Modal.view { onClose = ToggledHelpModal, noOp = NoOp }
+                    [ HelpPanel.view { selectedTab = SelectedHelpTab, selectedTopic = OpenedHelpTopic } helpState ]
 
             Nothing ->
                 text ""
