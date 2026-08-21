@@ -7491,6 +7491,8 @@ pageTabBar model =
                        , style "gap" "0.1rem"
                        , style "padding" "0.3rem 0"
                        , style "border-radius" "0"
+                       , Html.Attributes.title label
+                       , Html.Attributes.attribute "aria-label" label
                        ]
                 )
                 (if compact then

@@ -688,7 +688,16 @@ blockView isNarrow config pxPerBar selectedId resizePreview extras movingSection
           -}
           HA.style "touch-action" "pan-x"
         , HE.on "pointerdown" (Decode.map (config.pressedBlock section.id) (Decode.field "clientX" Decode.float))
-        , HA.title (baseTitle ++ "（ドラッグで並べ替え、右端をドラッグで小節数変更）")
+        , HA.title
+            (baseTitle
+                ++ "（ドラッグで並べ替え、右端をドラッグで小節数変更）"
+                ++ (if section.memo /= "" then
+                        "（📝＝メモあり）"
+
+                    else
+                        ""
+                   )
+            )
         ]
         [ text section.name
         , if section.memo /= "" then
