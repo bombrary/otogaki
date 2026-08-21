@@ -185,4 +185,60 @@ suite =
                         Meter.ticksPerBar { numerator = 3, denominator = 4 }
                 in
                 Expect.equal (bar2Start + threeQuarterBarTicks // 2) (Timeline.fractionalBarToTicks 2.5 tl)
+        , test "barsInRange はで1小節ちょうどの範囲でその1小節だけを返す" <|
+            \_ ->
+                let
+                    tl =
+                        Timeline.fromSections { minBars = 4 } []
+
+                    barTicks =
+                        Meter.ticksPerBar Meter.default
+                in
+                Expect.equal [ 0 ] (Timeline.barsInRange 0 barTicks tl |> List.map .index)
+        , test "barsInRange は複数小節をまたがる範囲をすべて返す" <|
+            \_ ->
+                let
+                    tl =
+                        Timeline.fromSections { minBars = 4 } []
+
+                    barTicks =
+                        Meter.ticksPerBar Meter.default
+                in
+                Expect.equal [ 0, 1, 2 ] (Timeline.barsInRange 0 (barTicks * 3) tl |> List.map .index)
+        , test "barsInRange は範囲外で空リストを返す" <|
+            \_ ->
+                let
+                    tl =
+                        Timeline.fromSections { minBars = 4 } []
+
+                    barTicks =
+                        Meter.ticksPerBar Meter.default
+                in
+                Expect.equal [] (Timeline.barsInRange (barTicks * 100) (barTicks * 101) tl)
+        , test "barsInRange は startTicks == endTicks で空リストを返す" <|
+            \_ ->
+                let
+                    tl =
+                        Timeline.fromSections { minBars = 4 } []
+                in
+                Expect.equal [] (Timeline.barsInRange 0 0 tl)
+        , test "barsInRange は変拍子混在でも各小節の lengthTicks が正しい" <|
+            \_ ->
+                let
+                    tl =
+                        Timeline.fromSections { minBars = 0 }
+                            [ section 1 2 Meter.default Key.default
+                            , section 2 2 { numerator = 3, denominator = 4 } Key.default
+                            ]
+
+                    lengths =
+                        Timeline.barsInRange 0 (Timeline.totalTicks tl) tl |> List.map .lengthTicks
+                in
+                Expect.equal
+                    [ Meter.ticksPerBar Meter.default
+                    , Meter.ticksPerBar Meter.default
+                    , Meter.ticksPerBar { numerator = 3, denominator = 4 }
+                    , Meter.ticksPerBar { numerator = 3, denominator = 4 }
+                    ]
+                    lengths
         ]

@@ -2,6 +2,7 @@ module Data.Timeline exposing
     ( Bar
     , Timeline
     , barAt
+    , barsInRange
     , fractionalBarToTicks
     , fromSections
     , keyAt
@@ -112,6 +113,15 @@ fromSections { minBars } sections =
 barAt : Int -> Timeline -> Maybe Bar
 barAt index timeline =
     Array.get index timeline.bars
+
+
+{-| [startTicks, endTicks) と交差する小節を、曲頭からの順で返す。ドラムパターンの適用範囲を
+小節ごとに分解するのに使う（`Data/DrumPattern.elm`）。
+-}
+barsInRange : Int -> Int -> Timeline -> List Bar
+barsInRange startTicks endTicks timeline =
+    Array.toList timeline.bars
+        |> List.filter (\b -> b.startTicks < endTicks && b.startTicks + b.lengthTicks > startTicks)
 
 
 totalBars : Timeline -> Int
