@@ -6524,13 +6524,26 @@ view model =
                 (Set.union model.highlightedPitches model.heldKeyPitches)
                 model.showKeyboard
 
+        {- 鍵盤パネルなどの補助パネルは「開いたら閉じるまで場所を食う」ので、独立スクロール領域（.pane-scroll）に
+           閉じ込める。これがないと、.pr-col > .pr-fill の min-height: 0 により開いた分だけピアノロール枠が
+           潰れる。max-height はペイン高に対する割合なので、枠側には常に 55% 以上が残る。
+        -}
+        editSidePanels =
+            div
+                [ Html.Attributes.class "pane-scroll"
+                , style "flex" "0 1 auto"
+                , style "min-height" "0"
+                , style "max-height" "45%"
+                ]
+                [ keyboardPanel ]
+
         rightPaneChildren =
             [ if model.selectedTrackId == Data.ChordTrack.trackId then
                 chordTrackMainView
 
               else
                 editContent
-            , keyboardPanel
+            , editSidePanels
             ]
 
         sectionBarPanel =
@@ -6599,11 +6612,25 @@ view model =
         songPageChildren =
             [ sectionBarPanel, nameInput, memoTextarea, chordTrackMainView ]
 
+        {- 鍵盤パネルと <details>×2 も rightPaneChildren の editSidePanels と同じ理由で回収する。
+           iPad などのタッチレイアウトは兄弟が最も多く、全部開いてもピアノロール枠を圧迫しすぎないよう
+           一つにまとめて隔離する。editSidePanels と同じ let スコープなので別名にする。
+        -}
+        editPageSidePanels =
+            div
+                [ Html.Attributes.class "pane-scroll"
+                , style "flex" "0 1 auto"
+                , style "min-height" "0"
+                , style "max-height" "45%"
+                ]
+                [ keyboardPanel
+                , Html.details [] [ Html.summary [] [ text "スケールガイド" ], scaleGuidePanel ]
+                , Html.details [] [ Html.summary [] [ text "コード表示" ], chordEditorPanel ]
+                ]
+
         editPageChildren =
             [ editContent
-            , keyboardPanel
-            , Html.details [] [ Html.summary [] [ text "スケールガイド" ], scaleGuidePanel ]
-            , Html.details [] [ Html.summary [] [ text "コード表示" ], chordEditorPanel ]
+            , editPageSidePanels
             ]
 
         tracksPageChildren =

@@ -377,7 +377,9 @@ scrollFrame : FrameOpts msg -> Html msg
 scrollFrame f =
     Html.div
         [ HA.id f.scrollId
-        , HA.class "pr-fill"
+        -- pr-frame の min-height は CSS 側（Theme.cssRules）で定義。インラインだと
+        -- .pr-col > .pr-fill の min-height: 0 に勝ってしまい、鍵盤パネル等を開いた時に外側ペインへ溢れる。
+        , HA.class "pr-fill pr-frame"
         , HA.style "overflow" "auto"
         -- iOS のスクロールチェーン（この枠が端に達したときに外側ペインへスクロールが伝播する現象）を抑える。
         , HA.style "overscroll-behavior" "contain"
@@ -385,7 +387,6 @@ scrollFrame f =
         , HA.style "box-sizing" "border-box"
         , HA.style "margin-top" "1rem"
         , HA.style "background" Theme.surface
-        , HA.style "min-height" (pxStr (Basics.min 160 (Maybe.withDefault 160 f.maxHeight)))
         , HA.style "max-height"
             (case f.maxHeight of
                 Just h ->
