@@ -546,6 +546,9 @@ regionRulerView isNarrow config pxPerBar loopEditable loop ticksToPx playheadTic
         , HA.style "cursor" "pointer"
         , HA.style "touch-action" "none"
         , HA.title "クリックで再生位置を移動。shift + ドラッグでループ区間を作成。マウスホイールでズーム"
+        -- PianoRoll.rulerViewWith と同じ理由。タッチの暗黙キャプチャを解除し、
+        -- 表示範囲内タップのシークやループ作成がタッチでも ReleasedDrag まで届くようにする。
+        , HA.attribute "data-pointer-release-capture" ""
         , HE.on "pointerdown" (Decode.map config.pressedRuler rulerPressDecoder)
         , HE.preventDefaultOn "wheel" (Decode.map (\w -> ( config.wheelZoomed w, True )) wheelDecoder)
         ]

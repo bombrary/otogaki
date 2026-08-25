@@ -809,6 +809,10 @@ rulerViewWith isNarrow handlers opts =
         , HA.style "cursor" "pointer"
         , HA.style "touch-action" "none"
         , HA.title "クリックで再生位置を移動。shift + ドラッグでループ区間を作成。マウスホイールでズーム"
+        -- タッチはpointerdownした要素に暗黙キャプチャされ、ドラッグ中のpointermove/pointerupが
+        -- 全画面オーバーレイ（Main.elm の viewDragOverlay）に届かなくなる。ここを解除して、
+        -- shift+ドラッグのループ作成やタップシークがタッチでも ReleasedDrag まで届くようにする。
+        , HA.attribute "data-pointer-release-capture" ""
         , Html.Events.on "pointerdown" (Decode.map handlers.pressedRuler rulerPressDecoder)
         , Html.Events.preventDefaultOn "wheel" (Decode.map (\w -> ( handlers.wheelZoomedRuler w, True )) wheelDecoder)
         ]
