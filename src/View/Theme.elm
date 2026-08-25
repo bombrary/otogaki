@@ -738,7 +738,9 @@ darkOverrideBlock =
 
 cssRules : List String
 cssRules =
-    [ "html, body { margin: 0; height: 100%; }"
+    [ -- overflow: hidden は .app-root が常に可視高と一致する前提で、document 自体がスクロールしないようにする（iOS Safari の
+      -- 100vh 対策、下記 .app-root を参照）。
+      "html, body { margin: 0; height: 100%; overflow: hidden; }"
     , "body { font-family: " ++ fontFamily ++ "; color: " ++ onSurface ++ "; background: " ++ surface ++ "; }"
     , "button:focus-visible, [tabindex]:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid "
         ++ primary
@@ -760,6 +762,12 @@ cssRules =
     , ".pr-col { display: flex; flex-direction: column; }"
     , ".pr-col > * { flex: 0 0 auto; }"
     , ".pr-col > .pr-fill { flex: 1 1 auto; min-height: 0; }"
+    , -- アプリ全体のルート。100% を先に書き、3行目で 100dvh で上書きする。同じプロパティを
+      -- 2回定義しても CSS なら後方優先で 100dvh 非対応環境は 100% にフォールバックされる。
+      -- Elm のインライン HA.style は同じプロパティを2回指定しても後勝ちの1回しか反映されずフォールバックが
+      -- 失われるため、必ずここ（CSS）に書くこと。iOS Safari の 100vh は URL バーが隠れた状態の高さを
+      -- 指すため可視領域より大きくなり、document 自体がスクロールしてヘッダーごと流れる。
+      ".app-root { height: 100%; height: 100dvh; }"
     , rootBlock
     , darkMediaBlock
     , darkOverrideBlock

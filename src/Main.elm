@@ -6836,8 +6836,10 @@ view model =
     div
         [ style "display" "flex"
         , style "flex-direction" "column"
-        , style "height" "100vh"
-        , classList [ ( "touch-ui", isTouchLayout model ) ]
+        -- 高さは .app-root（Theme.cssRules）で 100dvh と 100% フォールバックを定義。iOS Safari の
+        -- 100vh は URL バーが隠れた状態の高さを指し可視領域より大きくなるため、document 自体がスクロールして
+        -- ヘッダーごと流れることがあった。
+        , classList [ ( "app-root", True ), ( "touch-ui", isTouchLayout model ) ]
         ]
         [ Style.focusCss
         , Palette.globalCss

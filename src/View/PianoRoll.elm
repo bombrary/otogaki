@@ -379,6 +379,8 @@ scrollFrame f =
         [ HA.id f.scrollId
         , HA.class "pr-fill"
         , HA.style "overflow" "auto"
+        -- iOS のスクロールチェーン（この枠が端に達したときに外側ペインへスクロールが伝播する現象）を抑える。
+        , HA.style "overscroll-behavior" "contain"
         , HA.style "border" ("1px solid " ++ Theme.outlineVariant)
         , HA.style "box-sizing" "border-box"
         , HA.style "margin-top" "1rem"
