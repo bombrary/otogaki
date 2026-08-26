@@ -115,3 +115,14 @@ document.addEventListener("pointerdown", (e) => {
     try { el.releasePointerCapture(e.pointerId); } catch (_) {}
   }
 }, { capture: true });
+
+// ピアノロールのグリッドは、空白スワイプをネイティブスクロールに委譲するため touch-action:
+// pan-x pan-y を持つ。しかし長押しで矩形選択・ループ範囲ドラッグに昇格した後は、それを止めたい。
+// touch-action は pointerdown 時点の値で固定されてしまうため途中変更では効かない。代わりに、
+// 非パッシブな touchmove で、ブラウザがスクロールを開始する「前」に1回 preventDefault すれば、
+// そのジェスチャの間ずっと抑止される。data-suppress-touch-scroll を持つ要素（グリッドの svg）に
+// 限定し、closest() で内側のノート rect からも拾えるようにする。
+document.addEventListener("touchmove", (e) => {
+  if (!e.cancelable) return; // 既にスクロール中。呼んでも無効（コンソール警告が出るだけ）
+  if (e.target.closest?.("[data-suppress-touch-scroll]")) e.preventDefault();
+}, { passive: false, capture: true });

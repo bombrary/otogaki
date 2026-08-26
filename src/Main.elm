@@ -1297,6 +1297,14 @@ rubberBandRect band =
             )
 
 
+{-| ピアノロールのグリッドで、長押し経由の矩形選択・ループ範囲ドラッグが進行中か。
+真の間、js/main.js の非パッシブ touchmove リスナーにネイティブスクロールを止めさせる。
+-}
+pianoRollScrollLock : Model -> Bool
+pianoRollScrollLock model =
+    model.rubberBand /= Nothing || model.loopDrag /= Nothing
+
+
 {-| ドラムドラッグ（塗り・移動）を進行中の pointermove で処理する。DraggedTo から、他のレガシードラッグ
 （pendingNoteDrag 等）より先に分岐される。
 -}
@@ -6285,8 +6293,14 @@ view model =
             , tool = model.tool
             , cutGuideTicks = model.cutGuideTicks
             , isNarrow = isTouchLayout model
+            , scrollLock = pianoRollScrollLock model
             , gridTouchAction =
-                if model.tool == PianoRoll.PointerTool && model.touchMode == TouchNormal then
+                if pianoRollScrollLock model then
+                    -- 矩形選択・ループドラッグ進行中。途中変更は進行中ジェスチャには効かないが、
+                    -- 状態の一貫性と次ジェスチャのために閉じておく（実際の抑止は scrollLock 属性側）。
+                    "none"
+
+                else if model.tool == PianoRoll.PointerTool && model.touchMode == TouchNormal then
                     "pan-x pan-y"
                     -- 空白スワイプをネイティブスクロールに委譲（ピンチズームは除外）
 

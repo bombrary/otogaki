@@ -122,6 +122,7 @@ type alias ViewOpts =
     , cutGuideTicks : Maybe Int
     , isNarrow : Bool
     , gridTouchAction : String
+    , scrollLock : Bool
     }
 
 
@@ -1028,6 +1029,16 @@ gridView config opts =
                     [ Html.Events.on "mousemove" (Decode.map config.movedCutGuide cutGuideMoveDecoder)
                     , Html.Events.on "mouseleave" (Decode.succeed config.clearedCutGuide)
                     ]
+
+                else
+                    []
+               )
+            ++ (if opts.scrollLock then
+                    -- 長押しで矩形選択・ループドラッグに入った後の、ネイティブスクロール抑止フラグ。
+                    -- touch-action は pointerdown 時点で確定してしまうので途中変更では効かない。
+                    -- js/main.js の非パッシブ touchmove リスナーがこの属性を closest() で拾って
+                    -- preventDefault する（ノート rect 上のタッチも含めて拾えるよう、グリッド側に1箇所だけ付与する）。
+                    [ HA.attribute "data-suppress-touch-scroll" "" ]
 
                 else
                     []
