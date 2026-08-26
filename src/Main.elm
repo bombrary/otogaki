@@ -183,6 +183,7 @@ type alias Model =
     , dragState : DragState
     , pendingNoteDrag : Maybe DragInfo
     , pendingEmptyTouch : Maybe { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float }
+    , pendingDrumTouch : Maybe { pitch : Int, tick : Int, offsetX : Float, offsetY : Float, clientX : Float, clientY : Float }
     , instrumentLoad : Dict String String
     , selectedSectionId : Maybe Int
     , bpmInput : String
@@ -303,17 +304,18 @@ type TouchMode
     | TouchSeek
 
 
-{-| 長押し（500ms）が完走したときに何をするかの対象。LongPressBand はノート・空セルどちらの pointerdown
-からも arm され、「Shift 相当」の矩形選択へ昇格させる（削除は担わない。削除はダブルタップ／ダブルクリック／
-右クリック／Delete に一本化）。LongPressVoicingOffset/LongPressDrumNote は既存の削除ロジック
-（DoubleClickedVoicingOffset/removeDrumNoteAt）を引き継ぐのに必要な最小限の情報を持たせている
-（ドラム・ボイシングは後のコミットで選択操作に振り替える）。
+{-| 長押し（500ms）が完走したときに何をするかの対象。LongPressBand/LongPressDrumBand はノート・空セルどちらの
+pointerdown からも arm され、「Shift 相当」の矩形選択へ昇格させる（削除は担わない。削除はダブルタップ／
+ダブルクリック／右クリック／Delete に一本化）。LongPressVoicingSelect はボイシング鍵盤の埋まっている行を
+選択トグルする。LongPressDrumNote はドラムのノートありセルだけ例外的に既存の削除ロジック
+（removeDrumNoteAt）を担う。DrumEditor の dblclick は iOS で発火しないため、タッチの削除手段はこれだけだから。
 -}
 type LongPressTarget
     = LongPressBand BandOrigin
+    | LongPressDrumBand BandOrigin
     | LongPressLoop { ticks : Int, clientX : Float }
     | LongPressSectionLoop { ticks : Int, clientX : Float }
-    | LongPressVoicingOffset Int Int
+    | LongPressVoicingSelect { index : Int, offset : Int }
     | LongPressDrumNote { pitch : Int, tick : Int }
 
 
@@ -560,6 +562,7 @@ init flags =
       , dragState = NoDrag
       , pendingNoteDrag = Nothing
       , pendingEmptyTouch = Nothing
+      , pendingDrumTouch = Nothing
       , instrumentLoad = Dict.empty
       , selectedSectionId = Nothing
       , bpmInput = String.fromFloat project.bpm
@@ -826,29 +829,21 @@ promoteLongPress target model =
             , Cmd.none
             )
 
-        LongPressVoicingOffset index pitch ->
-            let
-                rootPitch =
-                    Data.Voicing.anchorPitch + model.voicingPreviewRoot
-
-                offset =
-                    pitch - rootPitch
-            in
+        LongPressVoicingSelect v ->
             ( { model
-                | project =
-                    Data.Project.updateVoicing index
-                        (\v ->
-                            { v
-                                | offsets = List.filter ((/=) offset) v.offsets
-                                , stringPicks = Data.GuitarForm.removePicks (Set.singleton offset) v.stringPicks
-                            }
-                        )
-                        model.project
-                , voicingSelectedOffsets = Set.remove offset model.voicingSelectedOffsets
+                | voicingSelectedOffsets =
+                    if Set.member v.offset model.voicingSelectedOffsets then
+                        Set.remove v.offset model.voicingSelectedOffsets
+
+                    else
+                        Set.insert v.offset model.voicingSelectedOffsets
                 , pendingVoicingDrag = Nothing
               }
             , Cmd.none
             )
+
+        LongPressDrumBand origin ->
+            ( startRubberBand origin { model | drumDrag = Nothing, pendingDrumTouch = Nothing }, Cmd.none )
 
         LongPressDrumNote drumTarget ->
             removeDrumNoteAt drumTarget model
@@ -3935,7 +3930,35 @@ updateCore msg model =
                     ( placed, cmd )
 
                 Nothing ->
-                    releasedDragFallback model
+                    case model.pendingDrumTouch of
+                        Just d ->
+                            {- タッチでドラムの空セルを押したまま離した（＝タップ）。ここで初めて確定配置する。
+                               ドラムグリッドは touch-action: none 固定なので pointercancel はほぼ起きないが、
+                               起きてもここには届かず配置されない（pointercancel は DrumEditor でも releasedCellPress
+                               ＝ReleasedDrag にマップされているので、実際にはこの分岐に入る）。
+                            -}
+                            let
+                                grid =
+                                    Data.Time.gridTicks model.gridUnit
+
+                                note =
+                                    { id = model.project.nextId
+                                    , pitch = d.pitch
+                                    , start = d.tick
+                                    , duration = grid
+                                    , velocity = 100
+                                    }
+                            in
+                            ( { model
+                                | project = Data.Project.addNote model.selectedTrackId note model.project
+                                , selectedNoteIds = Set.singleton note.id
+                                , pendingDrumTouch = Nothing
+                              }
+                            , Ports.toAudio (Performance.encodePreviewNote "drumKit" d.pitch)
+                            )
+
+                        Nothing ->
+                            releasedDragFallback model
             )
                 |> Tuple.mapFirst (\m -> { m | dragCursor = Nothing })
 
@@ -4878,7 +4901,7 @@ updateCore msg model =
                 if pos.isTouch then
                     let
                         ( model3, armCmd ) =
-                            armLongPress (LongPressVoicingOffset index pitch) model2
+                            armLongPress (LongPressVoicingSelect { index = index, offset = offset }) model2
 
                         newTooltipToken =
                             model3.touchTooltipToken + 1
@@ -5321,33 +5344,40 @@ updateCore msg model =
                         ( { model | selectedNoteIds = Set.singleton note.id, drumDrag = Just (DrumMoveNoteDrag anchor note.id) }, Cmd.none )
 
                 ( Nothing, False ) ->
-                    let
-                        grid =
-                            Data.Time.gridTicks model.gridUnit
+                    if isTouch then
+                        -- 配置はpointerup（タップ確定）まで保留。長押しが完走すれば promoteLongPress が
+                        -- pendingDrumTouch を落として矩形選択に差し替える。
+                        let
+                            ( model1, armCmd ) =
+                                armLongPress (LongPressDrumBand { offsetX = offsetX, offsetY = offsetY, clientX = clientX, clientY = clientY }) model
+                        in
+                        ( { model1 | pendingDrumTouch = Just { pitch = pitch, tick = tick, offsetX = offsetX, offsetY = offsetY, clientX = clientX, clientY = clientY } }
+                        , armCmd
+                        )
 
-                        note =
-                            { id = model.project.nextId
-                            , pitch = pitch
-                            , start = tick
-                            , duration = grid
-                            , velocity = 100
-                            }
+                    else
+                        let
+                            grid =
+                                Data.Time.gridTicks model.gridUnit
 
-                        anchor =
-                            { anchorOffsetX = offsetX, anchorOffsetY = offsetY, anchorClientX = clientX, anchorClientY = clientY }
-                    in
-                    ( { model
-                        | project = Data.Project.addNote model.selectedTrackId note model.project
-                        , selectedNoteIds = Set.singleton note.id
-                        , drumDrag =
-                            if isTouch then
-                                Nothing
+                            note =
+                                { id = model.project.nextId
+                                , pitch = pitch
+                                , start = tick
+                                , duration = grid
+                                , velocity = 100
+                                }
 
-                            else
-                                Just (DrumPaintDrag anchor (Set.singleton ( pitch, tick )))
-                      }
-                    , Ports.toAudio (Performance.encodePreviewNote "drumKit" pitch)
-                    )
+                            anchor =
+                                { anchorOffsetX = offsetX, anchorOffsetY = offsetY, anchorClientX = clientX, anchorClientY = clientY }
+                        in
+                        ( { model
+                            | project = Data.Project.addNote model.selectedTrackId note model.project
+                            , selectedNoteIds = Set.singleton note.id
+                            , drumDrag = Just (DrumPaintDrag anchor (Set.singleton ( pitch, tick )))
+                          }
+                        , Ports.toAudio (Performance.encodePreviewNote "drumKit" pitch)
+                        )
 
         RightClickedDrumCell target ->
             removeDrumNoteAt target model
