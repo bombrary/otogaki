@@ -4716,6 +4716,25 @@ updateCore msg model =
                 , Cmd.none
                 )
 
+            else if pos.isTouch && List.member offset currentOffsets && Data.Tap.isDoubleTap (Data.Tap.TapVoicingOffset index offset) pos model1.lastTap then
+                -- タッチでのダブルタップ削除。VoicingKeyboard の dblclick は iOS で発火しないため、
+                -- DoubleClickedVoicingOffset と同じ削除ロジックをここでも持つ。
+                ( { model1
+                    | project =
+                        Data.Project.updateVoicing index
+                            (\v ->
+                                { v
+                                    | offsets = List.filter ((/=) offset) v.offsets
+                                    , stringPicks = Data.GuitarForm.removePicks (Set.singleton offset) v.stringPicks
+                                }
+                            )
+                            model1.project
+                    , voicingSelectedOffsets = Set.remove offset model1.voicingSelectedOffsets
+                    , lastTap = Nothing
+                  }
+                , Cmd.none
+                )
+
             else if List.member offset currentOffsets then
                 -- 埋まっている行を素クリック: 選択を維持 or 単独選択に置き換えて保留状態でドラッグ開始を待つ
                 let
@@ -4758,6 +4777,7 @@ updateCore msg model =
                             { model3
                                 | hoveredFretCell = Just { pitch = pitch, interval = modBy 12 offset, x = pos.clientX, y = pos.clientY }
                                 , touchTooltipToken = newTooltipToken
+                                , lastTap = Data.Tap.record (Data.Tap.TapVoicingOffset index offset) pos
                             }
 
                         tooltipCmd =
@@ -5132,10 +5152,13 @@ updateCore msg model =
         MovedSection sectionId delta ->
             ( { model | project = Data.Project.moveSection sectionId delta model.project }, Cmd.none )
 
-        PressedDrumCell { pitch, tick, offsetX, offsetY, clientX, clientY, shift, isTouch } ->
+        PressedDrumCell { pitch, tick, offsetX, offsetY, clientX, clientY, shift, isTouch, timeStamp } ->
             let
                 effShift =
                     shift || model.touchMode == TouchSelect
+
+                pos =
+                    { timeStamp = timeStamp, clientX = clientX, clientY = clientY }
             in
             case ( findDrumNoteAt { pitch = pitch, tick = tick } model, effShift ) of
                 ( Just note, True ) ->
@@ -5168,8 +5191,17 @@ updateCore msg model =
                     )
 
                 ( Just note, False ) ->
-                    if isTouch then
-                        armLongPress (LongPressDrumNote { pitch = pitch, tick = tick }) { model | selectedNoteIds = Set.singleton note.id }
+                    if isTouch && Data.Tap.isDoubleTap (Data.Tap.TapDrumCell { pitch = pitch, tick = tick }) pos model.lastTap then
+                        -- タッチでのダブルタップ削除。DrumEditor の dblclick は iOS で発火しないため、
+                        -- RightClickedDrumCell/DoubleClickedDrumCell と同じ removeDrumNoteAt をここでも使う。
+                        removeDrumNoteAt { pitch = pitch, tick = tick } { model | lastTap = Nothing }
+
+                    else if isTouch then
+                        let
+                            ( model1, cmd ) =
+                                armLongPress (LongPressDrumNote { pitch = pitch, tick = tick }) { model | selectedNoteIds = Set.singleton note.id }
+                        in
+                        ( { model1 | lastTap = Data.Tap.record (Data.Tap.TapDrumCell { pitch = pitch, tick = tick }) pos }, cmd )
 
                     else
                         let
