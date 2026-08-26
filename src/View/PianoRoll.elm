@@ -18,6 +18,7 @@ module View.PianoRoll exposing
     , minPitch
     , minPxPerSixteenth
     , noteMoveDecoder
+    , noteTopLeft
     , pianoRollScrollId
     , pixelsToTicks
     , playheadLine
@@ -1560,6 +1561,16 @@ notePointerListeners config =
     , Html.Events.stopPropagationOn "pointercancel"
         (Decode.succeed ( config.releasedNotePress, True ))
     ]
+
+
+{-| ノート矩形の左上のグリッド座標。noteView の x/y 計算と同じ式だが、Main 側が長押しでの
+矩形選択の原点として外から使えるよう公開関数として切り出してある。
+-}
+noteTopLeft : Bool -> Int -> { r | pitch : Int, start : Int } -> { x : Float, y : Float }
+noteTopLeft isNarrow pxPerSixteenth note =
+    { x = ticksToPixels pxPerSixteenth note.start
+    , y = toFloat ((maxPitch - note.pitch) * rowHeight isNarrow)
+    }
 
 
 noteView : Bool -> Config msg -> Int -> Set Int -> Tool -> Note -> List (Svg.Svg msg)

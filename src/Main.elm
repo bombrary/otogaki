@@ -303,13 +303,23 @@ type TouchMode
     | TouchSeek
 
 
-{-| 長押し削除の対象。既存の削除ロジック（RightClickedNote/DoubleClickedVoicingOffset/removeDrumNoteAt）を
-引き継ぐのに必要な最小限の情報だけを持たせる。
+{-| 長押し（500ms）が完走したときに何をするかの対象。LongPressBand はノート・空セルどちらの pointerdown
+からも arm され、「Shift 相当」の矩形選択へ昇格させる（削除は担わない。削除はダブルタップ／ダブルクリック／
+右クリック／Delete に一本化）。LongPressVoicingOffset/LongPressDrumNote は既存の削除ロジック
+（DoubleClickedVoicingOffset/removeDrumNoteAt）を引き継ぐのに必要な最小限の情報を持たせている
+（ドラム・ボイシングは後のコミットで選択操作に振り替える）。
 -}
 type LongPressTarget
-    = LongPressNote Int
+    = LongPressBand BandOrigin
     | LongPressVoicingOffset Int Int
     | LongPressDrumNote { pitch : Int, tick : Int }
+
+
+{-| 矩形選択の原点。startRubberBand にそのまま渡せる形。ノート上の長押しでは、ノート矩形の左上
+（PianoRoll.noteTopLeft）をここに詰める。
+-}
+type alias BandOrigin =
+    { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float }
 
 
 {-| ループ範囲ドラッグの進行状態。fixedTicks = 動かさない側の端、
@@ -768,8 +778,8 @@ exceedsDragThreshold info pos =
     sqrt (dx * dx + dy * dy) >= dragThreshold
 
 
-{-| タッチでの長押し削除用タイマーを開始する。500ms後にLongPressFiredが発火し、その時点でlongPressのトークンが
-一致していれば（disarmされていなければ）削除を実行する。ResetCopyFeedbackと同型のProcess.sleep+Task.performパターン。
+{-| タッチでの長押しタイマーを開始する。500ms後にLongPressFiredが発火し、その時点でlongPressのトークンが
+一致していれば（disarmされていなければ）promoteLongPress を実行する。ResetCopyFeedbackと同型のProcess.sleep+Task.performパターン。
 -}
 armLongPress : LongPressTarget -> Model -> ( Model, Cmd Msg )
 armLongPress target model =
@@ -780,6 +790,69 @@ armLongPress target model =
     ( { model | longPressToken = newToken, longPress = Just { token = newToken, target = target } }
     , Task.perform (\_ -> LongPressFired newToken) (Process.sleep 500)
     )
+
+
+{-| 長押し完走時に、進行中の「素のジェスチャ」を捨てて対象のジェスチャへ差し替える。
+LongPressBand はここで矩形選択を開始する。保留状態（pendingNoteDrag 等）を先に落とすのが肝で、
+落とさないと ReleasedDrag/DraggedTo のカスケードが先に食ってしまい、矩形選択が確定されない
+まま固着したり、ノート移動として昇格してしまう。lastTap も落とす（長押し直後の再タップを
+誤ってダブルタップ削除と判定させないため）。
+-}
+promoteLongPress : LongPressTarget -> Model -> ( Model, Cmd Msg )
+promoteLongPress target model =
+    case target of
+        LongPressBand origin ->
+            ( startRubberBand origin
+                { model
+                    | pendingEmptyTouch = Nothing
+                    , pendingNoteDrag = Nothing
+                    , dragState = NoDrag
+                    , hoveredNote = Nothing
+                    , lastTap = Nothing
+                }
+            , Cmd.none
+            )
+
+        LongPressVoicingOffset index pitch ->
+            let
+                rootPitch =
+                    Data.Voicing.anchorPitch + model.voicingPreviewRoot
+
+                offset =
+                    pitch - rootPitch
+            in
+            ( { model
+                | project =
+                    Data.Project.updateVoicing index
+                        (\v ->
+                            { v
+                                | offsets = List.filter ((/=) offset) v.offsets
+                                , stringPicks = Data.GuitarForm.removePicks (Set.singleton offset) v.stringPicks
+                            }
+                        )
+                        model.project
+                , voicingSelectedOffsets = Set.remove offset model.voicingSelectedOffsets
+                , pendingVoicingDrag = Nothing
+              }
+            , Cmd.none
+            )
+
+        LongPressDrumNote drumTarget ->
+            removeDrumNoteAt drumTarget model
+
+
+{-| ノート上の長押しの、矩形選択の原点。notePressDecoder（PianoRoll.elm）はグリッド相対座標を
+持たないので、PianoRoll.noteTopLeft でノート矩形の左上から逆算する。矩形の伸長は差分駆動
+（originX + (clientX - startClientX)）なので、矩形は指から少しずれて描画されるが、その代わり
+「長押ししたノートは必ず選択範囲に入る」ことが保証される。
+-}
+noteBandOrigin : Model -> Data.Note.Note -> { r | clientX : Float, clientY : Float } -> BandOrigin
+noteBandOrigin model note pos =
+    let
+        topLeft =
+            PianoRoll.noteTopLeft (isTouchLayout model) model.pianoRollZoom note
+    in
+    { offsetX = topLeft.x, offsetY = topLeft.y, clientX = pos.clientX, clientY = pos.clientY }
 
 
 {-| ノートをドラッグ移動/リサイズ状態にする共通処理。PressedNote の非Shift分岐と、PressedEmptyCell が
@@ -3516,14 +3589,32 @@ updateCore msg model =
                 in
                 case hit of
                     Just note ->
-                        pressNoteForDrag note PianoRoll.NoResize { clientX = pos.clientX, clientY = pos.clientY, isTouch = pos.isTouch } model1
+                        let
+                            ( model2, cmd ) =
+                                pressNoteForDrag note PianoRoll.NoResize { clientX = pos.clientX, clientY = pos.clientY, isTouch = pos.isTouch } model1
+                        in
+                        if pos.isTouch then
+                            -- 空セルと思って押した先に既存ノートがあった場合も、長押しで矩形選択へ昇格できるよう arm する。
+                            let
+                                ( model3, armCmd ) =
+                                    armLongPress (LongPressBand (noteBandOrigin model2 note pos)) model2
+                            in
+                            ( model3, Cmd.batch [ cmd, armCmd ] )
+
+                        else
+                            ( model2, cmd )
 
                     Nothing ->
                         if pos.isTouch then
                             -- 配置はpointerup（タップ確定）まで保留。スワイプならブラウザが
                             -- pointercancelを発火してネイティブスクロールに移行し、配置されない。
-                            ( { model1 | pendingEmptyTouch = Just { offsetX = pos.offsetX, offsetY = pos.offsetY, clientX = pos.clientX, clientY = pos.clientY } }
-                            , Cmd.none
+                            -- この間に長押しが完走すれば promoteLongPress が pendingEmptyTouch を落として矩形選択に差し替える。
+                            let
+                                ( model2, armCmd ) =
+                                    armLongPress (LongPressBand { offsetX = pos.offsetX, offsetY = pos.offsetY, clientX = pos.clientX, clientY = pos.clientY }) model1
+                            in
+                            ( { model2 | pendingEmptyTouch = Just { offsetX = pos.offsetX, offsetY = pos.offsetY, clientX = pos.clientX, clientY = pos.clientY } }
+                            , armCmd
                             )
 
                         else
@@ -3579,7 +3670,7 @@ updateCore msg model =
                         if pos.isTouch then
                             let
                                 ( model3, armCmd ) =
-                                    armLongPress (LongPressNote note.id) model2
+                                    armLongPress (LongPressBand (noteBandOrigin model2 note pos)) model2
 
                                 newTooltipToken =
                                     model3.touchTooltipToken + 1
@@ -3615,47 +3706,7 @@ updateCore msg model =
             case model.longPress of
                 Just lp ->
                     if lp.token == token then
-                        let
-                            model1 =
-                                { model | longPress = Nothing }
-                        in
-                        case lp.target of
-                            LongPressNote noteId ->
-                                ( { model1
-                                    | project = Data.Project.removeNote model1.selectedTrackId noteId model1.project
-                                    , selectedNoteIds = Set.remove noteId model1.selectedNoteIds
-                                    , hoveredNote = clearHoveredNote noteId model1.hoveredNote
-                                    , pendingNoteDrag = Nothing
-                                  }
-                                , Cmd.none
-                                )
-
-                            LongPressVoicingOffset index pitch ->
-                                let
-                                    rootPitch =
-                                        Data.Voicing.anchorPitch + model1.voicingPreviewRoot
-
-                                    offset =
-                                        pitch - rootPitch
-                                in
-                                ( { model1
-                                    | project =
-                                        Data.Project.updateVoicing index
-                                            (\v ->
-                                                { v
-                                                    | offsets = List.filter ((/=) offset) v.offsets
-                                                    , stringPicks = Data.GuitarForm.removePicks (Set.singleton offset) v.stringPicks
-                                                }
-                                            )
-                                            model1.project
-                                    , voicingSelectedOffsets = Set.remove offset model1.voicingSelectedOffsets
-                                    , pendingVoicingDrag = Nothing
-                                  }
-                                , Cmd.none
-                                )
-
-                            LongPressDrumNote target ->
-                                removeDrumNoteAt target model1
+                        promoteLongPress lp.target { model | longPress = Nothing }
 
                     else
                         ( model, Cmd.none )
@@ -3877,9 +3928,11 @@ updateCore msg model =
 
         CanceledNotePress ->
             {- タッチで空白を押したものの指が動いてブラウザがネイティブスクロールに切り替えた（pointercancel）。配置せず保留を
-               破棄し、ReleasedDragと同じ事後処理（他の保留状態の解除）に委譲する。
+               破棄し、ReleasedDragと同じ事後処理（他の保留状態の解除）に委譲する。longPress も明示的に落とす（タイマー自体は
+               キャンセルできないので、指が深い（スクロール中）でも後から LongPressFired が発火してしまう。トークン不一致で
+               もガードできるが、ここで先に解除しておく方が安全）。
             -}
-            updateCore ReleasedDrag { model | pendingEmptyTouch = Nothing }
+            updateCore ReleasedDrag { model | pendingEmptyTouch = Nothing, longPress = Nothing }
 
         PressedRuler pos ->
             if pos.shift || model.touchMode == TouchSelect then
