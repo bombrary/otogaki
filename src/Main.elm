@@ -294,13 +294,12 @@ type Page
     | MaterialsPage
 
 
-{-| タッチ環境ではShift/Ctrlなどの修飾キーを物理ボタンで押せないので、グローバルな代替モードとして持たせる。
-seekModとshiftは既存コードで常に排他分岐なので、この型も排他にする。Altのスナップ無効化は独立なので
-touchSnapOff（Modelの別フィールド）で持つ。
+{-| タッチ環境ではCtrlなどの修飾キーを物理ボタンで押せないので、グローバルな代替モードとして持たせる。
+Shift 相当（矩形選択・選択トグル）は長押し（LongPressBand 等）に一本化したのでここにはない。
+Altのスナップ無効化は独立なので touchSnapOff（Modelの別フィールド）で持つ。
 -}
 type TouchMode
     = TouchNormal
-    | TouchSelect
     | TouchSeek
 
 
@@ -3579,7 +3578,7 @@ updateCore msg model =
             if pos.seekMod || model1.touchMode == TouchSeek then
                 seekTo (snapFloor model1 (PianoRoll.pixelsToTicks model1.pianoRollZoom pos.offsetX)) model1
 
-            else if pos.shift || model1.touchMode == TouchSelect then
+            else if pos.shift then
                 ( startRubberBand pos model1, Cmd.none )
 
             else
@@ -3645,7 +3644,7 @@ updateCore msg model =
                         isDoubleTap =
                             pos.isTouch && Data.Tap.isDoubleTap (Data.Tap.TapNote noteId) pos model1.lastTap
                     in
-                    if pos.shift || model1.touchMode == TouchSelect then
+                    if pos.shift then
                         ( { model1
                             | selectedNoteIds =
                                 if Set.member noteId model1.selectedNoteIds then
@@ -3747,7 +3746,7 @@ updateCore msg model =
             if pos.seekMod || model.touchMode == TouchSeek then
                 seekTo (snapFloor model (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX)) model
 
-            else if pos.shift || model.touchMode == TouchSelect then
+            else if pos.shift then
                 ( startRubberBand pos model, Cmd.none )
 
             else
@@ -3795,7 +3794,7 @@ updateCore msg model =
                 model1 =
                     { model | pendingChordDrag = Nothing }
             in
-            if pos.shift || model1.touchMode == TouchSelect then
+            if pos.shift then
                 ( { model1
                     | selectedChordKeys =
                         if Set.member key model1.selectedChordKeys then
@@ -3971,7 +3970,7 @@ updateCore msg model =
             updateCore ReleasedDrag { model | pendingEmptyTouch = Nothing, longPress = Nothing }
 
         PressedRuler pos ->
-            if pos.shift || model.touchMode == TouchSelect then
+            if pos.shift then
                 let
                     anchor =
                         snapRound model (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX)
@@ -4026,7 +4025,7 @@ updateCore msg model =
                     else
                         False
             in
-            if pos.shift || model.touchMode == TouchSelect then
+            if pos.shift then
                 ( { model | sectionLoopDrag = Just { fixedTicks = pressTicks, baseTicks = pressTicks, startClientX = pos.clientX, curTicks = pressTicks } }, Cmd.none )
 
             else if insideViewRange then
@@ -4836,7 +4835,7 @@ updateCore msg model =
                 -- root より低い空き行。offsets は常に 0 以上の不変式なので新規追加できない
                 ( model1, Cmd.none )
 
-            else if (pos.shift || model1.touchMode == TouchSelect) && List.member offset currentOffsets then
+            else if pos.shift && List.member offset currentOffsets then
                 -- 埋まっている行を shift クリック: 複数選択のトグルのみ。ドラッグは開始しない
                 ( { model1
                     | voicingSelectedOffsets =
@@ -5288,7 +5287,7 @@ updateCore msg model =
         PressedDrumCell { pitch, tick, offsetX, offsetY, clientX, clientY, shift, isTouch, timeStamp } ->
             let
                 effShift =
-                    shift || model.touchMode == TouchSelect
+                    shift
 
                 pos =
                     { timeStamp = timeStamp, clientX = clientX, clientY = clientY }
@@ -6439,7 +6438,7 @@ view model =
                 else
                     "none"
 
-            -- TouchSelect（矩形選択ドラッグ）・TouchSeek・CutToolは従来通り
+            -- 矩形選択は長押しに一本化済み。TouchSeek・CutToolは従来通り
             }
 
         toolToggle =
@@ -7630,7 +7629,7 @@ isPageLayout model =
 touchModeToggleView : Model -> Html Msg
 touchModeToggleView model =
     div [ style "display" "flex", style "align-items" "center", style "gap" "0.3rem", style "flex-wrap" "wrap" ]
-        [ span [ style "font-size" "0.85rem", Html.Attributes.title "マウスなら Shift＝複数選択/矩形、Ctrl/Cmd＝空白クリックでシーク、Alt＝ドラッグ中スナップ無効。タッチではここで代わりに切り替えます" ] [ text "修飾キー: " ]
+        [ span [ style "font-size" "0.85rem", Html.Attributes.title "マウスなら Ctrl/Cmd＝空白クリックでシーク、Alt＝ドラッグ中スナップ無効。タッチではここで代わりに切り替えます。矩形選択は長押しドラッグでできます" ] [ text "修飾キー: " ]
         , button
             (Style.toggleButton (model.touchMode == TouchNormal)
                 ++ [ onClick (SelectedTouchMode TouchNormal)
@@ -7638,13 +7637,6 @@ touchModeToggleView model =
                    ]
             )
             [ text "通常" ]
-        , button
-            (Style.toggleButton (model.touchMode == TouchSelect)
-                ++ [ onClick (SelectedTouchMode TouchSelect)
-                   , Html.Attributes.title "タップで複数選択・ドラッグでループ/矩形選択（Shift相当）"
-                   ]
-            )
-            [ text "選択" ]
         , button
             (Style.toggleButton (model.touchMode == TouchSeek)
                 ++ [ onClick (SelectedTouchMode TouchSeek)
