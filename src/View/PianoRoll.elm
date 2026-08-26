@@ -11,6 +11,8 @@ module View.PianoRoll exposing
     , defaultPxPerSixteenth
     , frameContentHeight
     , headerHeight
+    , isEditable
+    , isSelectable
     , keyColumnWidth
     , maxPitch
     , maxPxPerSixteenth
@@ -90,10 +92,24 @@ type ResizeHandle
 
 
 {-| ピアノロールの操作モード。PointerTool = 選択・移動・リサイズ（既定）、CutTool = クリック位置で選択ノートを分割する。
+LockTool = 編集を全て止める閲覧モード。スクロールとノートのタップ選択（+長押し矩形選択）だけ残す。
 -}
 type Tool
     = PointerTool
     | CutTool
+    | LockTool
+
+
+{-| ノートをつかんで動かす・長さを変える・削除できるか。PointerTool だけ True。 -}
+isEditable : Tool -> Bool
+isEditable tool =
+    tool == PointerTool
+
+
+{-| ノートをタップ・クリックで選択できるか。ロック中も選択だけは残す。 -}
+isSelectable : Tool -> Bool
+isSelectable tool =
+    tool == PointerTool || tool == LockTool
 
 
 type alias SectionSpan =
@@ -1016,6 +1032,9 @@ gridView config opts =
             (if opts.tool == CutTool then
                 "col-resize"
 
+             else if opts.tool == LockTool then
+                "default"
+
              else
                 "crosshair"
             )
@@ -1599,11 +1618,25 @@ noteView isNarrow config pxPerSixteenth selectedIds tool note =
         selected =
             Set.member note.id selectedIds
 
-        interactive =
-            tool == PointerTool
+        editable =
+            isEditable tool
 
-        cutOnlyAttrs =
-            if interactive then
+        selectable =
+            isSelectable tool
+
+        {- ノート本体の pointer-events。選択できない（CutTool）ときだけ透過させる。 -}
+        bodyPointerAttrs =
+            if selectable then
+                []
+
+            else
+                [ SA.pointerEvents "none" ]
+
+        {- リサイズハンドルの pointer-events。編集不可（LockTool/CutTool）なら透過させ、
+           下のノート本体やグリッドへタップ・スワイプが抜けるようにする。
+        -}
+        handlePointerAttrs =
+            if editable then
                 []
 
             else
@@ -1632,34 +1665,46 @@ noteView isNarrow config pxPerSixteenth selectedIds tool note =
          , SA.strokeWidth "1"
          , SA.shapeRendering "crispEdges"
          , HA.style "cursor"
-            (if interactive then
+            (if editable then
                 "move"
+
+             else if selectable then
+                "pointer"
 
              else
                 "inherit"
             )
          , HA.style "touch-action"
-            (if interactive then
+            (if editable then
                 "none"
+
+             else if tool == LockTool then
+                -- ロック中はノート上のスワイプもスクロールになるべきなので pan-x pan-y のままにする。
+                "pan-x pan-y"
 
              else
                 "auto"
             )
          ]
-            ++ cutOnlyAttrs
-            ++ (if interactive then
+            ++ bodyPointerAttrs
+            ++ (if selectable then
                     [ Html.Events.stopPropagationOn "pointerdown"
                         (Decode.map (\pos -> ( config.pressedNote note.id NoResize pos, True )) notePressDecoder)
                     ]
-                        ++ notePointerListeners config
-                        ++ [ Html.Events.stopPropagationOn "dblclick"
-                                (Decode.succeed ( config.doubleClickedNote note.id, True ))
-                           , Html.Events.preventDefaultOn "contextmenu"
-                                (Decode.succeed ( config.rightClickedNote note.id, True ))
-                           , Html.Events.on "mouseover"
-                                (Decode.map (\pos -> config.hoveredNote note pos.clientX pos.clientY) noteHoverDecoder)
-                           , Html.Events.on "mouseout" (Decode.succeed config.unhoveredNote)
-                           ]
+                        ++ (if editable then
+                                notePointerListeners config
+                                    ++ [ Html.Events.stopPropagationOn "dblclick"
+                                            (Decode.succeed ( config.doubleClickedNote note.id, True ))
+                                       , Html.Events.preventDefaultOn "contextmenu"
+                                            (Decode.succeed ( config.rightClickedNote note.id, True ))
+                                       , Html.Events.on "mouseover"
+                                            (Decode.map (\pos -> config.hoveredNote note pos.clientX pos.clientY) noteHoverDecoder)
+                                       , Html.Events.on "mouseout" (Decode.succeed config.unhoveredNote)
+                                       ]
+
+                            else
+                                []
+                           )
 
                 else
                     []
@@ -1708,29 +1753,29 @@ noteView isNarrow config pxPerSixteenth selectedIds tool note =
                 "transparent"
             )
          , HA.style "cursor"
-            (if interactive then
+            (if editable then
                 "ew-resize"
 
              else
                 "inherit"
             )
          , HA.style "touch-action"
-            (if interactive then
+            (if editable then
                 "none"
 
              else
                 "auto"
             )
          , HA.title
-            (if interactive then
+            (if editable then
                 "ドラッグで長さを変える"
 
              else
                 ""
             )
          ]
-            ++ cutOnlyAttrs
-            ++ (if interactive then
+            ++ handlePointerAttrs
+            ++ (if editable then
                     [ Html.Events.stopPropagationOn "pointerdown"
                         (Decode.map (\pos -> ( config.pressedNote note.id ResizeRight pos, True )) notePressDecoder)
                     ]
@@ -1753,29 +1798,29 @@ noteView isNarrow config pxPerSixteenth selectedIds tool note =
                      , SA.height (String.fromInt (rowHeight isNarrow - 2))
                      , SA.fill "transparent"
                      , HA.style "cursor"
-                        (if interactive then
+                        (if editable then
                             "ew-resize"
 
                          else
                             "inherit"
                         )
                      , HA.style "touch-action"
-                        (if interactive then
+                        (if editable then
                             "none"
 
                          else
                             "auto"
                         )
                      , HA.title
-                        (if interactive then
+                        (if editable then
                             "ドラッグで長さを変える"
 
                          else
                             ""
                         )
                      ]
-                        ++ cutOnlyAttrs
-                        ++ (if interactive then
+                        ++ handlePointerAttrs
+                        ++ (if editable then
                                 [ Html.Events.stopPropagationOn "pointerdown"
                                     (Decode.map (\pos -> ( config.pressedNote note.id ResizeLeft pos, True )) notePressDecoder)
                                 ]

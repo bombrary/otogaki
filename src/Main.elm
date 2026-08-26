@@ -3575,7 +3575,46 @@ updateCore msg model =
                 model1 =
                     { model | pendingNoteDrag = Nothing, pendingEmptyTouch = Nothing }
             in
-            if pos.seekMod || model1.touchMode == TouchSeek then
+            if model1.tool == PianoRoll.LockTool then
+                {- ロック中は配置・矩形選択開始をしない。ノートに当たったら単独選択、外れたら選択解除。
+                   どちらもタッチなら長押しを arm して矩形選択への昇格は可能にしておく。
+                -}
+                let
+                    exactTick =
+                        PianoRoll.pixelsToTicks model1.pianoRollZoom pos.offsetX
+
+                    hitPitch =
+                        PianoRoll.yToPitch (isTouchLayout model1) pos.offsetY
+
+                    hit =
+                        trackNotes model1
+                            |> List.filter (\n -> n.pitch == hitPitch && n.start <= exactTick && exactTick < n.start + n.duration)
+                            |> List.head
+                in
+                case hit of
+                    Just note ->
+                        let
+                            selected =
+                                { model1 | selectedNoteIds = Set.singleton note.id, highlightedPitches = Set.singleton note.pitch }
+                        in
+                        if pos.isTouch then
+                            armLongPress (LongPressBand (noteBandOrigin selected note pos)) selected
+
+                        else
+                            ( selected, Cmd.none )
+
+                    Nothing ->
+                        let
+                            cleared =
+                                { model1 | selectedNoteIds = Set.empty, highlightedPitches = Set.empty }
+                        in
+                        if pos.isTouch then
+                            armLongPress (LongPressBand { offsetX = pos.offsetX, offsetY = pos.offsetY, clientX = pos.clientX, clientY = pos.clientY }) cleared
+
+                        else
+                            ( startRubberBand pos cleared, Cmd.none )
+
+            else if pos.seekMod || model1.touchMode == TouchSeek then
                 seekTo (snapFloor model1 (PianoRoll.pixelsToTicks model1.pianoRollZoom pos.offsetX)) model1
 
             else if pos.shift then
@@ -3644,7 +3683,21 @@ updateCore msg model =
                         isDoubleTap =
                             pos.isTouch && Data.Tap.isDoubleTap (Data.Tap.TapNote noteId) pos model1.lastTap
                     in
-                    if pos.shift then
+                    if model1.tool == PianoRoll.LockTool then
+                        {- ロック中はタップ選択のみ。移動・リサイズ・ダブルタップ削除はしない。
+                           長押しは arm する（ロック中でも範囲選択はできる。
+                        -}
+                        let
+                            selected =
+                                { model1 | selectedNoteIds = Set.singleton noteId, highlightedPitches = Set.singleton note.pitch }
+                        in
+                        if pos.isTouch then
+                            armLongPress (LongPressBand (noteBandOrigin selected note pos)) selected
+
+                        else
+                            ( selected, Cmd.none )
+
+                    else if pos.shift then
                         ( { model1
                             | selectedNoteIds =
                                 if Set.member noteId model1.selectedNoteIds then
@@ -3701,7 +3754,15 @@ updateCore msg model =
                     ( model1, Cmd.none )
 
         SelectedTool t ->
-            ( { model | tool = t, cutGuideTicks = Nothing }, Cmd.none )
+            ( { model
+                | tool = t
+                , cutGuideTicks = Nothing
+                , pendingNoteDrag = Nothing
+                , pendingEmptyTouch = Nothing
+                , longPress = Nothing
+              }
+            , Cmd.none
+            )
 
         SelectedTouchMode m ->
             ( { model | touchMode = m }, Cmd.none )
@@ -3767,26 +3828,31 @@ updateCore msg model =
                 ( { model | project = result.project, selectedNoteIds = result.newSelection }, Cmd.none )
 
         PressedVelocityBar noteId pos ->
-            let
-                targetIds =
-                    if Set.member noteId model.selectedNoteIds then
-                        model.selectedNoteIds
+            if model.tool == PianoRoll.LockTool then
+                -- ロック中はベロシティレーンも読み取り専用（ビュー側の制御に加えた防御的ガード）
+                ( model, Cmd.none )
 
-                    else
-                        Set.singleton noteId
+            else
+                let
+                    targetIds =
+                        if Set.member noteId model.selectedNoteIds then
+                            model.selectedNoteIds
 
-                origs =
-                    trackNotes model
-                        |> List.filter (\n -> Set.member n.id targetIds)
-                        |> List.map (\n -> ( n.id, n.velocity ))
-                        |> Dict.fromList
-            in
-            ( { model
-                | selectedNoteIds = targetIds
-                , velocityDrag = Just { startClientY = pos.clientY, origVelocities = origs }
-              }
-            , Cmd.none
-            )
+                        else
+                            Set.singleton noteId
+
+                    origs =
+                        trackNotes model
+                            |> List.filter (\n -> Set.member n.id targetIds)
+                            |> List.map (\n -> ( n.id, n.velocity ))
+                            |> Dict.fromList
+                in
+                ( { model
+                    | selectedNoteIds = targetIds
+                    , velocityDrag = Just { startClientY = pos.clientY, origVelocities = origs }
+                  }
+                , Cmd.none
+                )
 
         PressedChordToken key pos ->
             let
@@ -4380,10 +4446,10 @@ updateCore msg model =
             else if (k.ctrl || k.meta) && k.key == "c" then
                 ( copySelection model, Cmd.none )
 
-            else if (k.ctrl || k.meta) && k.key == "x" then
+            else if (k.ctrl || k.meta) && k.key == "x" && model.tool /= PianoRoll.LockTool then
                 ( deleteSelection (copySelection model), Cmd.none )
 
-            else if (k.ctrl || k.meta) && k.key == "v" then
+            else if (k.ctrl || k.meta) && k.key == "v" && model.tool /= PianoRoll.LockTool then
                 ( pasteClipboard model, Cmd.none )
 
             else if (k.ctrl || k.meta) && k.shift && (k.key == "a" || k.key == "A") then
@@ -4426,7 +4492,7 @@ updateCore msg model =
                 else
                     ( { model | selectedNoteIds = Set.fromList (List.map .id (trackNotes model)) }, Cmd.none )
 
-            else if k.key == "Delete" || k.key == "Backspace" then
+            else if (k.key == "Delete" || k.key == "Backspace") && model.tool /= PianoRoll.LockTool then
                 if model.selectedTrackId == Data.ChordTrack.trackId then
                     let
                         timeline =
@@ -4450,14 +4516,36 @@ updateCore msg model =
                     , pendingTrackDelete = Nothing
                     , pendingScrapDelete = Nothing
                     , pendingNewProject = False
-                    , tool = PianoRoll.PointerTool
+                    , tool =
+                        -- ロック中はEscapeでは解除しない（明示的に l キーで解除する）
+                        if model.tool == PianoRoll.LockTool then
+                            PianoRoll.LockTool
+
+                        else
+                            PianoRoll.PointerTool
                     , cutGuideTicks = Nothing
                     , touchMode = TouchNormal
                   }
                 , Cmd.none
                 )
 
-            else if k.key == "c" && not k.ctrl && not k.meta && not model.showKeyboard then
+            else if k.key == "l" && not k.ctrl && not k.meta && not model.showKeyboard then
+                ( { model
+                    | tool =
+                        if model.tool == PianoRoll.LockTool then
+                            PianoRoll.PointerTool
+
+                        else
+                            PianoRoll.LockTool
+                    , cutGuideTicks = Nothing
+                    , pendingNoteDrag = Nothing
+                    , pendingEmptyTouch = Nothing
+                    , longPress = Nothing
+                  }
+                , Cmd.none
+                )
+
+            else if k.key == "c" && not k.ctrl && not k.meta && not model.showKeyboard && model.tool /= PianoRoll.LockTool then
                 ( { model
                     | tool =
                         if model.tool == PianoRoll.PointerTool then
@@ -4470,7 +4558,7 @@ updateCore msg model =
                 , Cmd.none
                 )
 
-            else if k.key == "g" && not k.ctrl && not k.meta && not model.showKeyboard then
+            else if k.key == "g" && not k.ctrl && not k.meta && not model.showKeyboard && model.tool /= PianoRoll.LockTool then
                 if Set.isEmpty model.selectedNoteIds then
                     ( model, Cmd.none )
 
@@ -5292,7 +5380,31 @@ updateCore msg model =
                 pos =
                     { timeStamp = timeStamp, clientX = clientX, clientY = clientY }
             in
-            case ( findDrumNoteAt { pitch = pitch, tick = tick } model, effShift ) of
+            if model.tool == PianoRoll.LockTool then
+                -- ロック中は配置・移動・削除を止め、選択とスクロール（＋長押し矩形選択）だけ残す。
+                -- ノートがあるセルは単独選択のみ、空セルはノートを置かずその場で矩形選択を始める。
+                case findDrumNoteAt { pitch = pitch, tick = tick } model of
+                    Just note ->
+                        if isTouch then
+                            armLongPress (LongPressDrumBand { offsetX = offsetX, offsetY = offsetY, clientX = clientX, clientY = clientY })
+                                { model | selectedNoteIds = Set.singleton note.id, drumDrag = Nothing }
+
+                        else
+                            ( { model | selectedNoteIds = Set.singleton note.id, drumDrag = Nothing }, Cmd.none )
+
+                    Nothing ->
+                        if isTouch then
+                            armLongPress (LongPressDrumBand { offsetX = offsetX, offsetY = offsetY, clientX = clientX, clientY = clientY })
+                                { model | selectedNoteIds = Set.empty, drumDrag = Nothing }
+
+                        else
+                            ( startRubberBand { offsetX = offsetX, offsetY = offsetY, clientX = clientX, clientY = clientY }
+                                { model | selectedNoteIds = Set.empty, drumDrag = Nothing }
+                            , Cmd.none
+                            )
+
+            else
+                case ( findDrumNoteAt { pitch = pitch, tick = tick } model, effShift ) of
                 ( Just note, True ) ->
                     ( { model
                         | selectedNoteIds =
@@ -6385,6 +6497,9 @@ view model =
 
                     PianoRoll.CutTool ->
                         PressedCutAt
+
+                    PianoRoll.LockTool ->
+                        PressedEmptyCell
             , pressedNote = PressedNote
             , draggedWhilePressingNote = \pos -> DraggedTo { clientX = pos.clientX, clientY = pos.clientY, alt = pos.alt }
             , releasedNotePress = ReleasedDrag
@@ -6431,6 +6546,10 @@ view model =
                     -- 状態の一貫性と次ジェスチャのために閉じておく（実際の抑止は scrollLock 属性側）。
                     "none"
 
+                else if model.tool == PianoRoll.LockTool then
+                    -- ロック中はスクロールが主目的なので、長押し矩形選択は data-suppress-touch-scroll 側で担保する。
+                    "pan-x pan-y"
+
                 else if model.tool == PianoRoll.PointerTool && model.touchMode == TouchNormal then
                     "pan-x pan-y"
                     -- 空白スワイプをネイティブスクロールに委譲（ピンチズームは除外）
@@ -6457,6 +6576,13 @@ view model =
                            ]
                     )
                     [ text "✂ カット" ]
+                , button
+                    (Style.toggleButton (model.tool == PianoRoll.LockTool)
+                        ++ [ onClick (SelectedTool PianoRoll.LockTool)
+                           , Html.Attributes.title "配置・移動・リサイズ・削除を止めて、スクロールと選択だけにする（l キーで切替。Escape では解除されません）"
+                           ]
+                    )
+                    [ text "🔒 ロック" ]
                 , Style.helpButton { onClick = OpenedHelpTopic Help.PianoRollOps, label = "ピアノロールの操作" }
                 ]
 
