@@ -22,6 +22,7 @@ import Data.Note
 import Data.Project exposing (Project)
 import Data.ReferenceAudio
 import Data.StrumExpand
+import Data.Tap
 import Data.Time
 import Data.Timeline exposing (Timeline)
 import Data.Track exposing (TrackKind(..))
@@ -271,7 +272,7 @@ type alias Model =
     , longPressToken : Int
     , longPress : Maybe { token : Int, target : LongPressTarget }
     , touchTooltipToken : Int
-    , lastNoteTap : Maybe { noteId : Int, time : Float, clientX : Float, clientY : Float }
+    , lastTap : Maybe Data.Tap.LastTap
     , toast : Maybe Toast.Toast
     , toastCounter : Int
     , chordSheetError : Maybe Data.ChordSheet.ParseError
@@ -636,7 +637,7 @@ init flags =
       , longPressToken = 0
       , longPress = Nothing
       , touchTooltipToken = 0
-      , lastNoteTap = Nothing
+      , lastTap = Nothing
       , toast = Nothing
       , toastCounter = 0
       , chordSheetError = Nothing
@@ -3532,24 +3533,10 @@ updateCore msg model =
                 Just note ->
                     let
                         {- iOS Safariはタッチではdblclickを発火しないため、300ms以内・24px以内の同一ノートへの
-                           再タップを独自にダブルタップとして検出する。長押し削除（500ms）と両立させる。
+                           再タップを独自にダブルタップとして検出する（Data.Tap）。長押し削除（500ms）と両立させる。
                         -}
                         isDoubleTap =
-                            pos.isTouch
-                                && (case model1.lastNoteTap of
-                                        Just lt ->
-                                            lt.noteId
-                                                == noteId
-                                                && (pos.timeStamp - lt.time)
-                                                < 300
-                                                && abs (pos.clientX - lt.clientX)
-                                                < 24
-                                                && abs (pos.clientY - lt.clientY)
-                                                < 24
-
-                                        Nothing ->
-                                            False
-                                   )
+                            pos.isTouch && Data.Tap.isDoubleTap (Data.Tap.TapNote noteId) pos model1.lastTap
                     in
                     if pos.shift || model1.touchMode == TouchSelect then
                         ( { model1
@@ -3571,7 +3558,7 @@ updateCore msg model =
                             , hoveredNote = clearHoveredNote noteId model1.hoveredNote
                             , pendingNoteDrag = Nothing
                             , longPress = Nothing
-                            , lastNoteTap = Nothing
+                            , lastTap = Nothing
                           }
                         , Cmd.none
                         )
@@ -3593,7 +3580,7 @@ updateCore msg model =
                                     { model3
                                         | hoveredNote = Just { note = note, x = pos.clientX, y = pos.clientY }
                                         , touchTooltipToken = newTooltipToken
-                                        , lastNoteTap = Just { noteId = noteId, time = pos.timeStamp, clientX = pos.clientX, clientY = pos.clientY }
+                                        , lastTap = Data.Tap.record (Data.Tap.TapNote noteId) pos
                                     }
 
                                 tooltipCmd =
