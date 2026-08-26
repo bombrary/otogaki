@@ -50,7 +50,7 @@ type alias Config msg =
     , pressedBlock : Int -> Float -> msg
     , pressedResizeHandle : Int -> Float -> msg
     , wheelZoomed : { deltaY : Float, offsetX : Float } -> msg
-    , pressedRuler : { offsetX : Float, clientX : Float, shift : Bool } -> msg
+    , pressedRuler : { offsetX : Float, clientX : Float, shift : Bool, isTouch : Bool } -> msg
     , pressedLoopHandle : Bool -> Float -> msg
     , clickedChord : Int -> msg
     , doubleClickedChord : Int -> msg
@@ -560,12 +560,13 @@ regionRulerView isNarrow config pxPerBar loopEditable loop ticksToPx playheadTic
         )
 
 
-rulerPressDecoder : Decode.Decoder { offsetX : Float, clientX : Float, shift : Bool }
+rulerPressDecoder : Decode.Decoder { offsetX : Float, clientX : Float, shift : Bool, isTouch : Bool }
 rulerPressDecoder =
-    Decode.map3 (\ox cx sh -> { offsetX = ox, clientX = cx, shift = sh })
+    Decode.map4 (\ox cx sh touch -> { offsetX = ox, clientX = cx, shift = sh, isTouch = touch })
         (Decode.field "offsetX" Decode.float)
         (Decode.field "clientX" Decode.float)
         (Decode.field "shiftKey" Decode.bool)
+        (Decode.field "pointerType" Decode.string |> Decode.map ((==) "touch"))
 
 
 wheelDecoder : Decode.Decoder { deltaY : Float, offsetX : Float }

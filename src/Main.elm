@@ -311,6 +311,8 @@ type TouchMode
 -}
 type LongPressTarget
     = LongPressBand BandOrigin
+    | LongPressLoop { ticks : Int, clientX : Float }
+    | LongPressSectionLoop { ticks : Int, clientX : Float }
     | LongPressVoicingOffset Int Int
     | LongPressDrumNote { pitch : Int, tick : Int }
 
@@ -373,7 +375,7 @@ type Msg
     | DraggedTo ClientPos
     | DraggedOverChordBar Int
     | ReleasedDrag
-    | PressedRuler { offsetX : Float, clientX : Float, shift : Bool }
+    | PressedRuler { offsetX : Float, clientX : Float, shift : Bool, isTouch : Bool }
     | PressedPianoKey Int
     | PressedVoicingKeyboardKey Int
     | GotKey KeyEvent
@@ -486,7 +488,7 @@ type Msg
     | PressedTrackRowHandle Int Float
     | WheelZoomedSectionBar { deltaY : Float, offsetX : Float }
     | GotSectionBarViewportForZoom { deltaY : Float, offsetX : Float } (Result Browser.Dom.Error Browser.Dom.Viewport)
-    | PressedSectionRuler { offsetX : Float, clientX : Float, shift : Bool }
+    | PressedSectionRuler { offsetX : Float, clientX : Float, shift : Bool, isTouch : Bool }
     | PressedSectionLoopHandle Bool Float
     | PressedPaneDivider Float
     | ToggledChordProgressionModal
@@ -810,6 +812,17 @@ promoteLongPress target model =
                     , hoveredNote = Nothing
                     , lastTap = Nothing
                 }
+            , Cmd.none
+            )
+
+        LongPressLoop r ->
+            ( { model | loopDrag = Just { fixedTicks = r.ticks, baseTicks = r.ticks, startClientX = r.clientX, curTicks = r.ticks } }, Cmd.none )
+
+        LongPressSectionLoop r ->
+            ( { model
+                | sectionLoopDrag = Just { fixedTicks = r.ticks, baseTicks = r.ticks, startClientX = r.clientX, curTicks = r.ticks }
+                , viewRangeDrag = Nothing
+              }
             , Cmd.none
             )
 
@@ -3943,7 +3956,23 @@ updateCore msg model =
                 ( { model | loopDrag = Just { fixedTicks = anchor, baseTicks = anchor, startClientX = pos.clientX, curTicks = anchor } }, Cmd.none )
 
             else
-                seekTo (snapFloor model (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX)) model
+                let
+                    ( model1, cmd ) =
+                        seekTo (snapFloor model (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX)) model
+                in
+                if pos.isTouch then
+                    -- タップはシーク。そのまま押さえ続けて長押しが完走すれば promoteLongPress がループ範囲ドラッグに差し替える。
+                    let
+                        anchor =
+                            snapRound model (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX)
+
+                        ( model2, armCmd ) =
+                            armLongPress (LongPressLoop { ticks = anchor, clientX = pos.clientX }) model1
+                    in
+                    ( model2, Cmd.batch [ cmd, armCmd ] )
+
+                else
+                    ( model1, cmd )
 
         PressedLoopHandle isEnd clientX ->
             case model.loopRange of
@@ -3978,10 +4007,30 @@ updateCore msg model =
                 ( { model | sectionLoopDrag = Just { fixedTicks = pressTicks, baseTicks = pressTicks, startClientX = pos.clientX, curTicks = pressTicks } }, Cmd.none )
 
             else if insideViewRange then
-                ( { model | viewRangeDrag = Just { startClientX = pos.clientX, pressOffsetX = pos.offsetX, origScrollX = currentPianoRollScrollX model, moved = False } }, Cmd.none )
+                let
+                    model1 =
+                        { model | viewRangeDrag = Just { startClientX = pos.clientX, pressOffsetX = pos.offsetX, origScrollX = currentPianoRollScrollX model, moved = False } }
+                in
+                if pos.isTouch then
+                    armLongPress (LongPressSectionLoop { ticks = pressTicks, clientX = pos.clientX }) model1
+
+                else
+                    ( model1, Cmd.none )
 
             else
-                seekTo pressTicks model
+                let
+                    ( model1, cmd ) =
+                        seekTo pressTicks model
+                in
+                if pos.isTouch then
+                    let
+                        ( model2, armCmd ) =
+                            armLongPress (LongPressSectionLoop { ticks = pressTicks, clientX = pos.clientX }) model1
+                    in
+                    ( model2, Cmd.batch [ cmd, armCmd ] )
+
+                else
+                    ( model1, cmd )
 
         PressedSectionLoopHandle isEnd clientX ->
             case model.loopRange of

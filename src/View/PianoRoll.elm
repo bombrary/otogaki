@@ -65,7 +65,7 @@ type alias Config msg =
     , canceledNotePress : msg
     , doubleClickedNote : Int -> msg
     , rightClickedNote : Int -> msg
-    , pressedRuler : { offsetX : Float, clientX : Float, shift : Bool } -> msg
+    , pressedRuler : { offsetX : Float, clientX : Float, shift : Bool, isTouch : Bool } -> msg
     , pressedLoopHandle : Bool -> Float -> msg
     , pressedKey : Int -> msg
     , wheelZoomedRuler : { deltaY : Float, offsetX : Float } -> msg
@@ -782,7 +782,7 @@ keyRow config highlightedPitch scalePitchClasses isNarrow pitch =
 
 
 type alias RulerHandlers msg =
-    { pressedRuler : { offsetX : Float, clientX : Float, shift : Bool } -> msg
+    { pressedRuler : { offsetX : Float, clientX : Float, shift : Bool, isTouch : Bool } -> msg
     , pressedLoopHandle : Bool -> Float -> msg
     , wheelZoomedRuler : { deltaY : Float, offsetX : Float } -> msg
     }
@@ -853,16 +853,17 @@ rulerView config opts =
 {-| button フィルタを入れ、右クリックでは発火させない。入れないと右クリックでも pressedRuler が呼ばれ seek/loop ドラッグが始まり、
 contextmenu 発火後にボタンを離しても状態がホールドされる。
 -}
-rulerPressDecoder : Decode.Decoder { offsetX : Float, clientX : Float, shift : Bool }
+rulerPressDecoder : Decode.Decoder { offsetX : Float, clientX : Float, shift : Bool, isTouch : Bool }
 rulerPressDecoder =
     Decode.field "button" Decode.int
         |> Decode.andThen
             (\button ->
                 if button == 0 then
-                    Decode.map3 (\ox cx sh -> { offsetX = ox, clientX = cx, shift = sh })
+                    Decode.map4 (\ox cx sh touch -> { offsetX = ox, clientX = cx, shift = sh, isTouch = touch })
                         (Decode.field "offsetX" Decode.float)
                         (Decode.field "clientX" Decode.float)
                         (Decode.field "shiftKey" Decode.bool)
+                        (Decode.field "pointerType" Decode.string |> Decode.map ((==) "touch"))
 
                 else
                     Decode.fail "not left button"

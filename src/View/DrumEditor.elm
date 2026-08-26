@@ -28,7 +28,7 @@ type alias Config msg =
     , changedApplyTarget : String -> msg
     , changedApplyMode : String -> msg
     , toggledLane : Int -> msg
-    , pressedRuler : { offsetX : Float, clientX : Float, shift : Bool } -> msg
+    , pressedRuler : { offsetX : Float, clientX : Float, shift : Bool, isTouch : Bool } -> msg
     , pressedLoopHandle : Bool -> Float -> msg
     , wheelZoomedRuler : { deltaY : Float, offsetX : Float } -> msg
     , scrolled : { scrollLeft : Float, scrollTop : Float, clientWidth : Float } -> msg
