@@ -602,6 +602,7 @@ chordTrackView config opts previewNotes chordLane =
                                 { pxPerSixteenth = opts.pxPerSixteenth
                                 , totalBars = opts.totalBars
                                 , notes = notes
+                                , selectedIds = Set.empty
                                 , playheadTicks = opts.playheadTicks
                                 }
                         }
@@ -1144,14 +1145,25 @@ velocityLaneViewWith handlers opts =
 
 velocityLaneView : Config msg -> ViewOpts -> Html msg
 velocityLaneView config opts =
-    velocityLaneViewWith
-        { pressedVelocityBar = config.pressedVelocityBar }
-        { pxPerSixteenth = opts.pxPerSixteenth
-        , totalBars = opts.totalBars
-        , notes = opts.notes
-        , selectedIds = opts.selectedIds
-        , playheadTicks = opts.playheadTicks
-        }
+    if isEditable opts.tool then
+        velocityLaneViewWith
+            { pressedVelocityBar = config.pressedVelocityBar }
+            { pxPerSixteenth = opts.pxPerSixteenth
+            , totalBars = opts.totalBars
+            , notes = opts.notes
+            , selectedIds = opts.selectedIds
+            , playheadTicks = opts.playheadTicks
+            }
+
+    else
+        -- LockTool（や CutTool）では触れないので読み取り専用に落とす。選択強調だけは残す。
+        velocityLaneViewReadOnly
+            { pxPerSixteenth = opts.pxPerSixteenth
+            , totalBars = opts.totalBars
+            , notes = opts.notes
+            , selectedIds = opts.selectedIds
+            , playheadTicks = opts.playheadTicks
+            }
 
 
 velocityBarView : { pressedVelocityBar : Int -> { clientX : Float, clientY : Float } -> msg } -> Int -> Set Int -> Note -> Svg.Svg msg
@@ -1197,11 +1209,11 @@ velocityBarView handlers pxPerSixteenth selectedIds note =
         []
 
 
-{-| コードトラック用の読み取り専用ベロシティバー。velocityBarView からイベントハンドラと ns-resize カーソルを除いた版。
-選択状態を持たないため常に Theme.primary で塗り、pointerEvents "none" でピアノロール側のマウス操作を妨げない。
+{-| コードトラックやロック中のピアノロール用の読み取り専用ベロシティバー。velocityBarView からイベントハンドラと ns-resize カーソルを除いた版。
+selectedIds は選択強調の色付けのためだけに使い、pointerEvents "none" でピアノロール側のマウス操作を妨げない。
 -}
-velocityBarViewReadOnly : Int -> Note -> Svg.Svg msg
-velocityBarViewReadOnly pxPerSixteenth note =
+velocityBarViewReadOnly : Int -> Set Int -> Note -> Svg.Svg msg
+velocityBarViewReadOnly pxPerSixteenth selectedIds note =
     let
         x =
             ticksToPixels pxPerSixteenth note.start
@@ -1211,25 +1223,42 @@ velocityBarViewReadOnly pxPerSixteenth note =
 
         h =
             Basics.max 2 (toFloat note.velocity / 127 * toFloat (velocityLaneHeight - 2))
+
+        selected =
+            Set.member note.id selectedIds
     in
     Svg.rect
         [ SA.x (String.fromFloat x)
         , SA.y (String.fromFloat (toFloat velocityLaneHeight - h))
         , SA.width (String.fromFloat barW)
         , SA.height (String.fromFloat h)
-        , SA.fill Theme.primary
+        , SA.fill
+            (if selected then
+                Style.colorSelection
+
+             else
+                Theme.primary
+            )
+        , SA.stroke
+            (if selected then
+                Theme.selectionDeep
+
+             else
+                "none"
+            )
         , SA.pointerEvents "none"
         ]
         []
 
 
-{-| velocityLaneViewWith の読み取り専用版。コードトラックのプレビューノート（previewNotes）を並べるだけで
-ハンドラ・選択強調は持たない。
+{-| velocityLaneViewWith の読み取り専用版。コードトラックのプレビューノート（previewNotes）や、LockTool 中のピアノロールのノートを
+並べるだけでハンドラは持たないが、selectedIds の選択強調は保つ。
 -}
 velocityLaneViewReadOnly :
     { pxPerSixteenth : Int
     , totalBars : Int
     , notes : List Note
+    , selectedIds : Set Int
     , playheadTicks : Int
     }
     -> Html msg
@@ -1246,7 +1275,7 @@ velocityLaneViewReadOnly opts =
         , HA.style "background" Theme.surfaceContainerLow
         , HA.style "border-top" ("1px solid " ++ Theme.outlineVariant)
         ]
-        (List.map (velocityBarViewReadOnly opts.pxPerSixteenth) opts.notes
+        (List.map (velocityBarViewReadOnly opts.pxPerSixteenth opts.selectedIds) opts.notes
             ++ [ playheadLine opts.pxPerSixteenth velocityLaneHeight opts.playheadTicks ]
         )
 
