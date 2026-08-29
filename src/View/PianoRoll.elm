@@ -201,7 +201,7 @@ zoomStep deltaY current =
 
 minPitch : Int
 minPitch =
-    36
+    12
 
 
 maxPitch : Int
