@@ -6638,7 +6638,7 @@ view model =
                     )
 
         chordTrackMainView =
-            div []
+            div [ Html.Attributes.class "pr-col pr-fill" ]
                 [ div [ style "margin-top" "0.5rem", style "display" "flex", style "align-items" "center", style "flex-wrap" "wrap", style "gap" "0.3rem" ]
                     [ span [ style "font-size" "0.9rem" ] [ text ("編集中: " ++ selectedTrackName ++ selectionInfo) ]
                     , button
