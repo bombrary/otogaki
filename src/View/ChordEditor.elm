@@ -173,9 +173,7 @@ view config timeline playheadTicks voicingState track =
 progressionEditorView : Config msg -> String -> Maybe Data.ChordSheet.ParseError -> Html msg
 progressionEditorView config sheetText parseError =
     div []
-        [ span [ HA.style "font-size" "0.75rem", HA.style "color" Theme.onSurfaceVariant, HA.style "display" "block", HA.style "margin-top" "0.3rem" ]
-            [ text "空行でセクションを区切り、ブロック先頭の縦棒を含まない行がセクション名になります。縦棒で小節区切り、空白で小節内分割。% = 直前のコードを繰返し、_ = 休符、= = 直前のコードを伸ばす、// 以降は行末までコメント。入力するたびに自動反映されます（形式が崩れている間は反映されません）。コードをクリックすると再生位置がそこへ移動" ]
-        , div [ HA.style "margin-top" "0.3rem", HA.style "font-size" "0.75rem", HA.style "color" Theme.onSurfaceVariant, HA.style "display" "flex", HA.style "align-items" "center", HA.style "gap" "0.3rem" ]
+        [ div [ HA.style "margin-top" "0.3rem", HA.style "font-size" "0.75rem", HA.style "color" Theme.onSurfaceVariant, HA.style "display" "flex", HA.style "align-items" "center", HA.style "gap" "0.3rem" ]
             [ text "@NAME やリズム指定の詳しい書き方は"
             , Style.helpButton { onClick = config.openedHelp Help.ChordSheet, label = "コード譜の記法" }
             ]
