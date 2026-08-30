@@ -8,13 +8,20 @@ import { loadTheme, saveTheme } from "./theme.js";
 const initialTheme = loadTheme();
 document.documentElement.setAttribute("data-theme", initialTheme);
 
+// iPadOS Safari は外部マウス/トラックパッドの有無にかかわらず matchMedia("(pointer: coarse)") が false を返すことがある
+// （AppleがWeb互換性のため iPad をデスクトップ相当として見せようとする既知の振る舞い）。
+// iPadOS は UA を Macintosh と名乗るが maxTouchPoints で実 Mac（0）と区別できる。
+const isIPadOS =
+  /iPad/.test(navigator.userAgent) ||
+  (navigator.maxTouchPoints > 1 && /MacIntel/.test(navigator.platform));
+
 const app = Elm.Main.init({
   node: document.getElementById("app"),
   flags: {
     ...(loadProject() ?? {}),
     theme: initialTheme,
     // 幅だけでは iPad Pro 横向きなど幅の広いタッチ端末を拾えないので、pointer:coarse も併用する。
-    pointerCoarse: window.matchMedia("(pointer: coarse)").matches,
+    pointerCoarse: window.matchMedia("(pointer: coarse)").matches || isIPadOS,
   },
 });
 
