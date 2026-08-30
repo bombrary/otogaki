@@ -189,6 +189,7 @@ type alias Model =
     , bpmInput : String
     , selectedNoteIds : Set Int
     , clipboard : List Data.Note.Note
+    , lockActionMenu : Maybe { noteId : Int, x : Float, y : Float, splitTick : Int }
     , rubberBand : Maybe RubberBand
     , drumDrag : Maybe DrumDrag
     , showKeyboard : Bool
@@ -368,7 +369,13 @@ type Msg
     | GotAudio AudioEvent
     | PressedEmptyCell { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, seekMod : Bool, isTouch : Bool }
     | CanceledNotePress
-    | PressedNote Int PianoRoll.ResizeHandle { clientX : Float, clientY : Float, shift : Bool, isTouch : Bool, timeStamp : Float }
+    | PressedNote Int PianoRoll.ResizeHandle { clientX : Float, clientY : Float, offsetX : Float, shift : Bool, isTouch : Bool, timeStamp : Float }
+    | ClosedLockActionMenu
+    | LockMenuCopy
+    | LockMenuCut
+    | LockMenuPaste
+    | LockMenuDelete
+    | LockMenuSplit
     | PressedChordToken ( Int, Int ) { clientX : Float, clientY : Float, shift : Bool }
     | PressedChordLane { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, seekMod : Bool }
     | DoubleClickedNote Int
@@ -567,6 +574,7 @@ init flags =
       , bpmInput = String.fromFloat project.bpm
       , selectedNoteIds = Set.empty
       , clipboard = []
+      , lockActionMenu = Nothing
       , rubberBand = Nothing
       , drumDrag = Nothing
       , showKeyboard = False
@@ -813,6 +821,7 @@ promoteLongPress target model =
                     , dragState = NoDrag
                     , hoveredNote = Nothing
                     , lastTap = Nothing
+                    , lockActionMenu = Nothing
                 }
             , Cmd.none
             )
@@ -3595,7 +3604,7 @@ updateCore msg model =
                     Just note ->
                         let
                             selected =
-                                { model1 | selectedNoteIds = Set.singleton note.id, highlightedPitches = Set.singleton note.pitch }
+                                { model1 | selectedNoteIds = Set.singleton note.id, highlightedPitches = Set.singleton note.pitch, lockActionMenu = Nothing }
                         in
                         if pos.isTouch then
                             armLongPress (LongPressBand (noteBandOrigin selected note pos)) selected
@@ -3606,7 +3615,7 @@ updateCore msg model =
                     Nothing ->
                         let
                             cleared =
-                                { model1 | selectedNoteIds = Set.empty, highlightedPitches = Set.empty }
+                                { model1 | selectedNoteIds = Set.empty, highlightedPitches = Set.empty, lockActionMenu = Nothing }
                         in
                         if pos.isTouch then
                             armLongPress (LongPressBand { offsetX = pos.offsetX, offsetY = pos.offsetY, clientX = pos.clientX, clientY = pos.clientY }) cleared
@@ -3685,11 +3694,31 @@ updateCore msg model =
                     in
                     if model1.tool == PianoRoll.LockTool then
                         {- ロック中はタップ選択のみ。移動・リサイズ・ダブルタップ削除はしない。
-                           長押しは arm する（ロック中でも範囲選択はできる。
+                           長押しは arm する（ロック中でも範囲選択はできる）。タップしたノートが既に複数選択に
+                           含まれていれば選択を潰さず、ロックメニューで複数ノートへコピー・切り取り・
+                           削除ができるようにする。
                         -}
                         let
+                            keepMultiSelection =
+                                Set.member noteId model1.selectedNoteIds && Set.size model1.selectedNoteIds > 1
+
                             selected =
-                                { model1 | selectedNoteIds = Set.singleton noteId, highlightedPitches = Set.singleton note.pitch }
+                                { model1
+                                    | selectedNoteIds =
+                                        if keepMultiSelection then
+                                            model1.selectedNoteIds
+
+                                        else
+                                            Set.singleton noteId
+                                    , highlightedPitches = Set.singleton note.pitch
+                                    , lockActionMenu =
+                                        Just
+                                            { noteId = noteId
+                                            , x = pos.clientX
+                                            , y = pos.clientY
+                                            , splitTick = PianoRoll.splitTickFromOffset model1.pianoRollZoom pos.offsetX note.start
+                                            }
+                                }
                         in
                         if pos.isTouch then
                             armLongPress (LongPressBand (noteBandOrigin selected note pos)) selected
@@ -3760,6 +3789,7 @@ updateCore msg model =
                 , pendingNoteDrag = Nothing
                 , pendingEmptyTouch = Nothing
                 , longPress = Nothing
+                , lockActionMenu = Nothing
               }
             , Cmd.none
             )
@@ -3769,6 +3799,33 @@ updateCore msg model =
 
         ToggledTouchSnapOff ->
             ( { model | touchSnapOff = not model.touchSnapOff }, Cmd.none )
+
+        ClosedLockActionMenu ->
+            ( { model | lockActionMenu = Nothing }, Cmd.none )
+
+        LockMenuCopy ->
+            ( copySelection { model | lockActionMenu = Nothing }, Cmd.none )
+
+        LockMenuCut ->
+            ( deleteSelection (copySelection { model | lockActionMenu = Nothing }), Cmd.none )
+
+        LockMenuPaste ->
+            ( pasteClipboard { model | lockActionMenu = Nothing }, Cmd.none )
+
+        LockMenuDelete ->
+            ( deleteSelection { model | lockActionMenu = Nothing }, Cmd.none )
+
+        LockMenuSplit ->
+            case model.lockActionMenu of
+                Just menu ->
+                    let
+                        result =
+                            Data.Project.cutNotesAt { trackId = model.selectedTrackId, tick = menu.splitTick, targetIds = Set.singleton menu.noteId } model.project
+                    in
+                    ( { model | project = result.project, selectedNoteIds = result.newSelection, lockActionMenu = Nothing }, Cmd.none )
+
+                Nothing ->
+                    ( model, Cmd.none )
 
         LongPressFired token ->
             case model.longPress of
@@ -4508,6 +4565,10 @@ updateCore msg model =
                 else
                     ( deleteSelection model, Cmd.none )
 
+            else if k.key == "Escape" && model.lockActionMenu /= Nothing then
+                -- ロックメニューが開いていれば、ロック自体は解除せずメニューだけ閉じる
+                ( { model | lockActionMenu = Nothing }, Cmd.none )
+
             else if k.key == "Escape" then
                 ( { model
                     | selectedNoteIds = Set.empty
@@ -4666,7 +4727,7 @@ updateCore msg model =
                         model.page
 
                 newModel =
-                    { model | selectedTrackId = trackId, selectedNoteIds = Set.empty, selectedChordKeys = Set.empty, pendingTrackDelete = Nothing, page = newPage }
+                    { model | selectedTrackId = trackId, selectedNoteIds = Set.empty, selectedChordKeys = Set.empty, pendingTrackDelete = Nothing, page = newPage, lockActionMenu = Nothing }
             in
             {- コード進行トラックへの切替は常に再センタリングする（previewNotes は他トラックと違って
                `trackNotes` に乗らないので、位置を維持するだけでは直前トラックの位置が残ってしまう）。
@@ -7454,6 +7515,7 @@ view model =
             Nothing ->
                 text ""
         , hoveredNoteTooltipView model timeline
+        , lockActionMenuView model
         , hoveredFretCellTooltipView model
         , if isDragging model then
             viewDragOverlay
@@ -7672,6 +7734,78 @@ hoveredNoteTooltipView model timeline =
                                 []
                        )
                 )
+
+
+{-| ロック中にノートをタップした時に出すアクションメニュー。タップ位置に追従する小さなカードを、
+画面全体を覆う透明なスクリム(兄弟要素にしてbubblingを避ける)の上に重ねる。
+スクリムをタップすれば選択状態を維持したままメニューだけ閉じる。
+-}
+lockActionMenuView : Model -> Html Msg
+lockActionMenuView model =
+    case model.lockActionMenu of
+        Nothing ->
+            text ""
+
+        Just menu ->
+            div []
+                [ div
+                    [ style "position" "fixed"
+                    , style "inset" "0"
+                    , style "z-index" "1000"
+                    , onClick ClosedLockActionMenu
+                    ]
+                    []
+                , div
+                    [ style "position" "fixed"
+                    , style "left" (String.fromFloat (menu.x + 12) ++ "px")
+                    , style "top" (String.fromFloat (menu.y + 12) ++ "px")
+                    , style "background" Theme.inverseSurface
+                    , style "color" Theme.inverseOnSurface
+                    , style "border-radius" Theme.shapeXS
+                    , style "padding" "0.3rem"
+                    , style "display" "flex"
+                    , style "flex-direction" "column"
+                    , style "gap" "0.15rem"
+                    , style "font-size" "0.85rem"
+                    , style "z-index" "1001"
+                    ]
+                    [ lockMenuButton "コピー" False LockMenuCopy
+                    , lockMenuButton "切り取り" False LockMenuCut
+                    , lockMenuButton "貼り付け" (List.isEmpty model.clipboard) LockMenuPaste
+                    , lockMenuButton "削除" False LockMenuDelete
+                    , lockMenuButton "✂ カット" False LockMenuSplit
+                    ]
+                ]
+
+
+lockMenuButton : String -> Bool -> Msg -> Html Msg
+lockMenuButton label isDisabled msg =
+    button
+        [ onClick msg
+        , Html.Attributes.disabled isDisabled
+        , style "background" "transparent"
+        , style "color" "inherit"
+        , style "border" "none"
+        , style "text-align" "left"
+        , style "padding" "0.3rem 0.6rem"
+        , style "border-radius" Theme.shapeXS
+        , style "font-size" "0.85rem"
+        , style "cursor"
+            (if isDisabled then
+                "default"
+
+             else
+                "pointer"
+            )
+        , style "opacity"
+            (if isDisabled then
+                "0.4"
+
+             else
+                "1"
+            )
+        ]
+        [ text label ]
 
 
 {-| 指板セルホバー時のツールチップ。音名（`Data.Note.pitchLabel`）・度数（`ChordFormat.degreeLabel`）・半音数を並べて表示する（例：「E 4 ・ 3 (+4)」）。
