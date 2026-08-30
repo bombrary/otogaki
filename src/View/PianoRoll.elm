@@ -330,7 +330,7 @@ frameContentHeight dims =
           )
 
 
-{-| ノート列の中央値の音高。空なら C4(60)。ピアノロールの初期センタリング対象を決めるのに使う
+{-| ノート列の中央値の音高。空なら C3(48)。ピアノロールの初期センタリング対象を決めるのに使う
 （src/Main.elm の initialCenterPitch）。偶数個のときは上寄りの中央（ソート後 n//2 番目）を採る。
 -}
 medianPitch : List Int -> Int
@@ -343,12 +343,19 @@ medianPitch pitches =
             List.length sorted
     in
     (if n == 0 then
-        60
+        defaultCenterPitch
 
      else
-        List.drop (n // 2) sorted |> List.head |> Maybe.withDefault 60
+        List.drop (n // 2) sorted |> List.head |> Maybe.withDefault defaultCenterPitch
     )
         |> clamp minPitch maxPitch
+
+
+{-| ノートが無い/中央値計算不能な場合のデフォルト中心音高。C3。
+-}
+defaultCenterPitch : Int
+defaultCenterPitch =
+    48
 
 
 {-| 指定の音高の行が、ヘッダ帯と Vel レーンを除いた「見えているグリッド領域」の中央に来る scrollTop。

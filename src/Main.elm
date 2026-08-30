@@ -4810,9 +4810,14 @@ updateCore msg model =
             in
             {- コード進行トラックへの切替は常に再センタリングする（previewNotes は他トラックと違って
                `trackNotes` に乗らないので、位置を維持するだけでは直前トラックの位置が残ってしまう）。
-               それ以外のトラック間の切替は従来どおり位置を維持する。
+               タッチレイアウトでの自動タブ遷移時は、選んだトラック自身のノートに基づいて再センタリングする（
+               restorePianoRollScrollCmd は前トラックのスクロール位置を単純復元するだけで中央値計算を行わないため）。
+               デスクトップ（2ペイン）はページ遷移が発生しないため、従来どおり位置を維持する。
             -}
             if trackId == Data.ChordTrack.trackId then
+                ( newModel, centerPianoRollCmd newModel (initialCenterPitch newModel) )
+
+            else if isTouchLayout model then
                 ( newModel, centerPianoRollCmd newModel (initialCenterPitch newModel) )
 
             else
