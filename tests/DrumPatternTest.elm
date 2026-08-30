@@ -27,6 +27,7 @@ baseProject =
     , voicings = []
     , voicingEnabled = True
     , guitarFormEnabled = True
+    , ghostTrackIds = Set.empty
     }
 
 

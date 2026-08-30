@@ -7,6 +7,7 @@ import Data.ReferenceAudio as ReferenceAudio
 import Data.Timeline as Timeline
 import Data.Track exposing (Instrument(..), TrackKind(..))
 import Expect
+import Set
 import Test exposing (Test, describe, test)
 
 
@@ -36,6 +37,7 @@ baseProject sections notes chordText =
     , voicings = []
     , voicingEnabled = True
     , guitarFormEnabled = True
+    , ghostTrackIds = Set.empty
     }
 
 

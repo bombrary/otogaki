@@ -217,7 +217,6 @@ type alias Model =
     , redoStack : List Project
     , editBurst : Bool
     , insertCountInput : String
-    , ghostTrackIds : Set Int
     , defaultNoteDuration : Int
     , highlightedPitches : Set Int
     , heldKeyPitches : Set Int
@@ -603,7 +602,6 @@ init flags =
       , redoStack = []
       , editBurst = False
       , insertCountInput = "1"
-      , ghostTrackIds = Set.empty
       , defaultNoteDuration = Data.Time.ticksPerSixteenth * 2
       , highlightedPitches = Set.empty
       , heldKeyPitches = Set.empty
@@ -738,11 +736,11 @@ ghostNoteGroups model timeline =
     let
         trackGroups =
             model.project.tracks
-                |> List.filter (\t -> Set.member t.id model.ghostTrackIds)
+                |> List.filter (\t -> Set.member t.id model.project.ghostTrackIds)
                 |> List.map (\t -> notesOf t.kind)
 
         chordGroup =
-            if Set.member -1 model.ghostTrackIds then
+            if Set.member -1 model.project.ghostTrackIds then
                 [ Data.ChordTrack.resolved timeline model.project.chordTrack
                     |> List.concatMap
                         (\ev ->
@@ -5992,14 +5990,18 @@ updateCore msg model =
                     ( model, Cmd.none )
 
         ToggledGhostTrack trackId ->
-            ( { model
-                | ghostTrackIds =
-                    if Set.member trackId model.ghostTrackIds then
-                        Set.remove trackId model.ghostTrackIds
+            let
+                project =
+                    model.project
+
+                newGhostTrackIds =
+                    if Set.member trackId project.ghostTrackIds then
+                        Set.remove trackId project.ghostTrackIds
 
                     else
-                        Set.insert trackId model.ghostTrackIds
-              }
+                        Set.insert trackId project.ghostTrackIds
+            in
+            ( { model | project = { project | ghostTrackIds = newGhostTrackIds } }
             , Cmd.none
             )
 
@@ -6526,7 +6528,7 @@ view model =
                 (totalBarsFor model.project)
                 model.selectedTrackId
                 model.instrumentLoad
-                model.ghostTrackIds
+                model.project.ghostTrackIds
                 model.pendingTrackDelete
                 (model.trackMoveDrag
                     |> Maybe.andThen

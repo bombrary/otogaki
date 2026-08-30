@@ -66,6 +66,7 @@ type alias Project =
     , voicings : List Voicing
     , voicingEnabled : Bool
     , guitarFormEnabled : Bool
+    , ghostTrackIds : Set Int
     }
 
 
@@ -188,6 +189,7 @@ demo =
     , voicings = []
     , voicingEnabled = True
     , guitarFormEnabled = False
+    , ghostTrackIds = Set.singleton Data.ChordTrack.trackId
     }
 
 
@@ -217,6 +219,7 @@ empty =
     , voicings = []
     , voicingEnabled = True
     , guitarFormEnabled = False
+    , ghostTrackIds = Set.singleton Data.ChordTrack.trackId
     }
 
 

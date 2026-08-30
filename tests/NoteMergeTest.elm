@@ -31,6 +31,7 @@ baseProject notes =
     , voicings = []
     , voicingEnabled = True
     , guitarFormEnabled = True
+    , ghostTrackIds = Set.empty
     }
 
 

@@ -48,6 +48,7 @@ encodeFields project =
     , ( "voicings", Encode.list encodeVoicing project.voicings )
     , ( "voicingEnabled", Encode.bool project.voicingEnabled )
     , ( "guitarFormEnabled", Encode.bool project.guitarFormEnabled )
+    , ( "ghostTrackIds", Encode.list Encode.int (Set.toList project.ghostTrackIds) )
     ]
 
 
@@ -202,8 +203,8 @@ selectedTrackIdDecoder =
         ]
 
 
-{-| `Project` は9フィールドあり Json.Decode の map 関数は map8 が上限なので、2つに分けて合成する。
-今後さらにフィールドを足す場合は PartB 側に足せばよい。
+{-| `Project` は10フィールドあり Json.Decode の map 関数は map8 が上限なので、2つに分けて合成する。
+PartB はすでに map8 上限に達しているので、今後さらにフィールドを足す場合は PartC を新設して map3 で合成する必要がある。
 -}
 type alias PartA =
     { name : String
@@ -222,6 +223,7 @@ type alias PartB =
     , voicings : List Voicing
     , voicingEnabled : Bool
     , guitarFormEnabled : Bool
+    , ghostTrackIds : Set.Set Int
     }
 
 
@@ -244,6 +246,7 @@ buildProject a b =
     , voicings = b.voicings
     , voicingEnabled = b.voicingEnabled
     , guitarFormEnabled = b.guitarFormEnabled
+    , ghostTrackIds = b.ghostTrackIds
     }
 
 
@@ -271,7 +274,7 @@ partADecoder =
 
 partBDecoder : Decode.Decoder PartB
 partBDecoder =
-    Decode.map7 PartB
+    Decode.map8 PartB
         (Decode.oneOf
             [ Decode.field "scraps" (Decode.list scrapDecoder)
             , Decode.succeed []
@@ -301,6 +304,11 @@ partBDecoder =
         (Decode.oneOf
             [ Decode.field "guitarFormEnabled" Decode.bool
             , Decode.succeed True
+            ]
+        )
+        (Decode.oneOf
+            [ Decode.field "ghostTrackIds" (Decode.list Decode.int) |> Decode.map Set.fromList
+            , Decode.succeed (Set.singleton Data.ChordTrack.trackId)
             ]
         )
 
