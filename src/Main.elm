@@ -4158,7 +4158,7 @@ updateCore msg model =
         ReleasedDrag ->
             case model.pendingLockMenuTap of
                 Just pending ->
-                    ( { model | pendingLockMenuTap = Nothing, lockActionMenu = Just pending }, Cmd.none )
+                    ( { model | pendingLockMenuTap = Nothing, lockActionMenu = Just pending, longPress = Nothing }, Cmd.none )
 
                 Nothing ->
                     releasedDragMain model
