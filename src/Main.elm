@@ -198,6 +198,7 @@ type alias Model =
     , selectedNoteIds : Set Int
     , clipboard : List Data.Note.Note
     , lockActionMenu : Maybe { anchor : LockMenuAnchor, x : Float, y : Float }
+    , pendingLockMenuTap : Maybe { anchor : LockMenuAnchor, x : Float, y : Float }
     , rubberBand : Maybe RubberBand
     , drumDrag : Maybe DrumDrag
     , showKeyboard : Bool
@@ -583,6 +584,7 @@ init flags =
       , selectedNoteIds = Set.empty
       , clipboard = []
       , lockActionMenu = Nothing
+      , pendingLockMenuTap = Nothing
       , rubberBand = Nothing
       , drumDrag = Nothing
       , showKeyboard = False
@@ -830,6 +832,7 @@ promoteLongPress target model =
                     , hoveredNote = Nothing
                     , lastTap = Nothing
                     , lockActionMenu = Nothing
+                    , pendingLockMenuTap = Nothing
                 }
             , Cmd.none
             )
@@ -1719,6 +1722,53 @@ legacyDraggedToRest pos model =
 
                                                                                 Nothing ->
                                                                                     draggedToNoteOrRubberBand pos model
+
+
+releasedDragMain : Model -> ( Model, Cmd Msg )
+releasedDragMain model =
+            (case model.pendingEmptyTouch of
+                Just p ->
+                    {- タッチで空白を押したまま指を動かさず離した（＝スワイプではなくタップ）と判断し、ここで初めてノートを確定配置する。
+                       pendingNoteDragは付けず（指は既に離れているため）、押したまま伸ばすジェスチャはタッチでは提供しない。
+                    -}
+                    let
+                        ( placed, cmd, _ ) =
+                            insertNoteAt p { model | pendingEmptyTouch = Nothing }
+                    in
+                    ( placed, cmd )
+
+                Nothing ->
+                    case model.pendingDrumTouch of
+                        Just d ->
+                            {- タッチでドラムの空セルを押したまま離した（＝タップ）。ここで初めて確定配置する。
+                               ドラムグリッドは touch-action: none 固定なので pointercancel はほぼ起きないが、
+                               起きてもここには届かず配置されない（pointercancel は DrumEditor でも releasedCellPress
+                               ＝ReleasedDrag にマップされているので、実際にはこの分岐に入る）。
+                            -}
+                            let
+                                grid =
+                                    Data.Time.gridTicks model.gridUnit
+
+                                note =
+                                    { id = model.project.nextId
+                                    , pitch = d.pitch
+                                    , start = d.tick
+                                    , duration = grid
+                                    , velocity = 100
+                                    }
+                            in
+                            ( { model
+                                | project = Data.Project.addNote model.selectedTrackId note model.project
+                                , selectedNoteIds = Set.singleton note.id
+                                , pendingDrumTouch = Nothing
+                              }
+                            , Ports.toAudio (Performance.encodePreviewNote "drumKit" d.pitch)
+                            )
+
+                        Nothing ->
+                            releasedDragFallback model
+            )
+                |> Tuple.mapFirst (\m -> { m | dragCursor = Nothing })
 
 
 {-| pendingEmptyTouch以外の保留状態（pendingNoteDrag/pendingChordDrag/pendingVoicingDrag）を順に確認し、
@@ -2832,11 +2882,14 @@ pasteClipboard model =
 {-| ロック中にノートをタップした時の共通処理。複数選択中(2件以上)のノートをタップした場合は選択を潰さず、
 そのままノートアンカーのロックメニューを開く(複数ノートへのコピー/切り取り/削除を可能にするため)。
 -}
-openNoteLockMenu : { noteId : Int, pitch : Int, splitTick : Int, x : Float, y : Float } -> Model -> Model
+openNoteLockMenu : { noteId : Int, pitch : Int, splitTick : Int, x : Float, y : Float, isTouch : Bool } -> Model -> Model
 openNoteLockMenu args model =
     let
         keepMultiSelection =
             Set.member args.noteId model.selectedNoteIds && Set.size model.selectedNoteIds > 1
+
+        pendingMenu =
+            { anchor = LockMenuOnNote { noteId = args.noteId, splitTick = args.splitTick }, x = args.x, y = args.y }
     in
     { model
         | selectedNoteIds =
@@ -2846,7 +2899,21 @@ openNoteLockMenu args model =
             else
                 Set.singleton args.noteId
         , highlightedPitches = Set.singleton args.pitch
-        , lockActionMenu = Just { anchor = LockMenuOnNote { noteId = args.noteId, splitTick = args.splitTick }, x = args.x, y = args.y }
+        , lockActionMenu =
+            {- タッチはここでは確定させず pendingLockMenuTap に回す。押した指をそのまま動かしてスクロールするだけの
+               ジェスチャも同じpointerdownを踏むため、ここで即座に開くとスクロールしようとしただけでメニューが出てしまう。
+            -}
+            if args.isTouch then
+                model.lockActionMenu
+
+            else
+                Just pendingMenu
+        , pendingLockMenuTap =
+            if args.isTouch then
+                Just pendingMenu
+
+            else
+                Nothing
     }
 
 
@@ -3633,7 +3700,7 @@ updateCore msg model =
                     Just note ->
                         let
                             selected =
-                                openNoteLockMenu { noteId = note.id, pitch = note.pitch, splitTick = exactTick, x = pos.clientX, y = pos.clientY } model1
+                                openNoteLockMenu { noteId = note.id, pitch = note.pitch, splitTick = exactTick, x = pos.clientX, y = pos.clientY, isTouch = pos.isTouch } model1
                         in
                         if pos.isTouch then
                             armLongPress (LongPressBand (noteBandOrigin selected note pos)) selected
@@ -3644,18 +3711,28 @@ updateCore msg model =
                     Nothing ->
                         let
                             {- 直前の選択が既に空だった時は、この空セルタップ自体を「貼り付け」の入口にする(ノート情報の無い空アンカー)。
-                               選択が入っていた場合は今まで通り単に解除するだけ。
+                               選択が入っていた場合は今まで通り単に解除するだけ。メニューの開閉は openNoteLockMenu と同じ理由で
+                               タッチの時だけ pendingLockMenuTap に回し、pointerup確定まで保留する(スクロールしようとしただけで開かないため)。
                             -}
                             wasEmpty =
                                 Set.isEmpty model1.selectedNoteIds
+
+                            emptyMenu =
+                                { anchor = LockMenuOnEmpty, x = pos.clientX, y = pos.clientY }
 
                             cleared =
                                 { model1
                                     | selectedNoteIds = Set.empty
                                     , highlightedPitches = Set.empty
                                     , lockActionMenu =
-                                        if wasEmpty then
-                                            Just { anchor = LockMenuOnEmpty, x = pos.clientX, y = pos.clientY }
+                                        if wasEmpty && not pos.isTouch then
+                                            Just emptyMenu
+
+                                        else
+                                            Nothing
+                                    , pendingLockMenuTap =
+                                        if wasEmpty && pos.isTouch then
+                                            Just emptyMenu
 
                                         else
                                             Nothing
@@ -3750,6 +3827,7 @@ updateCore msg model =
                                     , splitTick = PianoRoll.splitTickFromOffset model1.pianoRollZoom pos.offsetX note.start
                                     , x = pos.clientX
                                     , y = pos.clientY
+                                    , isTouch = pos.isTouch
                                     }
                                     model1
                         in
@@ -4078,49 +4156,12 @@ updateCore msg model =
                     ( model, Cmd.none )
 
         ReleasedDrag ->
-            (case model.pendingEmptyTouch of
-                Just p ->
-                    {- タッチで空白を押したまま指を動かさず離した（＝スワイプではなくタップ）と判断し、ここで初めてノートを確定配置する。
-                       pendingNoteDragは付けず（指は既に離れているため）、押したまま伸ばすジェスチャはタッチでは提供しない。
-                    -}
-                    let
-                        ( placed, cmd, _ ) =
-                            insertNoteAt p { model | pendingEmptyTouch = Nothing }
-                    in
-                    ( placed, cmd )
+            case model.pendingLockMenuTap of
+                Just pending ->
+                    ( { model | pendingLockMenuTap = Nothing, lockActionMenu = Just pending }, Cmd.none )
 
                 Nothing ->
-                    case model.pendingDrumTouch of
-                        Just d ->
-                            {- タッチでドラムの空セルを押したまま離した（＝タップ）。ここで初めて確定配置する。
-                               ドラムグリッドは touch-action: none 固定なので pointercancel はほぼ起きないが、
-                               起きてもここには届かず配置されない（pointercancel は DrumEditor でも releasedCellPress
-                               ＝ReleasedDrag にマップされているので、実際にはこの分岐に入る）。
-                            -}
-                            let
-                                grid =
-                                    Data.Time.gridTicks model.gridUnit
-
-                                note =
-                                    { id = model.project.nextId
-                                    , pitch = d.pitch
-                                    , start = d.tick
-                                    , duration = grid
-                                    , velocity = 100
-                                    }
-                            in
-                            ( { model
-                                | project = Data.Project.addNote model.selectedTrackId note model.project
-                                , selectedNoteIds = Set.singleton note.id
-                                , pendingDrumTouch = Nothing
-                              }
-                            , Ports.toAudio (Performance.encodePreviewNote "drumKit" d.pitch)
-                            )
-
-                        Nothing ->
-                            releasedDragFallback model
-            )
-                |> Tuple.mapFirst (\m -> { m | dragCursor = Nothing })
+                    releasedDragMain model
 
         CanceledNotePress ->
             {- タッチで空白を押したものの指が動いてブラウザがネイティブスクロールに切り替えた（pointercancel）。配置せず保留を
@@ -4128,7 +4169,7 @@ updateCore msg model =
                キャンセルできないので、指が深い（スクロール中）でも後から LongPressFired が発火してしまう。トークン不一致で
                もガードできるが、ここで先に解除しておく方が安全）。
             -}
-            updateCore ReleasedDrag { model | pendingEmptyTouch = Nothing, longPress = Nothing }
+            updateCore ReleasedDrag { model | pendingEmptyTouch = Nothing, pendingLockMenuTap = Nothing, longPress = Nothing }
 
         PressedRuler pos ->
             if pos.shift then
