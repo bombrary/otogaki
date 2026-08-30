@@ -38,6 +38,29 @@ suite =
                 PianoRoll.zoomStep 1 PianoRoll.defaultPxPerSixteenth
                     |> (\next -> next < PianoRoll.defaultPxPerSixteenth)
                     |> Expect.equal True
+        , test "splitTickFromOffset はオフセット0ならノート開始位置をそのまま返す" <|
+            \_ ->
+                PianoRoll.splitTickFromOffset PianoRoll.defaultPxPerSixteenth 0 480
+                    |> Expect.equal 480
+        , test "splitTickFromOffset はオフセットをtick換算してノート開始位置に足す" <|
+            \_ ->
+                let
+                    px =
+                        PianoRoll.defaultPxPerSixteenth * 2
+                in
+                PianoRoll.splitTickFromOffset PianoRoll.defaultPxPerSixteenth (toFloat px) 480
+                    |> Expect.equal (480 + PianoRoll.pixelsToTicks PianoRoll.defaultPxPerSixteenth (toFloat px))
+        , test "splitTickFromOffset は拡大したズームでも同じ式で成り立つ" <|
+            \_ ->
+                let
+                    zoom =
+                        40
+
+                    px =
+                        zoom * 3
+                in
+                PianoRoll.splitTickFromOffset zoom (toFloat px) 960
+                    |> Expect.equal (960 + PianoRoll.pixelsToTicks zoom (toFloat px))
         , test "zoomStep は maxPxPerSixteenth を超えてズームインしない" <|
             \_ ->
                 PianoRoll.zoomStep -1 PianoRoll.maxPxPerSixteenth

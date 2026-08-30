@@ -30,6 +30,7 @@ module View.PianoRoll exposing
     , rulerViewWith
     , scrollDecoder
     , sectionTintWithHeight
+    , splitTickFromOffset
     , ticksToPixels
     , velocityLaneHeight
     , velocityLaneViewWith
@@ -61,7 +62,7 @@ import View.Zoom
 
 type alias Config msg =
     { pressedEmpty : { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, seekMod : Bool, isTouch : Bool } -> msg
-    , pressedNote : Int -> ResizeHandle -> { clientX : Float, clientY : Float, shift : Bool, isTouch : Bool, timeStamp : Float } -> msg
+    , pressedNote : Int -> ResizeHandle -> { clientX : Float, clientY : Float, offsetX : Float, shift : Bool, isTouch : Bool, timeStamp : Float } -> msg
     , draggedWhilePressingNote : { clientX : Float, clientY : Float, alt : Bool } -> msg
     , releasedNotePress : msg
     , canceledNotePress : msg
@@ -241,6 +242,14 @@ pixelsToTicks pxPerSixteenth px =
 ticksToPixels : Int -> Int -> Float
 ticksToPixels pxPerSixteenth ticks =
     toFloat ticks * toFloat pxPerSixteenth / toFloat Data.Time.ticksPerSixteenth
+
+
+{-| ノート本体へのタップのオフセット(ノート開始位置からの px)を、そのノートを分割すべき tick へ変換する。
+ノート開始 tick に、オフセットを tick 換算した値を足すだけ。
+-}
+splitTickFromOffset : Int -> Float -> Int -> Int
+splitTickFromOffset pxPerSixteenth offsetX noteStart =
+    noteStart + pixelsToTicks pxPerSixteenth offsetX
 
 
 {-| スクロールコンテナの scroll イベントから scrollLeft・scrollTop・clientWidth を取り出して msg に変換するデコーダー。
@@ -1421,15 +1430,16 @@ noteMoveDecoder =
 想定）でも pointerdown が先に発火し、dragState がJustになってviewDragOverlayが画面を覆うため、
 後続のcontextmenuイベントがノート要素まで届かず右クリック削除が動かなくなる。
 -}
-notePressDecoder : Decode.Decoder { clientX : Float, clientY : Float, shift : Bool, isTouch : Bool, timeStamp : Float }
+notePressDecoder : Decode.Decoder { clientX : Float, clientY : Float, offsetX : Float, shift : Bool, isTouch : Bool, timeStamp : Float }
 notePressDecoder =
     Decode.field "button" Decode.int
         |> Decode.andThen
             (\button ->
                 if button == 0 then
-                    Decode.map5 (\cx cy sh touch ts -> { clientX = cx, clientY = cy, shift = sh, isTouch = touch, timeStamp = ts })
+                    Decode.map6 (\cx cy ox sh touch ts -> { clientX = cx, clientY = cy, offsetX = ox, shift = sh, isTouch = touch, timeStamp = ts })
                         (Decode.field "clientX" Decode.float)
                         (Decode.field "clientY" Decode.float)
+                        (Decode.field "offsetX" Decode.float)
                         (Decode.field "shiftKey" Decode.bool)
                         (Decode.field "pointerType" Decode.string |> Decode.map ((==) "touch"))
                         (Decode.field "timeStamp" Decode.float)
