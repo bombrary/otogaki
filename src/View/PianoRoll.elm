@@ -830,7 +830,6 @@ type alias RulerOpts =
     , loop : Maybe { startTicks : Int, endTicks : Int }
     , loopEditable : Bool
     , playheadTicks : Int
-    , scrollLock : Bool
     }
 
 
@@ -840,32 +839,26 @@ type alias RulerOpts =
 rulerViewWith : Bool -> RulerHandlers msg -> RulerOpts -> Html msg
 rulerViewWith isNarrow handlers opts =
     Svg.svg
-        ([ SA.width (String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars))
-         , SA.height (String.fromInt rulerHeight)
-         , SA.viewBox ("0 0 " ++ String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars) ++ " " ++ String.fromInt rulerHeight)
-         , HA.style "display" "block"
-         , HA.style "cursor" "pointer"
-         -- 縦方向は意味を持たないので押さえ、横方向のスワイプはネイティブスクロールに委譲する（pointercancelでlong pressを解除できるようになる）。
-         , HA.style "touch-action" "pan-x"
-         , HA.title "クリックで再生位置を移動。shift + ドラッグでループ区間を作成。マウスホイールでズーム"
-         -- タッチはpointerdownした要素に暗黙キャプチャされ、ドラッグ中のpointermove/pointerupが
-         -- 全画面オーバーレイ（Main.elm の viewDragOverlay）に届かなくなる。ここを解除して、
-         -- shift+ドラッグのループ作成やタップシークがタッチでも ReleasedDrag まで届くようにする。
-         , HA.attribute "data-pointer-release-capture" ""
-         , Html.Events.on "pointerdown" (Decode.map handlers.pressedRuler rulerPressDecoder)
-         -- 指を離した瞬間に armLongPress のタイマーを無効化しないと、タップしてすぐ離しても500ms後に
-         -- LongPressFired が発火してループドラッグに昇格してしまう。
-         , Html.Events.on "pointerup" (Decode.succeed handlers.releasedRulerPress)
-         , Html.Events.on "pointercancel" (Decode.succeed handlers.releasedRulerPress)
-         , Html.Events.preventDefaultOn "wheel" (Decode.map (\w -> ( handlers.wheelZoomedRuler w, True )) wheelDecoder)
-         ]
-            ++ (if opts.scrollLock then
-                    [ HA.attribute "data-suppress-touch-scroll" "" ]
-
-                else
-                    []
-               )
-        )
+        [ SA.width (String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars))
+        , SA.height (String.fromInt rulerHeight)
+        , SA.viewBox ("0 0 " ++ String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars) ++ " " ++ String.fromInt rulerHeight)
+        , HA.style "display" "block"
+        , HA.style "cursor" "pointer"
+        -- touch-action を none 以外（pan-x 等）にすると、data-pointer-release-capture（下記）でキャプチャを解放していることと重なって、
+        -- ブラウザが指の移動をほとんど待たずにネイティブスクロールとして pointercancel を送ってしまい、長押しが一切発火しなくなる（実機検証済み）。
+        , HA.style "touch-action" "none"
+        , HA.title "クリックで再生位置を移動。shift + ドラッグでループ区間を作成。マウスホイールでズーム"
+        -- タッチはpointerdownした要素に暗黙キャプチャされ、ドラッグ中のpointermove/pointerupが
+        -- 全画面オーバーレイ（Main.elm の viewDragOverlay）に届かなくなる。ここを解除して、
+        -- shift+ドラッグのループ作成やタップシークがタッチでも ReleasedDrag まで届くようにする。
+        , HA.attribute "data-pointer-release-capture" ""
+        , Html.Events.on "pointerdown" (Decode.map handlers.pressedRuler rulerPressDecoder)
+        -- 指を離した瞬間に armLongPress のタイマーを無効化しないと、タップしてすぐ離しても500ms後に
+        -- LongPressFired が発火してループドラッグに昇格してしまう。
+        , Html.Events.on "pointerup" (Decode.succeed handlers.releasedRulerPress)
+        , Html.Events.on "pointercancel" (Decode.succeed handlers.releasedRulerPress)
+        , Html.Events.preventDefaultOn "wheel" (Decode.map (\w -> ( handlers.wheelZoomedRuler w, True )) wheelDecoder)
+        ]
         (Svg.rect
             [ SA.x "0"
             , SA.y "0"
@@ -896,7 +889,6 @@ rulerView config opts =
         , loop = opts.loop
         , loopEditable = opts.loopEditable
         , playheadTicks = opts.playheadTicks
-        , scrollLock = opts.scrollLock
         }
 
 

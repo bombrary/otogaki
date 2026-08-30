@@ -340,7 +340,6 @@ view config opts =
                     , loop = opts.loop
                     , loopEditable = opts.loopEditable
                     , playheadTicks = opts.playheadTicks
-                    , scrollLock = False
                     }
                 , gridView rows config opts
                 , PianoRoll.velocityLaneViewWith
