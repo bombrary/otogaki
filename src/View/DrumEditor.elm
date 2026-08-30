@@ -31,6 +31,7 @@ type alias Config msg =
     , pressedRuler : { offsetX : Float, clientX : Float, shift : Bool, isTouch : Bool } -> msg
     , pressedLoopHandle : Bool -> Float -> msg
     , wheelZoomedRuler : { deltaY : Float, offsetX : Float } -> msg
+    , releasedRulerPress : msg
     , scrolled : { scrollLeft : Float, scrollTop : Float, clientWidth : Float } -> msg
     , openedHelp : Help.TopicId -> msg
     }
@@ -331,6 +332,7 @@ view config opts =
                     { pressedRuler = config.pressedRuler
                     , pressedLoopHandle = config.pressedLoopHandle
                     , wheelZoomedRuler = config.wheelZoomedRuler
+                    , releasedRulerPress = config.releasedRulerPress
                     }
                     { pxPerSixteenth = opts.pxPerSixteenth
                     , totalBars = opts.totalBars
@@ -338,6 +340,7 @@ view config opts =
                     , loop = opts.loop
                     , loopEditable = opts.loopEditable
                     , playheadTicks = opts.playheadTicks
+                    , scrollLock = False
                     }
                 , gridView rows config opts
                 , PianoRoll.velocityLaneViewWith

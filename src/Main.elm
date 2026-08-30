@@ -6663,6 +6663,7 @@ view model =
             , pressedVelocityBar = PressedVelocityBar
             , movedCutGuide = MovedCutGuide
             , clearedCutGuide = ClearedCutGuide
+            , releasedRulerPress = ReleasedDrag
             }
 
         pianoRollOpts =
@@ -6925,6 +6926,7 @@ view model =
                                     , pressedRuler = PressedRuler
                                     , pressedLoopHandle = PressedLoopHandle
                                     , wheelZoomedRuler = WheelZoomedRuler
+                                    , releasedRulerPress = ReleasedDrag
                                     , scrolled = ScrolledPianoRoll
                                     , openedHelp = OpenedHelpTopic
                                     }
