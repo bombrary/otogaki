@@ -175,6 +175,14 @@ type alias KeyEvent =
     }
 
 
+{-| ロック中に開くアクションメニューのアンカー。ノートタップなら分割先tickを持つノートアンカー、
+何も選択されていない状態で空セルをタップした時はノート情報の無い空アンカーになる。
+-}
+type LockMenuAnchor
+    = LockMenuOnNote { noteId : Int, splitTick : Int }
+    | LockMenuOnEmpty
+
+
 type alias Model =
     { project : Project
     , playState : PlayState
@@ -189,7 +197,7 @@ type alias Model =
     , bpmInput : String
     , selectedNoteIds : Set Int
     , clipboard : List Data.Note.Note
-    , lockActionMenu : Maybe { noteId : Int, x : Float, y : Float, splitTick : Int }
+    , lockActionMenu : Maybe { anchor : LockMenuAnchor, x : Float, y : Float }
     , rubberBand : Maybe RubberBand
     , drumDrag : Maybe DrumDrag
     , showKeyboard : Bool
@@ -2821,6 +2829,27 @@ pasteClipboard model =
         }
 
 
+{-| ロック中にノートをタップした時の共通処理。複数選択中(2件以上)のノートをタップした場合は選択を潰さず、
+そのままノートアンカーのロックメニューを開く(複数ノートへのコピー/切り取り/削除を可能にするため)。
+-}
+openNoteLockMenu : { noteId : Int, pitch : Int, splitTick : Int, x : Float, y : Float } -> Model -> Model
+openNoteLockMenu args model =
+    let
+        keepMultiSelection =
+            Set.member args.noteId model.selectedNoteIds && Set.size model.selectedNoteIds > 1
+    in
+    { model
+        | selectedNoteIds =
+            if keepMultiSelection then
+                model.selectedNoteIds
+
+            else
+                Set.singleton args.noteId
+        , highlightedPitches = Set.singleton args.pitch
+        , lockActionMenu = Just { anchor = LockMenuOnNote { noteId = args.noteId, splitTick = args.splitTick }, x = args.x, y = args.y }
+    }
+
+
 deleteSelection : Model -> Model
 deleteSelection model =
     { model
@@ -3604,7 +3633,7 @@ updateCore msg model =
                     Just note ->
                         let
                             selected =
-                                { model1 | selectedNoteIds = Set.singleton note.id, highlightedPitches = Set.singleton note.pitch, lockActionMenu = Nothing }
+                                openNoteLockMenu { noteId = note.id, pitch = note.pitch, splitTick = exactTick, x = pos.clientX, y = pos.clientY } model1
                         in
                         if pos.isTouch then
                             armLongPress (LongPressBand (noteBandOrigin selected note pos)) selected
@@ -3614,8 +3643,23 @@ updateCore msg model =
 
                     Nothing ->
                         let
+                            {- 直前の選択が既に空だった時は、この空セルタップ自体を「貼り付け」の入口にする(ノート情報の無い空アンカー)。
+                               選択が入っていた場合は今まで通り単に解除するだけ。
+                            -}
+                            wasEmpty =
+                                Set.isEmpty model1.selectedNoteIds
+
                             cleared =
-                                { model1 | selectedNoteIds = Set.empty, highlightedPitches = Set.empty, lockActionMenu = Nothing }
+                                { model1
+                                    | selectedNoteIds = Set.empty
+                                    , highlightedPitches = Set.empty
+                                    , lockActionMenu =
+                                        if wasEmpty then
+                                            Just { anchor = LockMenuOnEmpty, x = pos.clientX, y = pos.clientY }
+
+                                        else
+                                            Nothing
+                                }
                         in
                         if pos.isTouch then
                             armLongPress (LongPressBand { offsetX = pos.offsetX, offsetY = pos.offsetY, clientX = pos.clientX, clientY = pos.clientY }) cleared
@@ -3699,26 +3743,15 @@ updateCore msg model =
                            削除ができるようにする。
                         -}
                         let
-                            keepMultiSelection =
-                                Set.member noteId model1.selectedNoteIds && Set.size model1.selectedNoteIds > 1
-
                             selected =
-                                { model1
-                                    | selectedNoteIds =
-                                        if keepMultiSelection then
-                                            model1.selectedNoteIds
-
-                                        else
-                                            Set.singleton noteId
-                                    , highlightedPitches = Set.singleton note.pitch
-                                    , lockActionMenu =
-                                        Just
-                                            { noteId = noteId
-                                            , x = pos.clientX
-                                            , y = pos.clientY
-                                            , splitTick = PianoRoll.splitTickFromOffset model1.pianoRollZoom pos.offsetX note.start
-                                            }
-                                }
+                                openNoteLockMenu
+                                    { noteId = noteId
+                                    , pitch = note.pitch
+                                    , splitTick = PianoRoll.splitTickFromOffset model1.pianoRollZoom pos.offsetX note.start
+                                    , x = pos.clientX
+                                    , y = pos.clientY
+                                    }
+                                    model1
                         in
                         if pos.isTouch then
                             armLongPress (LongPressBand (noteBandOrigin selected note pos)) selected
@@ -3817,12 +3850,17 @@ updateCore msg model =
 
         LockMenuSplit ->
             case model.lockActionMenu of
-                Just menu ->
-                    let
-                        result =
-                            Data.Project.cutNotesAt { trackId = model.selectedTrackId, tick = menu.splitTick, targetIds = Set.singleton menu.noteId } model.project
-                    in
-                    ( { model | project = result.project, selectedNoteIds = result.newSelection, lockActionMenu = Nothing }, Cmd.none )
+                Just { anchor } ->
+                    case anchor of
+                        LockMenuOnNote note ->
+                            let
+                                result =
+                                    Data.Project.cutNotesAt { trackId = model.selectedTrackId, tick = note.splitTick, targetIds = Set.singleton note.noteId } model.project
+                            in
+                            ( { model | project = result.project, selectedNoteIds = result.newSelection, lockActionMenu = Nothing }, Cmd.none )
+
+                        LockMenuOnEmpty ->
+                            ( { model | lockActionMenu = Nothing }, Cmd.none )
 
                 Nothing ->
                     ( model, Cmd.none )
@@ -7752,7 +7790,12 @@ lockActionMenuView model =
                     [ style "position" "fixed"
                     , style "inset" "0"
                     , style "z-index" "1000"
-                    , onClick ClosedLockActionMenu
+
+                    {- 同じジェスチャの末尾で合成されるclickがこのスクリムをヒットして開いた直後に閉じてしまうので（pointer captureは
+                       clickには影響しない）、pointerdownで閉じる。同じタップのpointerdownは既にノート側で消費済みなので、
+                       ここに新たにpointerdownが届くのは次の別ジェスチャだけになる。
+                    -}
+                    , Html.Events.on "pointerdown" (Decode.succeed ClosedLockActionMenu)
                     ]
                     []
                 , div
@@ -7769,12 +7812,18 @@ lockActionMenuView model =
                     , style "font-size" "0.85rem"
                     , style "z-index" "1001"
                     ]
-                    [ lockMenuButton "コピー" False LockMenuCopy
-                    , lockMenuButton "切り取り" False LockMenuCut
-                    , lockMenuButton "貼り付け" (List.isEmpty model.clipboard) LockMenuPaste
-                    , lockMenuButton "削除" False LockMenuDelete
-                    , lockMenuButton "✂ カット" False LockMenuSplit
-                    ]
+                    (case menu.anchor of
+                        LockMenuOnNote _ ->
+                            [ lockMenuButton "コピー" False LockMenuCopy
+                            , lockMenuButton "切り取り" False LockMenuCut
+                            , lockMenuButton "貼り付け" (List.isEmpty model.clipboard) LockMenuPaste
+                            , lockMenuButton "削除" False LockMenuDelete
+                            , lockMenuButton "✂ カット" False LockMenuSplit
+                            ]
+
+                        LockMenuOnEmpty ->
+                            [ lockMenuButton "貼り付け" (List.isEmpty model.clipboard) LockMenuPaste ]
+                    )
                 ]
 
 
