@@ -99,7 +99,8 @@ chordTrackRow config selectedTrackId loadStates ghostTrackIds chordTrack =
         ]
         [ span (HA.style "width" "6rem" :: Theme.typeTitleSmall) [ text "コード進行" ]
         , select
-            [ HE.onInput row.changeInstrument
+            [ HA.class "m3-btn"
+            , HE.onInput row.changeInstrument
             , stopClick row.select
             ]
             (instrumentOptionGroups ((/=) Data.Track.DrumKit) chordTrack.instrument)
@@ -246,7 +247,8 @@ trackRow config totalBars selectedTrackId loadStates ghostTrackIds pendingDelete
 instrumentSelect : Config msg -> Track -> Html msg
 instrumentSelect config track =
     select
-        [ HE.onInput (config.changeInstrument track.id)
+        [ HA.class "m3-btn"
+        , HE.onInput (config.changeInstrument track.id)
         , stopClick (config.selectTrack track.id)
         ]
         (instrumentOptionGroups (always True) track.instrument)
