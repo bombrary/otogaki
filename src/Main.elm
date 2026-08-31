@@ -2661,20 +2661,44 @@ initialCenterPitch model =
 centerPianoRollCmd : Model -> Int -> Cmd Msg
 centerPianoRollCmd model pitch =
     if pianoRollScrollMounted model then
-        Process.sleep 0
-            |> Task.mapError never
-            |> Task.andThen (\_ -> Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId)
-            |> Task.andThen
-                (\vp ->
-                    Browser.Dom.setViewportOf PianoRoll.pianoRollScrollId
-                        (currentPianoRollScrollX model)
-                        (PianoRoll.centerScrollTop (pianoRollDims model) vp.viewport.height pitch)
-                )
-            |> Task.andThen (\_ -> Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId)
+        attemptCenterPianoRoll model pitch centerPianoRollMaxRetries
             |> Task.attempt GotPianoRollViewportMeasured
 
     else
         Cmd.none
+
+
+centerPianoRollMaxRetries : Int
+centerPianoRollMaxRetries =
+    4
+
+
+{-| ページ/タブ切替直後は piano-roll-scroll のDOMがまだ差し替え中で getViewportOf/setViewportOf が
+Errになることがある（特に画面の大きいiPadでリフローに時間がかかりやすい）。短い待機を挟んで
+数回まで再試行する。
+-}
+attemptCenterPianoRoll : Model -> Int -> Int -> Task.Task Browser.Dom.Error Browser.Dom.Viewport
+attemptCenterPianoRoll model pitch retriesLeft =
+    Process.sleep 0
+        |> Task.mapError never
+        |> Task.andThen (\_ -> Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId)
+        |> Task.andThen
+            (\vp ->
+                Browser.Dom.setViewportOf PianoRoll.pianoRollScrollId
+                    (currentPianoRollScrollX model)
+                    (PianoRoll.centerScrollTop (pianoRollDims model) vp.viewport.height pitch)
+            )
+        |> Task.andThen (\_ -> Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId)
+        |> Task.onError
+            (\err ->
+                if retriesLeft > 0 then
+                    Process.sleep 60
+                        |> Task.mapError never
+                        |> Task.andThen (\_ -> attemptCenterPianoRoll model pitch (retriesLeft - 1))
+
+                else
+                    Task.fail err
+            )
 
 
 {-| 削除ボタンの2度押し確認。pending が今回の id と一致していれば confirm（実削除）を、
