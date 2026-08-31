@@ -6546,8 +6546,10 @@ view model =
                     , changeInstrument = ChangedChordInstrument
                     , changeVolume = ChangedChordVolume
                     , toggledGhost = ToggledGhostTrack Data.ChordTrack.trackId
+                    , noOp = NoOp
                     }
                 , openedHelp = OpenedHelpTopic
+                , noOp = NoOp
                 }
                 (totalBarsFor model.project)
                 model.selectedTrackId

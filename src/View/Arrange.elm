@@ -29,6 +29,7 @@ type alias Config msg =
     , pressedTrackHandle : Int -> Float -> msg
     , chordRow : ChordRowConfig msg
     , openedHelp : Help.TopicId -> msg
+    , noOp : msg
     }
 
 
@@ -41,6 +42,7 @@ type alias ChordRowConfig msg =
     , changeInstrument : String -> msg
     , changeVolume : String -> msg
     , toggledGhost : msg
+    , noOp : msg
     }
 
 
@@ -101,7 +103,7 @@ chordTrackRow config selectedTrackId loadStates ghostTrackIds chordTrack =
         , select
             [ HA.class "m3-btn"
             , HE.onInput row.changeInstrument
-            , stopClick row.select
+            , stopClick row.noOp
             ]
             (instrumentOptionGroups ((/=) Data.Track.DrumKit) chordTrack.instrument)
         , loadBadge loadState
@@ -127,7 +129,7 @@ chordTrackRow config selectedTrackId loadStates ghostTrackIds chordTrack =
             , HA.max "100"
             , HA.value (String.fromInt chordTrack.volume)
             , HE.onInput row.changeVolume
-            , stopClick row.select
+            , stopClick row.noOp
             , HA.style "width" "70px"
             , HA.title ("音量 " ++ String.fromInt chordTrack.volume)
             ]
@@ -202,7 +204,7 @@ trackRow config totalBars selectedTrackId loadStates ghostTrackIds pendingDelete
         , input
             [ HA.value track.name
             , HE.onInput (config.renameTrack track.id)
-            , stopClick (config.selectTrack track.id)
+            , stopClick config.noOp
             , HA.style "width" "6rem"
             , HA.style "font-size" "0.9rem"
             , HA.style "border" ("1px solid " ++ Theme.outlineVariant)
@@ -249,7 +251,7 @@ instrumentSelect config track =
     select
         [ HA.class "m3-btn"
         , HE.onInput (config.changeInstrument track.id)
-        , stopClick (config.selectTrack track.id)
+        , stopClick config.noOp
         ]
         (instrumentOptionGroups (always True) track.instrument)
 
@@ -329,7 +331,7 @@ volumeSlider config track =
         , HA.max "100"
         , HA.value (String.fromInt track.volume)
         , HE.onInput (config.changeVolume track.id)
-        , stopClick (config.selectTrack track.id)
+        , stopClick config.noOp
         , HA.style "width" "70px"
         , HA.title ("音量 " ++ String.fromInt track.volume)
         ]
