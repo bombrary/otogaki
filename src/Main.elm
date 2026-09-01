@@ -2605,22 +2605,55 @@ pianoRollLeftInset model =
         0
 
 
-{-| トラック切替等で `PianoRoll.pianoRollScrollId` の DOM が作り直された場合に備え、選択中トラックに対応する
-`currentPianoRollScrollX`/`currentPianoRollScrollY` の位置を明示的に復元し、その後再計測する。同種トラック同士の切替でDOMが再利用されるケースでも
-同値を再設定するだけで無害。`Process.sleep 0` で一拍待つのは、update 直後のCmd実行がDOM再描画より先行して旧ノード相手に
-`setViewportOf` してしまうのを避けるため。マウントされていないときはCmd.none。
--}
-restorePianoRollScrollCmd : Model -> Cmd Msg
-restorePianoRollScrollCmd model =
+type PianoRollScrollTarget
+    = ScrollCenterOnPitch Int
+    | ScrollRestoreY Float
+
+
+attemptSetPianoRollScrollY : Model -> PianoRollScrollTarget -> Int -> Task.Task Browser.Dom.Error Browser.Dom.Viewport
+attemptSetPianoRollScrollY model target retriesLeft =
+    Process.sleep 0
+        |> Task.mapError never
+        |> Task.andThen (\_ -> Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId)
+        |> Task.andThen
+            (\vp ->
+                let
+                    targetY =
+                        case target of
+                            ScrollCenterOnPitch pitch ->
+                                PianoRoll.centerScrollTop (pianoRollDims model) vp.viewport.height pitch
+
+                            ScrollRestoreY y ->
+                                y
+                in
+                Browser.Dom.setViewportOf PianoRoll.pianoRollScrollId (currentPianoRollScrollX model) targetY
+            )
+        |> Task.andThen (\_ -> Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId)
+        |> Task.onError
+            (\err ->
+                if retriesLeft > 0 then
+                    Process.sleep 60
+                        |> Task.mapError never
+                        |> Task.andThen (\_ -> attemptSetPianoRollScrollY model target (retriesLeft - 1))
+
+                else
+                    Task.fail err
+            )
+
+
+setPianoRollScrollCmd : Model -> PianoRollScrollTarget -> Cmd Msg
+setPianoRollScrollCmd model target =
     if pianoRollScrollMounted model then
-        Process.sleep 0
-            |> Task.mapError never
-            |> Task.andThen (\_ -> Browser.Dom.setViewportOf PianoRoll.pianoRollScrollId (currentPianoRollScrollX model) (currentPianoRollScrollY model))
-            |> Task.andThen (\_ -> Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId)
+        attemptSetPianoRollScrollY model target centerPianoRollMaxRetries
             |> Task.attempt GotPianoRollViewportMeasured
 
     else
         Cmd.none
+
+
+restorePianoRollScrollCmd : Model -> Cmd Msg
+restorePianoRollScrollCmd model =
+    setPianoRollScrollCmd model (ScrollRestoreY (currentPianoRollScrollY model))
 
 
 {-| 現在のピアノロール表示がどの帯を持つか。view 側のローカル `dims`（chordSpans/refWaveform 由来）と
@@ -2660,45 +2693,12 @@ initialCenterPitch model =
 -}
 centerPianoRollCmd : Model -> Int -> Cmd Msg
 centerPianoRollCmd model pitch =
-    if pianoRollScrollMounted model then
-        attemptCenterPianoRoll model pitch centerPianoRollMaxRetries
-            |> Task.attempt GotPianoRollViewportMeasured
-
-    else
-        Cmd.none
+    setPianoRollScrollCmd model (ScrollCenterOnPitch pitch)
 
 
 centerPianoRollMaxRetries : Int
 centerPianoRollMaxRetries =
     4
-
-
-{-| ページ/タブ切替直後は piano-roll-scroll のDOMがまだ差し替え中で getViewportOf/setViewportOf が
-Errになることがある（特に画面の大きいiPadでリフローに時間がかかりやすい）。短い待機を挟んで
-数回まで再試行する。
--}
-attemptCenterPianoRoll : Model -> Int -> Int -> Task.Task Browser.Dom.Error Browser.Dom.Viewport
-attemptCenterPianoRoll model pitch retriesLeft =
-    Process.sleep 0
-        |> Task.mapError never
-        |> Task.andThen (\_ -> Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId)
-        |> Task.andThen
-            (\vp ->
-                Browser.Dom.setViewportOf PianoRoll.pianoRollScrollId
-                    (currentPianoRollScrollX model)
-                    (PianoRoll.centerScrollTop (pianoRollDims model) vp.viewport.height pitch)
-            )
-        |> Task.andThen (\_ -> Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId)
-        |> Task.onError
-            (\err ->
-                if retriesLeft > 0 then
-                    Process.sleep 60
-                        |> Task.mapError never
-                        |> Task.andThen (\_ -> attemptCenterPianoRoll model pitch (retriesLeft - 1))
-
-                else
-                    Task.fail err
-            )
 
 
 {-| 削除ボタンの2度押し確認。pending が今回の id と一致していれば confirm（実削除）を、
@@ -6229,8 +6229,16 @@ updateCore msg model =
 
                         MaterialsPage ->
                             model.selectedTrackId
+                newModel =
+                    { model | page = page, selectedTrackId = newSelectedTrackId }
             in
-            ( { model | page = page, selectedTrackId = newSelectedTrackId }, Cmd.none )
+            ( newModel
+            , if page == SongPage || page == EditPage then
+                restorePianoRollScrollCmd newModel
+
+              else
+                Cmd.none
+            )
 
         ToggledHeaderMenu ->
             ( { model | headerMenuOpen = not model.headerMenuOpen }, Cmd.none )
@@ -7444,7 +7452,7 @@ view model =
             ]
         , if isPageLayout model then
             div [ style "flex" "1 1 auto", style "min-height" "0", style "display" "flex", style "flex-direction" "column", style "overflow" "hidden" ]
-                [ div [ classList [ ( "pr-col", model.page == EditPage ) ], style "flex" "1 1 auto", style "min-height" "0", style "overflow-y" "auto", style "padding" "0.5rem 1rem 1rem 1rem", style "box-sizing" "border-box" ]
+                [ div [ classList [ ( "pr-col", model.page == EditPage || model.page == SongPage ) ], style "flex" "1 1 auto", style "min-height" "0", style "overflow-y" "auto", style "padding" "0.5rem 1rem 1rem 1rem", style "box-sizing" "border-box" ]
                     (case model.page of
                         SongPage ->
                             songPageChildren

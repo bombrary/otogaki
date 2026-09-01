@@ -97,6 +97,13 @@ patterns =
             , strum 14 Down 75
             ]
       }
+    , { name = "3+3+2"
+      , strums =
+            [ strum 0 Down 100
+            , strum 6 Down 70
+            , strum 12 Down 100
+            ]
+      }
     ]
 
 
