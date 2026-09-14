@@ -81,6 +81,7 @@ type alias Config msg =
     , movedCutGuide : { offsetX : Float } -> msg
     , clearedCutGuide : msg
     , releasedRulerPress : msg
+    , touched : msg
     }
 
 
@@ -390,6 +391,7 @@ type alias FrameOpts msg =
     { scrollId : String
     , ariaLabel : String
     , scrolled : { scrollLeft : Float, scrollTop : Float, clientWidth : Float } -> msg
+    , touched : msg
     , leftWidth : Int
     , contentWidth : Int
     , maxHeight : Maybe Int
@@ -437,6 +439,9 @@ scrollFrame f =
         , HA.tabindex 0
         , HA.attribute "aria-label" f.ariaLabel
         , Html.Events.on "scroll" (scrollDecoder f.scrolled)
+        , Html.Events.on "touchstart" (Decode.succeed f.touched)
+        , Html.Events.on "wheel" (Decode.succeed f.touched)
+        , Html.Events.on "pointerdown" (Decode.succeed f.touched)
         ]
         [ Html.div
             [ HA.style "width" (pxStr f.contentWidth)
@@ -516,6 +521,7 @@ view config opts =
         { scrollId = pianoRollScrollId
         , ariaLabel = "ピアノロール（矢印キーでノートを選択・移動）"
         , scrolled = config.scrolled
+        , touched = config.touched
         , leftWidth = keyColumnWidth
         , contentWidth = keyColumnWidth + gridWidth opts.pxPerSixteenth opts.totalBars
         , maxHeight = Just (frameContentHeight dims)
@@ -603,6 +609,7 @@ chordTrackView config opts previewNotes chordLane =
                 { scrollId = pianoRollScrollId
                 , ariaLabel = "コード進行トラック"
                 , scrolled = config.scrolled
+                , touched = config.touched
                 , leftWidth = keyColumnWidth
                 , contentWidth = keyColumnWidth + gridWidth opts.pxPerSixteenth opts.totalBars
                 , maxHeight = Just (frameContentHeight dims)

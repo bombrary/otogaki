@@ -58,6 +58,7 @@ type alias Config msg =
     , doubleClickedChord : Int -> msg
     , toggledEditPanel : msg
     , openedHelp : Help.TopicId -> msg
+    , touched : msg
     }
 
 
@@ -343,6 +344,9 @@ view layout config rulerData chordSpans waveform extras selectedId sections pend
         , div
             [ HA.id sectionBarScrollId
             , HA.style "overflow-x" "auto"
+            , HE.on "touchstart" (Decode.succeed config.touched)
+            , HE.on "wheel" (Decode.succeed config.touched)
+            , HE.on "pointerdown" (Decode.succeed config.touched)
             ]
             [ div
                 [ HA.style "position" "relative" ]

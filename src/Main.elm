@@ -480,7 +480,8 @@ type Msg
     | ToggledGhostTrack Int
     | ChangedDefaultDuration String
     | ChangedGridUnit String
-    | ToggledFollowPlayhead
+    | TouchedScrollSurface
+    | ResumedFollowPlayhead
     | ToggledMetronome
     | ChangedMetronomeVolume String
     | GotPianoRollViewport Int (Result Browser.Dom.Error Browser.Dom.Viewport)
@@ -2044,6 +2045,7 @@ startPlay loop startTicks model =
         | playState = Playing
         , playheadTicks = clampedStartTicks
         , instrumentLoad = markLoading instrumentNames model.instrumentLoad
+        , followPlayhead = True
       }
     , Ports.toAudio (Performance.encodePlay { loop = loop, startTicks = clampedStartTicks, metronome = model.metronomeEnabled, metronomeVolume = model.metronomeVolume } model.project)
     )
@@ -2364,8 +2366,8 @@ seekTo ticks model =
     )
 
 
-{-| 手動シーク時にプレイヘッドを視界に入れる。`followPlayhead`（📌 追従）は再生中の自動追従だけを
-制御する設定なので、ここでは参照しない。ピアノロールが非マウント（コード進行のブロック表示中など）
+{-| 手動シーク時にプレイヘッドを視界に入れる。`followPlayhead`（今、追従中かを表す一時状態）は
+再生中の自動追従だけを制御するので、ここでは参照しない。ピアノロールが非マウント（コード進行のブロック表示中など）
 なら `getViewportOf` が Err になり `GotPianoRollViewport` 側で無視される。
 -}
 revealPlayheadCmd : Int -> Cmd Msg
@@ -5988,8 +5990,15 @@ updateCore msg model =
                 Nothing ->
                     ( model, Cmd.none )
 
-        ToggledFollowPlayhead ->
-            ( { model | followPlayhead = not model.followPlayhead }, Cmd.none )
+        TouchedScrollSurface ->
+            if model.playState == Playing then
+                ( { model | followPlayhead = False }, Cmd.none )
+
+            else
+                ( model, Cmd.none )
+
+        ResumedFollowPlayhead ->
+            ( { model | followPlayhead = True }, revealPlayheadCmd model.playheadTicks )
 
         ToggledMetronome ->
             let
@@ -6670,6 +6679,7 @@ view model =
             , movedCutGuide = MovedCutGuide
             , clearedCutGuide = ClearedCutGuide
             , releasedRulerPress = ReleasedDrag
+            , touched = TouchedScrollSurface
             }
 
         pianoRollOpts =
@@ -7010,6 +7020,7 @@ view model =
                 , doubleClickedChord = DoubleClickedChordStripAt
                 , toggledEditPanel = ToggledSectionEditPanel
                 , openedHelp = OpenedHelpTopic
+                , touched = TouchedScrollSurface
                 }
                 { pxPerBar = model.sectionBarZoom
                 , loopEditable = model.loopMode == LoopRange
@@ -7110,6 +7121,17 @@ view model =
             div groupStyle
                 [ button (Style.toggleButton (model.playState == Playing) ++ [ onClick ClickedPlay, Html.Attributes.title "再生 (Space)" ]) [ text "▶ 再生" ]
                 , button (Style.baseButton ++ [ onClick ClickedStop, Html.Attributes.title "停止 (Space)" ]) [ text "■ 停止" ]
+                , if model.playState == Playing && not model.followPlayhead then
+                    button
+                        (Style.baseButton
+                            ++ [ onClick ResumedFollowPlayhead
+                               , Html.Attributes.title "再生位置までスクロールして追従を再開"
+                               ]
+                        )
+                        [ text "📌 再生位置へ" ]
+
+                  else
+                    text ""
                 ]
 
         metronomeGroup =
@@ -7196,20 +7218,6 @@ view model =
                   else
                     text ""
                 ]
-
-        followGroup =
-            div groupStyle
-                [ button
-                    (Style.toggleButton model.followPlayhead
-                        ++ [ onClick ToggledFollowPlayhead
-                           , Html.Attributes.title "再生中、プレイヘッドが画面外に出たら自動でスクロールする（手動シーク時は常にスクロールします）"
-                           ]
-                    )
-                    [ text "📌 追従" ]
-                ]
-
-        loopGroup =
-            div groupStyle [ loopOnlyGroup, followGroup ]
 
         bpmOnlyGroup =
             div groupStyle
@@ -7362,7 +7370,6 @@ view model =
                                     )
                                     [ seekPrevNextGroup
                                     , metronomeGroup
-                                    , followGroup
                                     , themeGroup
                                     , transposeGroup
                                     , barsGroup
@@ -7394,7 +7401,7 @@ view model =
                                            )
                                     )
                                     [ themeGroup
-                                    , loopGroup
+                                    , loopOnlyGroup
                                     , bpmGroup
                                     , barsGroup
                                     , fileGroup
@@ -7412,7 +7419,7 @@ view model =
                     , Style.divider
                     , themeGroup
                     , Style.divider
-                    , loopGroup
+                    , loopOnlyGroup
                     , Style.divider
                     , bpmGroup
                     , Style.divider
