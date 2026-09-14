@@ -342,70 +342,74 @@ view layout config rulerData chordSpans waveform extras selectedId sections pend
             [ HA.id sectionBarScrollId
             , HA.style "overflow-x" "auto"
             ]
-            [ regionRulerView layout.isNarrow config rulerData.pxPerBar rulerData.loopEditable rulerData.loop rulerData.ticksToPx rulerData.playheadTicks rulerData.viewRange sections
-            , if layout.isShort then
-                text ""
+            [ div
+                [ HA.style "position" "relative" ]
+                [ regionRulerView layout.isNarrow config rulerData.pxPerBar rulerData.loopEditable rulerData.loop rulerData.ticksToPx rulerData.playheadTicks rulerData.viewRange sections
+                , if layout.isShort then
+                    text ""
 
-              else
-                case waveform of
-                    Nothing ->
-                        text ""
+                  else
+                    case waveform of
+                        Nothing ->
+                            text ""
 
-                    Just w ->
-                        Svg.Lazy.lazy6 waveStrip w.peaks w.peakDt w.secsPerTick w.offsetMs rulerData.pxPerBar sections
-            , if layout.isShort then
-                text ""
+                        Just w ->
+                            Svg.Lazy.lazy6 waveStrip w.peaks w.peakDt w.secsPerTick w.offsetMs rulerData.pxPerBar sections
+                , if layout.isShort then
+                    text ""
 
-              else
-                ChordStrip.view
-                    { clickedChord = config.clickedChord, doubleClickedChord = Just config.doubleClickedChord }
-                    { ticksToX = rulerData.ticksToPx
-                    , width = totalBars * rulerData.pxPerBar
-                    , playheadTicks = rulerData.playheadTicks
-                    , height = ChordStrip.height
-                    }
-                    chordSpans
-            , div
-                [ HA.style "display" "flex"
-                , HA.style "align-items" "stretch"
-                , HA.style "flex-wrap" "nowrap"
+                  else
+                    ChordStrip.view
+                        { clickedChord = config.clickedChord, doubleClickedChord = Just config.doubleClickedChord }
+                        { ticksToX = rulerData.ticksToPx
+                        , width = totalBars * rulerData.pxPerBar
+                        , playheadTicks = rulerData.playheadTicks
+                        , height = ChordStrip.height
+                        }
+                        chordSpans
+                , div
+                    [ HA.style "display" "flex"
+                    , HA.style "align-items" "stretch"
+                    , HA.style "flex-wrap" "nowrap"
+                    ]
+                    (List.indexedMap (blockView layout.isNarrow config rulerData.pxPerBar selectedId resizePreview extras movingSectionId) sections
+                        ++ [ button (Style.baseButton ++ [ HE.onClick config.add, HA.style "flex" "0 0 auto" ]) [ text "+ セクション" ] ]
+                        ++ (if selectedId /= Nothing then
+                                [ button
+                                    (Style.toggleButton layout.editPanelOpen
+                                        ++ [ HE.onClick config.toggledEditPanel, HA.style "flex" "0 0 auto" ]
+                                    )
+                                    [ text "⚙ 設定" ]
+                                ]
+
+                            else
+                                []
+                           )
+                        ++ (if layout.isShort then
+                                [ button
+                                    (Style.baseButton
+                                        ++ [ HE.onClick (config.wheelZoomed { deltaY = 100, offsetX = 0 })
+                                           , HA.title "セクションバーを縮小"
+                                           , HA.style "flex" "0 0 auto"
+                                           ]
+                                    )
+                                    [ text "🔍－" ]
+                                , button
+                                    (Style.baseButton
+                                        ++ [ HE.onClick (config.wheelZoomed { deltaY = -100, offsetX = 0 })
+                                           , HA.title "セクションバーを拡大"
+                                           , HA.style "flex" "0 0 auto"
+                                           ]
+                                    )
+                                    [ text "🔍＋" ]
+                                ]
+
+                            else
+                                []
+                           )
+                    )
+                , playheadOverlayLine (rulerData.ticksToPx rulerData.playheadTicks)
                 ]
-                (List.indexedMap (blockView layout.isNarrow config rulerData.pxPerBar selectedId resizePreview extras movingSectionId) sections
-                    ++ [ button (Style.baseButton ++ [ HE.onClick config.add, HA.style "flex" "0 0 auto" ]) [ text "+ セクション" ] ]
-                    ++ (if selectedId /= Nothing then
-                            [ button
-                                (Style.toggleButton layout.editPanelOpen
-                                    ++ [ HE.onClick config.toggledEditPanel, HA.style "flex" "0 0 auto" ]
-                                )
-                                [ text "⚙ 設定" ]
-                            ]
-
-                        else
-                            []
-                       )
-                    ++ (if layout.isShort then
-                            [ button
-                                (Style.baseButton
-                                    ++ [ HE.onClick (config.wheelZoomed { deltaY = 100, offsetX = 0 })
-                                       , HA.title "セクションバーを縮小"
-                                       , HA.style "flex" "0 0 auto"
-                                       ]
-                                )
-                                [ text "🔍－" ]
-                            , button
-                                (Style.baseButton
-                                    ++ [ HE.onClick (config.wheelZoomed { deltaY = -100, offsetX = 0 })
-                                       , HA.title "セクションバーを拡大"
-                                       , HA.style "flex" "0 0 auto"
-                                       ]
-                                )
-                                [ text "🔍＋" ]
-                            ]
-
-                        else
-                            []
-                       )
-                )
             ]
         , if layout.editPanelOpen then
             case selectedId |> Maybe.andThen (\sid -> sections |> List.filter (\s -> s.id == sid) |> List.head) of
@@ -418,6 +422,24 @@ view layout config rulerData chordSpans waveform extras selectedId sections pend
           else
             text ""
         ]
+
+
+{-| ルーラーからブロック行までを縦に貫く playhead 線。`regionRulerView` 内の playhead 線（ルーラー帯のみ）とは
+別に、再生中どのSVG/行を見ていても位置が分かるよう全高に重ねる。同じ x・同じ色なのでルーラー内の線とは重なって
+見えるだけで二重に太くはならない。
+-}
+playheadOverlayLine : Float -> Html msg
+playheadOverlayLine x =
+    div
+        [ HA.style "position" "absolute"
+        , HA.style "top" "0"
+        , HA.style "bottom" "0"
+        , HA.style "left" (String.fromFloat x ++ "px")
+        , HA.style "width" "2px"
+        , HA.style "background" Theme.playhead
+        , HA.style "pointer-events" "none"
+        ]
+        []
 
 
 {-| セクションの開始小節番号ラベル、マウスホイールズーム、shift+ドラッグによるループ作成・伸縮、再生位置の
@@ -546,6 +568,7 @@ regionRulerView isNarrow config pxPerBar loopEditable loop ticksToPx playheadTic
         , HA.style "cursor" "pointer"
         , HA.style "touch-action" "none"
         , HA.title "クリックで再生位置を移動。shift + ドラッグでループ区間を作成。マウスホイールでズーム"
+
         -- PianoRoll.rulerViewWith と同じ理由。タッチの暗黙キャプチャを解除し、
         -- 表示範囲内タップのシークやループ作成がタッチでも ReleasedDrag まで届くようにする。
         , HA.attribute "data-pointer-release-capture" ""

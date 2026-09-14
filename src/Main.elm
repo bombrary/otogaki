@@ -496,6 +496,7 @@ type Msg
     | ToggledMetronome
     | ChangedMetronomeVolume String
     | GotPianoRollViewport Int (Result Browser.Dom.Error Browser.Dom.Viewport)
+    | GotSectionBarViewport Int (Result Browser.Dom.Error Browser.Dom.Viewport)
     | PressedLoopHandle Bool Float
     | WheelZoomedRuler { deltaY : Float, offsetX : Float }
     | GotPianoRollViewportForZoom { deltaY : Float, offsetX : Float } (Result Browser.Dom.Error Browser.Dom.Viewport)
@@ -2440,7 +2441,10 @@ seekTo ticks model =
 -}
 revealPlayheadCmd : Int -> Cmd Msg
 revealPlayheadCmd ticks =
-    Task.attempt (GotPianoRollViewport ticks) (Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId)
+    Cmd.batch
+        [ Task.attempt (GotPianoRollViewport ticks) (Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId)
+        , Task.attempt (GotSectionBarViewport ticks) (Browser.Dom.getViewportOf SectionBar.sectionBarScrollId)
+        ]
 
 
 {-| 全セクションの開始 tick を並び順のまま。前後セクション移動の探索に使う。
@@ -3642,7 +3646,10 @@ updateCore msg model =
                 Playhead ticks ->
                     ( { model | playheadTicks = ticks }
                     , if model.followPlayhead then
-                        Task.attempt (GotPianoRollViewport ticks) (Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId)
+                        Cmd.batch
+                            [ Task.attempt (GotPianoRollViewport ticks) (Browser.Dom.getViewportOf PianoRoll.pianoRollScrollId)
+                            , Task.attempt (GotSectionBarViewport ticks) (Browser.Dom.getViewportOf SectionBar.sectionBarScrollId)
+                            ]
 
                       else
                         Cmd.none
@@ -6090,6 +6097,32 @@ updateCore msg model =
                     in
                     if playheadPx < visLeft || playheadPx > visRight then
                         ( model, Task.attempt (\_ -> NoOp) (Browser.Dom.setViewportOf PianoRoll.pianoRollScrollId (Basics.max 0 (playheadPx - 40)) viewport.viewport.y) )
+
+                    else
+                        ( model, Cmd.none )
+
+                Err _ ->
+                    ( model, Cmd.none )
+
+        GotSectionBarViewport ticks result ->
+            let
+                timeline =
+                    Data.Project.timeline model.project
+            in
+            case result of
+                Ok viewport ->
+                    let
+                        playheadPx =
+                            Data.Timeline.ticksToFractionalBar ticks timeline * toFloat model.sectionBarZoom
+
+                        visLeft =
+                            viewport.viewport.x
+
+                        visRight =
+                            viewport.viewport.x + viewport.viewport.width
+                    in
+                    if playheadPx < visLeft || playheadPx > visRight then
+                        ( model, Task.attempt (\_ -> NoOp) (Browser.Dom.setViewportOf SectionBar.sectionBarScrollId (Basics.max 0 (playheadPx - 40)) viewport.viewport.y) )
 
                     else
                         ( model, Cmd.none )
