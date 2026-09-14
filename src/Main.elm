@@ -231,6 +231,7 @@ type alias Model =
     , pianoRollCentered : Bool
     , sectionResizeDrag : Maybe { sectionId : Int, startClientX : Float, origLengthBars : Int, curLengthBars : Int }
     , sectionMoveDrag : Maybe { sectionId : Int, lastClientX : Float, accumDx : Float, moved : Bool, wasSelected : Bool }
+    , armedSectionId : Maybe Int
     , trackMoveDrag : Maybe { trackId : Int, lastClientY : Float, accumDy : Float, moved : Bool }
     , sectionBarZoom : Int
     , sectionLoopDrag : Maybe LoopDrag
@@ -302,8 +303,17 @@ type LongPressTarget
     | LongPressDrumBand BandOrigin
     | LongPressLoop { ticks : Int, clientX : Float }
     | LongPressSectionLoop { ticks : Int, clientX : Float }
+    | LongPressSectionMove { sectionId : Int, startClientX : Float, startClientY : Float, wasSelected : Bool }
     | LongPressVoicingSelect { index : Int, offset : Int }
     | LongPressDrumNote { pitch : Int, tick : Int }
+
+
+{-| セクションブロックの並び替えを長押しで有効化するまでの待機時間。誤操作防止のため他の長押し（500ms）
+より長めに取る。タブレットのスピーカーで聞こえるかと同様、実機で調整する前提の値。
+-}
+sectionMoveLongPressMs : Float
+sectionMoveLongPressMs =
+    800
 
 
 {-| 矩形選択の原点。startRubberBand にそのまま渡せる形。ノート上の長押しでは、ノート矩形の左上
@@ -479,7 +489,9 @@ type Msg
     | WheelZoomedRuler { deltaY : Float, offsetX : Float }
     | GotPianoRollViewportForZoom { deltaY : Float, offsetX : Float } (Result Browser.Dom.Error Browser.Dom.Viewport)
     | PressedSectionResizeHandle Int Float
-    | PressedSectionBlock Int Float
+    | PressedSectionBlock Int { clientX : Float, clientY : Float }
+    | DraggedSectionBlockWhilePending { clientX : Float, clientY : Float }
+    | ReleasedSectionBlockPress
     | PressedTrackRowHandle Int Float
     | WheelZoomedSectionBar { deltaY : Float, offsetX : Float }
     | GotSectionBarViewportForZoom { deltaY : Float, offsetX : Float } (Result Browser.Dom.Error Browser.Dom.Viewport)
@@ -614,6 +626,7 @@ init flags =
       , pianoRollCentered = False
       , sectionResizeDrag = Nothing
       , sectionMoveDrag = Nothing
+      , armedSectionId = Nothing
       , trackMoveDrag = Nothing
       , sectionBarZoom = SectionBar.defaultRegionPxPerBar
       , sectionLoopDrag = Nothing
@@ -779,13 +792,21 @@ exceedsDragThreshold info pos =
 一致していれば（disarmされていなければ）promoteLongPress を実行する。ResetCopyFeedbackと同型のProcess.sleep+Task.performパターン。
 -}
 armLongPress : LongPressTarget -> Model -> ( Model, Cmd Msg )
-armLongPress target model =
+armLongPress =
+    armLongPressWithDelay 500
+
+
+{-| armLongPress の待機時間を差し替え可能にした版。セクション並び替え（sectionMoveLongPressMs）など、
+既定の500msと異なる待ち時間が必要な呼び出し元だけがこちらを直接使う。
+-}
+armLongPressWithDelay : Float -> LongPressTarget -> Model -> ( Model, Cmd Msg )
+armLongPressWithDelay delayMs target model =
     let
         newToken =
             model.longPressToken + 1
     in
     ( { model | longPressToken = newToken, longPress = Just { token = newToken, target = target } }
-    , Task.perform (\_ -> LongPressFired newToken) (Process.sleep 500)
+    , Task.perform (\_ -> LongPressFired newToken) (Process.sleep delayMs)
     )
 
 
@@ -819,6 +840,14 @@ promoteLongPress target model =
             ( { model
                 | sectionLoopDrag = Just { fixedTicks = r.ticks, baseTicks = r.ticks, startClientX = r.clientX, curTicks = r.ticks }
                 , viewRangeDrag = Nothing
+              }
+            , Cmd.none
+            )
+
+        LongPressSectionMove r ->
+            ( { model
+                | armedSectionId = Just r.sectionId
+                , sectionMoveDrag = Just { sectionId = r.sectionId, lastClientX = r.startClientX, accumDx = 0, moved = False, wasSelected = r.wasSelected }
               }
             , Cmd.none
             )
@@ -2285,7 +2314,9 @@ playheadBar model =
 
 
 {-| セクションブロックのドラッグ終了時の共通ロジック。実際に並べ替えが起きていなければ
-（＝クリックのみと同等）、押した瞬間に既に選択中だったセクションはトグルオフする。
+（＝クリックのみと同等）、押した瞬間に既に選択中だったセクションはトグルオフする。armed 状態
+（armedSectionId）は、並べ替えを1回完了したときだけ解除する。指を離しただけでは維持し、
+次のドラッグでそのまま動かせるようにする。
 -}
 releaseSectionMoveDrag : Model -> Model
 releaseSectionMoveDrag model =
@@ -2299,6 +2330,12 @@ releaseSectionMoveDrag model =
 
                     else
                         model.selectedSectionId
+                , armedSectionId =
+                    if d.moved then
+                        Nothing
+
+                    else
+                        model.armedSectionId
             }
 
         Nothing ->
@@ -4300,17 +4337,78 @@ updateCore msg model =
             ( { model
                 | selectedSectionId = Just sectionId
                 , sectionResizeDrag = Just { sectionId = sectionId, startClientX = clientX, origLengthBars = origLen, curLengthBars = origLen }
+                , armedSectionId = Nothing
+                , longPress = Nothing
               }
             , Cmd.none
             )
 
-        PressedSectionBlock sectionId clientX ->
-            ( { model
-                | selectedSectionId = Just sectionId
-                , sectionMoveDrag = Just { sectionId = sectionId, lastClientX = clientX, accumDx = 0, moved = False, wasSelected = model.selectedSectionId == Just sectionId }
-              }
-            , Cmd.none
-            )
+        PressedSectionBlock sectionId pos ->
+            if model.armedSectionId == Just sectionId then
+                ( { model
+                    | selectedSectionId = Just sectionId
+                    , sectionMoveDrag = Just { sectionId = sectionId, lastClientX = pos.clientX, accumDx = 0, moved = False, wasSelected = model.selectedSectionId == Just sectionId }
+                  }
+                , Cmd.none
+                )
+
+            else
+                let
+                    wasSelected =
+                        model.selectedSectionId == Just sectionId
+                in
+                armLongPressWithDelay sectionMoveLongPressMs
+                    (LongPressSectionMove { sectionId = sectionId, startClientX = pos.clientX, startClientY = pos.clientY, wasSelected = wasSelected })
+                    { model | selectedSectionId = Just sectionId, armedSectionId = Nothing }
+
+        DraggedSectionBlockWhilePending pos ->
+            case model.longPress of
+                Just lp ->
+                    case lp.target of
+                        LongPressSectionMove r ->
+                            if exceedsDragThreshold r pos then
+                                ( { model | longPress = Nothing }, Cmd.none )
+
+                            else
+                                ( model, Cmd.none )
+
+                        _ ->
+                            ( model, Cmd.none )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        ReleasedSectionBlockPress ->
+            case model.sectionMoveDrag of
+                Just _ ->
+                    {- armed後の並べ替え中はoverlay側（ReleasedDrag）が処理するので、ここでは何もしない。 -}
+                    ( model, Cmd.none )
+
+                Nothing ->
+                    case model.longPress of
+                        Just lp ->
+                            case lp.target of
+                                LongPressSectionMove r ->
+                                    {- 長押し完走前にタップだけで指を離したケース。sectionMoveDragが一度もJustにならないため、
+                                       releaseSectionMoveDragのトグル解除ロジックが働かない。ここで同じセマンティクスを再現する。
+                                    -}
+                                    ( { model
+                                        | longPress = Nothing
+                                        , selectedSectionId =
+                                            if r.wasSelected then
+                                                Nothing
+
+                                            else
+                                                model.selectedSectionId
+                                      }
+                                    , Cmd.none
+                                    )
+
+                                _ ->
+                                    ( { model | longPress = Nothing }, Cmd.none )
+
+                        Nothing ->
+                            ( model, Cmd.none )
 
         PressedTrackRowHandle trackId clientY ->
             ( { model | trackMoveDrag = Just { trackId = trackId, lastClientY = clientY, accumDy = 0, moved = False } }
@@ -4529,6 +4627,9 @@ updateCore msg model =
                             PianoRoll.PointerTool
                     , cutGuideTicks = Nothing
                     , touchMode = TouchNormal
+                    , armedSectionId = Nothing
+                    , sectionMoveDrag = Nothing
+                    , longPress = Nothing
                   }
                 , Cmd.none
                 )
@@ -6899,6 +7000,8 @@ view model =
                 , seekToStart = ClickedSeekSectionStart
                 , transpose = TransposedSection
                 , pressedBlock = PressedSectionBlock
+                , draggedBlockWhilePending = DraggedSectionBlockWhilePending
+                , releasedBlockPress = ReleasedSectionBlockPress
                 , pressedResizeHandle = PressedSectionResizeHandle
                 , wheelZoomed = WheelZoomedSectionBar
                 , pressedRuler = PressedSectionRuler
@@ -6939,6 +7042,7 @@ view model =
                                 Nothing
                         )
                 )
+                model.armedSectionId
 
         {- タッチレイアウト（isPageLayout）の4ページ別子リスト。既存の leftPaneChildren/rightPaneChildrenと同じ変数を
            共有しているので、デスクトップ、2ペインと描画内容は一致する。

@@ -47,7 +47,9 @@ type alias Config msg =
     , move : Int -> Int -> msg
     , seekToStart : Int -> msg
     , transpose : Int -> Int -> msg
-    , pressedBlock : Int -> Float -> msg
+    , pressedBlock : Int -> { clientX : Float, clientY : Float } -> msg
+    , draggedBlockWhilePending : { clientX : Float, clientY : Float } -> msg
+    , releasedBlockPress : msg
     , pressedResizeHandle : Int -> Float -> msg
     , wheelZoomed : { deltaY : Float, offsetX : Float } -> msg
     , pressedRuler : { offsetX : Float, clientX : Float, shift : Bool, isTouch : Bool } -> msg
@@ -301,8 +303,8 @@ sectionDragTargetIndex pxPerBar sections currentIndex accumDx =
                     Nothing
 
 
-view : { isNarrow : Bool, isShort : Bool, editPanelOpen : Bool } -> Config msg -> RulerData -> List ChordSpan -> Maybe WaveformData -> BlockExtras -> Maybe Int -> List Section -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> Maybe Int -> Html msg
-view layout config rulerData chordSpans waveform extras selectedId sections pendingDeleteId resizePreview movingSectionId =
+view : { isNarrow : Bool, isShort : Bool, editPanelOpen : Bool } -> Config msg -> RulerData -> List ChordSpan -> Maybe WaveformData -> BlockExtras -> Maybe Int -> List Section -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> Maybe Int -> Maybe Int -> Html msg
+view layout config rulerData chordSpans waveform extras selectedId sections pendingDeleteId resizePreview movingSectionId armedSectionId =
     let
         totalBars =
             List.sum (List.map .lengthBars sections)
@@ -372,7 +374,7 @@ view layout config rulerData chordSpans waveform extras selectedId sections pend
                     , HA.style "align-items" "stretch"
                     , HA.style "flex-wrap" "nowrap"
                     ]
-                    (List.indexedMap (blockView layout.isNarrow config rulerData.pxPerBar selectedId resizePreview extras movingSectionId) sections
+                    (List.indexedMap (blockView layout.isNarrow config rulerData.pxPerBar selectedId resizePreview extras movingSectionId armedSectionId) sections
                         ++ [ button (Style.baseButton ++ [ HE.onClick config.add, HA.style "flex" "0 0 auto" ]) [ text "+ セクション" ] ]
                         ++ (if selectedId /= Nothing then
                                 [ button
@@ -592,6 +594,13 @@ rulerPressDecoder =
         (Decode.field "pointerType" Decode.string |> Decode.map ((==) "touch"))
 
 
+clientPosDecoder : Decode.Decoder { clientX : Float, clientY : Float }
+clientPosDecoder =
+    Decode.map2 (\cx cy -> { clientX = cx, clientY = cy })
+        (Decode.field "clientX" Decode.float)
+        (Decode.field "clientY" Decode.float)
+
+
 wheelDecoder : Decode.Decoder { deltaY : Float, offsetX : Float }
 wheelDecoder =
     Decode.map2 (\dy ox -> { deltaY = dy, offsetX = ox })
@@ -633,14 +642,17 @@ regionLoopHandle isNarrow config isEnd x =
         []
 
 
-blockView : Bool -> Config msg -> Int -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> BlockExtras -> Maybe Int -> Int -> Section -> Html msg
-blockView isNarrow config pxPerBar selectedId resizePreview extras movingSectionId idx section =
+blockView : Bool -> Config msg -> Int -> Maybe Int -> Maybe { sectionId : Int, lengthBars : Int } -> BlockExtras -> Maybe Int -> Maybe Int -> Int -> Section -> Html msg
+blockView isNarrow config pxPerBar selectedId resizePreview extras movingSectionId armedSectionId idx section =
     let
         selected =
             selectedId == Just section.id
 
         moving =
             movingSectionId == Just section.id
+
+        armed =
+            armedSectionId == Just section.id
 
         displayLengthBars =
             case resizePreview of
@@ -673,14 +685,23 @@ blockView isNarrow config pxPerBar selectedId resizePreview extras movingSection
         , HA.style "box-sizing" "border-box"
         , HA.style "text-align" "center"
         , HA.style "border"
-            (if selected then
+            (if armed then
+                "3px solid " ++ Theme.primary
+
+             else if selected then
                 "2px solid " ++ Palette.sectionColor idx
 
              else
                 "1px solid transparent"
             )
         , HA.style "border-radius" "4px"
-        , HA.style "background" (Palette.sectionTint idx)
+        , HA.style "background"
+            (if armed then
+                Theme.primaryContainer
+
+             else
+                Palette.sectionTint idx
+            )
         , HA.style "opacity"
             (if moving then
                 "0.55"
@@ -700,7 +721,7 @@ blockView isNarrow config pxPerBar selectedId resizePreview extras movingSection
             )
         , HA.style "position" "relative"
         , HA.style "cursor"
-            (if moving then
+            (if moving || armed then
                 "grabbing"
 
              else
@@ -709,15 +730,33 @@ blockView isNarrow config pxPerBar selectedId resizePreview extras movingSection
         , HA.style "font-size" "0.85rem"
         , HA.style "overflow" "hidden"
         , HA.style "white-space" "nowrap"
-        , {- pan-xにすることで、タッチの横スワイプだけはブラウザにスクロールとして任せる。touch-actionはマウスのPointer Eventsには
-             影響しないのでPCのドラッグ並べ替えは無影響。タッチでの並べ替えはできなくなるが、pointercancelが
-             viewDragOverlay経由でReleasedDragに接続済みなので状態は固着しない。
+        , HA.style "user-select" "none"
+        , HA.style "-webkit-user-select" "none"
+        , HA.style "-webkit-touch-callout" "none"
+        , {- 長押しで armed になるまでは pan-x にして、タッチの横スワイプをブラウザのスクロールに譲る
+             （誤操作防止の本丸）。armed 後は none にして、指を離さず動かした際にスクロールへ持っていかれず
+             並べ替えできるようにする。touch-actionはマウスのPointer Eventsには影響しないのでPCのドラッグ
+             並べ替えは常に無影響。
           -}
-          HA.style "touch-action" "pan-x"
-        , HE.on "pointerdown" (Decode.map (config.pressedBlock section.id) (Decode.field "clientX" Decode.float))
+          HA.style "touch-action"
+            (if armed then
+                "none"
+
+             else
+                "pan-x"
+            )
+        , HE.on "pointerdown" (Decode.map (config.pressedBlock section.id) clientPosDecoder)
+        , HE.on "pointermove" (Decode.map config.draggedBlockWhilePending clientPosDecoder)
+        , HE.on "pointerup" (Decode.succeed config.releasedBlockPress)
+        , HE.on "pointercancel" (Decode.succeed config.releasedBlockPress)
         , HA.title
             (baseTitle
-                ++ "（ドラッグで並べ替え、右端をドラッグで小節数変更）"
+                ++ (if armed then
+                        "（このまま動かすと並べ替え）"
+
+                    else
+                        "（長押しで並べ替え、右端をドラッグで小節数変更）"
+                   )
                 ++ (if section.memo /= "" then
                         "（📝＝メモあり）"
 
