@@ -1,4 +1,4 @@
-module View.ChordLane exposing (Config, tokenMoveDecoder, tokenPressDecoder, view)
+module View.ChordLane exposing (Config, tokenPressDecoder, view)
 
 import Data.ChordTrack exposing (TokenKey, TokenKind(..), TokenSpan)
 import Html
@@ -14,15 +14,13 @@ import View.Theme as Theme
 
 
 {-| コードトラック選択時のメインペイン用インタラクティブなコードレーン。`View.ChordStrip` と違い
-トークン単位で選択・ドラッグ移動できる。背景の mousedown は矩形選択（またはシーク）、
-トークン本体の mousedown はそのトークンの選択・ドラッグ開始に使う。
+トークン単位で選択できる。背景の mousedown は矩形選択（またはシーク）、
+トークン本体の mousedown はそのトークンの選択に使う。
 -}
 type alias Config msg =
     { pressedToken : TokenKey -> { clientX : Float, clientY : Float, shift : Bool } -> msg
     , pressedLane : { offsetX : Float, offsetY : Float, clientX : Float, clientY : Float, shift : Bool, seekMod : Bool } -> msg
     , doubleClickedToken : TokenKey -> msg
-    , draggedWhilePressingToken : { clientX : Float, clientY : Float, alt : Bool } -> msg
-    , releasedTokenPress : msg
     }
 
 
@@ -35,7 +33,6 @@ view :
         , playheadTicks : Int
         , rubberBand : Maybe { x : Float, w : Float }
         , selectedKeys : Set TokenKey
-        , dragActive : Bool
         }
     -> List TokenSpan
     -> Html.Html msg
@@ -65,7 +62,6 @@ tokenView :
             , playheadTicks : Int
             , height : Int
             , selectedKeys : Set TokenKey
-            , dragActive : Bool
         }
     -> TokenSpan
     -> List (Svg.Svg msg)
@@ -134,25 +130,10 @@ tokenView config opts span =
         , SA.fill bgFill
         , SA.stroke borderColor
         , SA.strokeWidth "1"
-        , SA.opacity
-            (if selected && opts.dragActive then
-                "0.6"
-
-             else
-                "1"
-            )
-        , HA.style "cursor" "move"
-        , HA.style "touch-action" "none"
-        , HA.title (span.token ++ "（ドラッグで小節を入れ替え／ダブルクリックでコード編集）")
-        , HA.attribute "data-pointer-capture" ""
+        , HA.style "cursor" "pointer"
+        , HA.title (span.token ++ "（ダブルクリックでコード編集）")
         , Html.Events.stopPropagationOn "pointerdown"
             (Decode.map (\pos -> ( config.pressedToken span.key pos, True )) tokenPressDecoder)
-        , Html.Events.stopPropagationOn "pointermove"
-            (Decode.map (\pos -> ( config.draggedWhilePressingToken pos, True )) tokenMoveDecoder)
-        , Html.Events.stopPropagationOn "pointerup"
-            (Decode.succeed ( config.releasedTokenPress, True ))
-        , Html.Events.stopPropagationOn "pointercancel"
-            (Decode.succeed ( config.releasedTokenPress, True ))
         , Html.Events.onDoubleClick (config.doubleClickedToken span.key)
         ]
         []
@@ -223,8 +204,7 @@ laneEmptyPressDecoder =
         (Decode.field "altKey" Decode.bool)
 
 
-{-| button フィルタを入れ、右クリックでは発火させない。js/main.js の pointer capture リスナーが button 0 限定なので、
-入れないと右ボタンで pendingChordDrag が残留する。
+{-| button フィルタを入れ、右クリックでは発火させない。
 -}
 tokenPressDecoder : Decode.Decoder { clientX : Float, clientY : Float, shift : Bool }
 tokenPressDecoder =
@@ -239,23 +219,4 @@ tokenPressDecoder =
 
                 else
                     Decode.fail "not left button"
-            )
-
-
-{-| トークンを押している間のpointermove用。buttonsガードでホバーのみの発火を防ぎ、altKeyも同時に読む。
-PianoRoll.elm の noteMoveDecoder と同型。
--}
-tokenMoveDecoder : Decode.Decoder { clientX : Float, clientY : Float, alt : Bool }
-tokenMoveDecoder =
-    Decode.field "buttons" Decode.int
-        |> Decode.andThen
-            (\buttons ->
-                if buttons > 0 then
-                    Decode.map3 (\cx cy alt -> { clientX = cx, clientY = cy, alt = alt })
-                        (Decode.field "clientX" Decode.float)
-                        (Decode.field "clientY" Decode.float)
-                        (Decode.field "altKey" Decode.bool)
-
-                else
-                    Decode.fail "no button pressed"
             )

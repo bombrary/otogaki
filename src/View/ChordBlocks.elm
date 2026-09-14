@@ -18,20 +18,15 @@ type alias Config msg =
     { clickedChord : Int -> msg
     , doubleClickedToken : TokenKey -> msg
     , pressedToken : TokenKey -> { clientX : Float, clientY : Float, shift : Bool } -> msg
-    , draggedWhilePressing : { clientX : Float, clientY : Float, alt : Bool } -> msg
-    , draggedOverBar : Int -> msg
-    , releasedPress : msg
     }
 
 
 {-| 小節ごとのブロックとしてコード進行を表示する。旧 ChordEditor.cellsView/cellView/chordView
 （`e325f2e` で削除される前の実装）の移植。ピアノロール風の一直線表示（View.ChordStrip）と
-切り替えて使うトグル表示。トークンのドラッグ入れ替え（swap、Data.ChordTrack.moveTokens）は
-View.ChordLane とロジック（デコーダ）を共有する。grid（8列）で折り返すため clientX 差分での
-座標換算が使えず、代わりにセルの pointerenter でドロップ先小節を特定する。
+切り替えて使うトグル表示。
 -}
-view : Config msg -> Timeline -> Int -> Set TokenKey -> Bool -> Maybe Int -> ChordTrack -> Html msg
-view config timeline playheadTicks selectedKeys dragActive dragTarget track =
+view : Config msg -> Timeline -> Int -> Set TokenKey -> ChordTrack -> Html msg
+view config timeline playheadTicks selectedKeys track =
     div
         [ HA.style "display" "grid"
         , HA.style "grid-template-columns" "repeat(8, minmax(0, 1fr))"
@@ -39,23 +34,12 @@ view config timeline playheadTicks selectedKeys dragActive dragTarget track =
         , HA.style "margin-top" "0.4rem"
         , HA.style "user-select" "none"
         , HA.style "-webkit-user-select" "none"
-        , HA.style "cursor"
-            (if dragTarget /= Nothing then
-                "grabbing"
-
-             else
-                "default"
-            )
-        , HE.on "pointermove" (Decode.map config.draggedWhilePressing View.ChordLane.tokenMoveDecoder)
-        , HE.on "pointerup" (Decode.succeed config.releasedPress)
-        , HE.on "pointercancel" (Decode.succeed config.releasedPress)
-        , HE.on "pointerleave" (Decode.succeed config.releasedPress)
         ]
-        (List.map (cellView config timeline playheadTicks selectedKeys dragActive dragTarget) (Data.ChordTrack.cells timeline track))
+        (List.map (cellView config timeline playheadTicks selectedKeys) (Data.ChordTrack.cells timeline track))
 
 
-cellView : Config msg -> Timeline -> Int -> Set TokenKey -> Bool -> Maybe Int -> ChordCell -> Html msg
-cellView config timeline playheadTicks selectedKeys dragActive dragTarget cell =
+cellView : Config msg -> Timeline -> Int -> Set TokenKey -> ChordCell -> Html msg
+cellView config timeline playheadTicks selectedKeys cell =
     let
         isCurrentBar =
             playheadTicks >= cell.startTicks && playheadTicks < cell.startTicks + cell.lengthTicks
@@ -87,27 +71,16 @@ cellView config timeline playheadTicks selectedKeys dragActive dragTarget cell =
 
                     Nothing ->
                         Palette.neutral
-
-        isDropTarget =
-            dragTarget == Just cell.barIndex
     in
     div
         [ HA.style "border-radius" "3px"
         , HA.style "padding" "0.2rem 0.4rem"
         , HA.style "min-width" "0"
         , HA.style "background" background
-        , HA.style "outline"
-            (if isDropTarget then
-                "2px solid " ++ Theme.primary
-
-             else
-                "none"
-            )
         , HA.style "display" "flex"
         , HA.style "flex-wrap" "wrap"
         , HA.style "align-items" "flex-start"
         , HA.style "align-content" "flex-start"
-        , HE.on "pointerenter" (Decode.map (\_ -> config.draggedOverBar cell.barIndex) View.ChordLane.tokenMoveDecoder)
         ]
         (span
             [ HA.class "m3-btn"
@@ -121,14 +94,14 @@ cellView config timeline playheadTicks selectedKeys dragActive dragTarget cell =
             [ text (String.fromInt (cell.barIndex + 1)) ]
             :: List.indexedMap
                 (\i c ->
-                    chordView config ( cell.barIndex, i ) (tickAtToken i) key (i == currentToken) (Set.member ( cell.barIndex, i ) selectedKeys) dragActive c
+                    chordView config ( cell.barIndex, i ) (tickAtToken i) key (i == currentToken) (Set.member ( cell.barIndex, i ) selectedKeys) c
                 )
                 cell.chords
         )
 
 
-chordView : Config msg -> TokenKey -> Int -> Key -> Bool -> Bool -> Bool -> { token : String, result : Result String TokenKind } -> Html msg
-chordView config tokenKey tick key isCurrent isSelected dragActive c =
+chordView : Config msg -> TokenKey -> Int -> Key -> Bool -> Bool -> { token : String, result : Result String TokenKind } -> Html msg
+chordView config tokenKey tick key isCurrent isSelected c =
     let
         highlight =
             [ HA.style "padding" "0 0.15rem"
@@ -143,23 +116,14 @@ chordView config tokenKey tick key isCurrent isSelected dragActive c =
                  else
                     "transparent"
                 )
-            , HA.style "opacity"
-                (if isSelected && dragActive then
-                    "0.6"
-
-                 else
-                    "1"
-                )
             ]
 
         clickable =
             [ HA.class "m3-btn"
             , HA.style "cursor" "pointer"
-            , HA.style "touch-action" "none"
             , HA.style "user-select" "none"
             , HA.style "-webkit-user-select" "none"
-            , HA.title "クリックでここから再生（ダブルクリックで運指を選ぶ、ドラッグで入れ替え）"
-            , HA.attribute "data-pointer-release-capture" ""
+            , HA.title "クリックでここから再生（ダブルクリックで運指を選ぶ）"
             , HE.onClick (config.clickedChord tick)
             , HE.onDoubleClick (config.doubleClickedToken tokenKey)
             , HE.custom "pointerdown"

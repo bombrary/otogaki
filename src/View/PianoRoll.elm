@@ -102,13 +102,15 @@ type Tool
     | LockTool
 
 
-{-| ノートをつかんで動かす・長さを変える・削除できるか。PointerTool だけ True。 -}
+{-| ノートをつかんで動かす・長さを変える・削除できるか。PointerTool だけ True。
+-}
 isEditable : Tool -> Bool
 isEditable tool =
     tool == PointerTool
 
 
-{-| ノートをタップ・クリックで選択できるか。ロック中も選択だけは残す。 -}
+{-| ノートをタップ・クリックで選択できるか。ロック中も選択だけは残す。
+-}
 isSelectable : Tool -> Bool
 isSelectable tool =
     tool == PointerTool || tool == LockTool
@@ -412,10 +414,12 @@ scrollFrame : FrameOpts msg -> Html msg
 scrollFrame f =
     Html.div
         [ HA.id f.scrollId
+
         -- pr-frame の min-height は CSS 側（Theme.cssRules）で定義。インラインだと
         -- .pr-col > .pr-fill の min-height: 0 に勝ってしまい、鍵盤パネル等を開いた時に外側ペインへ溢れる。
         , HA.class "pr-fill pr-frame"
         , HA.style "overflow" "auto"
+
         -- iOS のスクロールチェーン（この枠が端に達したときに外側ペインへスクロールが伝播する現象）を抑える。
         , HA.style "overscroll-behavior" "contain"
         , HA.style "border" ("1px solid " ++ Theme.outlineVariant)
@@ -550,7 +554,6 @@ type alias ChordLaneOpts msg =
     , tokenSpans : List TokenSpan
     , selectedKeys : Set TokenKey
     , rubberBand : Maybe { x : Float, w : Float }
-    , dragActive : Bool
     }
 
 
@@ -570,7 +573,6 @@ chordTrackView config opts previewNotes chordLane =
                 , playheadTicks = opts.playheadTicks
                 , rubberBand = chordLane.rubberBand
                 , selectedKeys = chordLane.selectedKeys
-                , dragActive = chordLane.dragActive
                 }
                 chordLane.tokenSpans
     in
@@ -844,15 +846,18 @@ rulerViewWith isNarrow handlers opts =
         , SA.viewBox ("0 0 " ++ String.fromInt (gridWidth opts.pxPerSixteenth opts.totalBars) ++ " " ++ String.fromInt rulerHeight)
         , HA.style "display" "block"
         , HA.style "cursor" "pointer"
+
         -- touch-action を none 以外（pan-x 等）にすると、data-pointer-release-capture（下記）でキャプチャを解放していることと重なって、
         -- ブラウザが指の移動をほとんど待たずにネイティブスクロールとして pointercancel を送ってしまい、長押しが一切発火しなくなる（実機検証済み）。
         , HA.style "touch-action" "none"
         , HA.title "クリックで再生位置を移動。shift + ドラッグでループ区間を作成。マウスホイールでズーム"
+
         -- タッチはpointerdownした要素に暗黙キャプチャされ、ドラッグ中のpointermove/pointerupが
         -- 全画面オーバーレイ（Main.elm の viewDragOverlay）に届かなくなる。ここを解除して、
         -- shift+ドラッグのループ作成やタップシークがタッチでも ReleasedDrag まで届くようにする。
         , HA.attribute "data-pointer-release-capture" ""
         , Html.Events.on "pointerdown" (Decode.map handlers.pressedRuler rulerPressDecoder)
+
         -- 指を離した瞬間に armLongPress のタイマーを無効化しないと、タップしてすぐ離しても500ms後に
         -- LongPressFired が発火してループドラッグに昇格してしまう。
         , Html.Events.on "pointerup" (Decode.succeed handlers.releasedRulerPress)

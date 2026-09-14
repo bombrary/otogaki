@@ -118,25 +118,6 @@ type DrumDrag
     | DrumMoveNoteDrag DrumDragAnchor Int
 
 
-{-| コードトークンのドラッグ移動中の状態。origText/origKeys はドラッグ開始時のスナップショットで、
-moveTokens は毎 move でこのスナップショットから再計算する（累積誤差を防ぐため）。anchorCenterTicksは
-トークンの開始tickではなく中心tick（startTicks + durationTicks // 2）。開始tickを基準にするとticksToBarBeatの
-floor丸めの影響で、右方向の小節切り替えにはほぼ1小節分の移動が必要なのに対し、左方向はわずかな移動で
-切り替わってしまい左右非対称になる。中心tickを基準にすることで、左右とも半小節分の移動で切り替わる
-ようにしている。
--}
-type alias ChordDrag =
-    { anchorKey : ( Int, Int )
-    , anchorCenterTicks : Int
-    , startClientX : Float
-    , startClientY : Float
-    , origText : String
-    , origKeys : Set ( Int, Int )
-    , lastDeltaBars : Int
-    , ghostLabel : String
-    }
-
-
 type alias VoicingDragInfo =
     { index : Int
     , startClientX : Float
@@ -261,8 +242,6 @@ type alias Model =
     , hoveredNote : Maybe { note : Data.Note.Note, x : Float, y : Float }
     , hoveredFretCell : Maybe { pitch : Int, interval : Int, x : Float, y : Float }
     , selectedChordKeys : Set ( Int, Int )
-    , chordDrag : Maybe ChordDrag
-    , pendingChordDrag : Maybe ChordDrag
     , chordRubberBand : Maybe RubberBand
     , formPicker : Maybe { key : Data.ChordTrack.TokenKey, draft : String, tab : FormPicker.Tab }
     , velocityDrag : Maybe VelocityDrag
@@ -389,7 +368,6 @@ type Msg
     | DoubleClickedNote Int
     | RightClickedNote Int
     | DraggedTo ClientPos
-    | DraggedOverChordBar Int
     | ReleasedDrag
     | PressedRuler { offsetX : Float, clientX : Float, shift : Bool, isTouch : Bool }
     | PressedPianoKey Int
@@ -647,8 +625,6 @@ init flags =
       , hoveredNote = Nothing
       , hoveredFretCell = Nothing
       , selectedChordKeys = Set.empty
-      , chordDrag = Nothing
-      , pendingChordDrag = Nothing
       , chordRubberBand = Nothing
       , formPicker = Nothing
       , velocityDrag = Nothing
@@ -1186,9 +1162,6 @@ isCoalescing msg =
         DraggedTo _ ->
             True
 
-        DraggedOverChordBar _ ->
-            True
-
         PressedEmptyCell _ ->
             True
 
@@ -1311,56 +1284,6 @@ describeMsg msg =
 
         _ ->
             "編集"
-
-
-{-| ドラッグ中のトークンをアンカーの横移動量から小節差に換算して applyChordDragDelta を呼ぶ。ライン表示専用
-（ブロック表示は座標が線形でないため DraggedOverChordBar で直接小節を渡す）。
--}
-chordDragMove : ClientPos -> ChordDrag -> Model -> ( Model, Cmd Msg )
-chordDragMove pos cd model =
-    let
-        timeline =
-            Data.Project.timeline model.project
-
-        dxTicks =
-            PianoRoll.pixelsToTicks model.pianoRollZoom (pos.clientX - cd.startClientX)
-
-        targetBar =
-            (Data.Timeline.ticksToBarBeat (Basics.max 0 (cd.anchorCenterTicks + dxTicks)) timeline).bar - 1
-
-        deltaBars =
-            targetBar - Tuple.first cd.anchorKey
-    in
-    applyChordDragDelta deltaBars cd model
-
-
-{-| deltaBars（アンカー小節からの差）を適用して moveTokens を呼ぶ。毎回 origText/origKeys（ドラッグ開始時の
-スナップショット）から再計算するので累積誤差は出ない。deltaBars が前回と同じなら何もしない。ライン表示
-（chordDragMove）・ブロック表示（DraggedOverChordBar）の両方から共有する。
--}
-applyChordDragDelta : Int -> ChordDrag -> Model -> ( Model, Cmd Msg )
-applyChordDragDelta deltaBars cd model =
-    if deltaBars == cd.lastDeltaBars then
-        ( model, Cmd.none )
-
-    else
-        let
-            timeline =
-                Data.Project.timeline model.project
-
-            origTrack =
-                model.project.chordTrack
-
-            moveResult =
-                Data.ChordTrack.moveTokens timeline deltaBars cd.origKeys { origTrack | text = cd.origText }
-        in
-        ( { model
-            | project = Data.Project.updateChordTrack (\ct -> { ct | text = moveResult.track.text }) model.project
-            , selectedChordKeys = moveResult.movedKeys
-            , chordDrag = Just { cd | lastDeltaBars = deltaBars }
-          }
-        , Cmd.none
-        )
 
 
 {-| 矩形選択を開始する共通ヘルパー。空セルの Shift+mousedown（ポインタ/カット両ツール共通）から呼ぶ。
@@ -1495,25 +1418,16 @@ legacyDraggedToTop pos model =
                 ( { model | pendingNoteDrag = Nothing, dragState = Dragging info, longPress = Nothing }, Cmd.none )
 
         Nothing ->
-            case model.pendingChordDrag of
-                Just cd ->
-                    if exceedsDragThreshold cd pos then
-                        ( { model | pendingChordDrag = Nothing, chordDrag = Just cd }, Cmd.none )
+            case model.pendingVoicingDrag of
+                Just vd ->
+                    if exceedsDragThreshold vd pos then
+                        ( { model | pendingVoicingDrag = Nothing, voicingDragState = DraggingVoicingOffsets vd, longPress = Nothing }, Cmd.none )
 
                     else
                         ( model, Cmd.none )
 
                 Nothing ->
-                    case model.pendingVoicingDrag of
-                        Just vd ->
-                            if exceedsDragThreshold vd pos then
-                                ( { model | pendingVoicingDrag = Nothing, voicingDragState = DraggingVoicingOffsets vd, longPress = Nothing }, Cmd.none )
-
-                            else
-                                ( model, Cmd.none )
-
-                        Nothing ->
-                            legacyDraggedTo pos model
+                    legacyDraggedTo pos model
     )
         |> withDragCursor pos.clientX pos.clientY
 
@@ -1703,24 +1617,12 @@ legacyDraggedToRest pos model =
                                                                     )
 
                                                                 Nothing ->
-                                                                    case model.chordDrag of
-                                                                        Just cd ->
-                                                                            if model.chordBlockView then
-                                                                                {- ブロック表示ではセル座標が線形でないためdeltaBarsの発生源はDraggedOverChordBarのみ。
-                                                                                   ここでchordDragMoveを呼ぶとpointerenter直後のpointermoveがdeltaBars=0を再計算してswapを打ち消す。
-                                                                                -}
-                                                                                ( model, Cmd.none )
-
-                                                                            else
-                                                                                chordDragMove pos cd model
+                                                                    case model.chordRubberBand of
+                                                                        Just crb ->
+                                                                            ( { model | chordRubberBand = Just { crb | curX = crb.originX + (pos.clientX - crb.startClientX) } }, Cmd.none )
 
                                                                         Nothing ->
-                                                                            case model.chordRubberBand of
-                                                                                Just crb ->
-                                                                                    ( { model | chordRubberBand = Just { crb | curX = crb.originX + (pos.clientX - crb.startClientX) } }, Cmd.none )
-
-                                                                                Nothing ->
-                                                                                    draggedToNoteOrRubberBand pos model
+                                                                            draggedToNoteOrRubberBand pos model
 
 
 releasedDragMain : Model -> ( Model, Cmd Msg )
@@ -1770,7 +1672,7 @@ releasedDragMain model =
         |> Tuple.mapFirst (\m -> { m | dragCursor = Nothing })
 
 
-{-| pendingEmptyTouch以外の保留状態（pendingNoteDrag/pendingChordDrag/pendingVoicingDrag）を順に確認し、
+{-| pendingEmptyTouch以外の保留状態（pendingNoteDrag/pendingVoicingDrag）を順に確認し、
 どれもなければlegacyReleasedDragに落とす。元々ReleasedDragハンドラ本体だったものを、pendingEmptyTouch分岐を
 先頭に追加する際にネストが深くなりすぎないよう外出しした。
 -}
@@ -1791,17 +1693,12 @@ releasedDragFallbackRest model =
             ( { model | pendingNoteDrag = Nothing, longPress = Nothing }, Cmd.none )
 
         Nothing ->
-            case model.pendingChordDrag of
+            case model.pendingVoicingDrag of
                 Just _ ->
-                    ( { model | pendingChordDrag = Nothing, longPress = Nothing }, Cmd.none )
+                    ( { model | pendingVoicingDrag = Nothing, longPress = Nothing }, Cmd.none )
 
                 Nothing ->
-                    case model.pendingVoicingDrag of
-                        Just _ ->
-                            ( { model | pendingVoicingDrag = Nothing, longPress = Nothing }, Cmd.none )
-
-                        Nothing ->
-                            legacyReleasedDrag { model | longPress = Nothing }
+                    legacyReleasedDrag { model | longPress = Nothing }
 
 
 {-| trackMoveDrag 中ならトラック並び替えを終了し、それ以外は既存の legacyReleasedDragRest（旧 legacyReleasedDrag）に委ねる。
@@ -1873,36 +1770,31 @@ legacyReleasedDragRest model =
                                                         ( { committedModel | loopDrag = Nothing }, cmd )
 
                                                     Nothing ->
-                                                        case model.chordDrag of
-                                                            Just _ ->
-                                                                ( { model | chordDrag = Nothing }, Cmd.none )
+                                                        case model.chordRubberBand of
+                                                            Just crb ->
+                                                                let
+                                                                    x0 =
+                                                                        Basics.min crb.originX crb.curX
+
+                                                                    x1 =
+                                                                        Basics.max crb.originX crb.curX
+
+                                                                    t0 =
+                                                                        PianoRoll.pixelsToTicks model.pianoRollZoom x0
+
+                                                                    t1 =
+                                                                        PianoRoll.pixelsToTicks model.pianoRollZoom x1
+
+                                                                    timeline =
+                                                                        Data.Project.timeline model.project
+
+                                                                    sel =
+                                                                        Data.ChordTrack.tokenKeysInTickRange timeline t0 t1 model.project.chordTrack
+                                                                in
+                                                                ( { model | chordRubberBand = Nothing, selectedChordKeys = sel }, Cmd.none )
 
                                                             Nothing ->
-                                                                case model.chordRubberBand of
-                                                                    Just crb ->
-                                                                        let
-                                                                            x0 =
-                                                                                Basics.min crb.originX crb.curX
-
-                                                                            x1 =
-                                                                                Basics.max crb.originX crb.curX
-
-                                                                            t0 =
-                                                                                PianoRoll.pixelsToTicks model.pianoRollZoom x0
-
-                                                                            t1 =
-                                                                                PianoRoll.pixelsToTicks model.pianoRollZoom x1
-
-                                                                            timeline =
-                                                                                Data.Project.timeline model.project
-
-                                                                            sel =
-                                                                                Data.ChordTrack.tokenKeysInTickRange timeline t0 t1 model.project.chordTrack
-                                                                        in
-                                                                        ( { model | chordRubberBand = Nothing, selectedChordKeys = sel }, Cmd.none )
-
-                                                                    Nothing ->
-                                                                        releasedDragNoteOrRubberBand model
+                                                                releasedDragNoteOrRubberBand model
 
 
 {-| ノートの矩形選択・ドラッグ移動の mousemove 処理。DraggedTo カスケードの末端（他のドラッグ状態がすべて Nothing）で呼ばれる。
@@ -2047,7 +1939,7 @@ update msg model =
                 { coreModel | editBurst = False }
 
         stillDragging =
-            newModel.dragState /= NoDrag || newModel.chordDrag /= Nothing || newModel.chordRubberBand /= Nothing || newModel.velocityDrag /= Nothing
+            newModel.dragState /= NoDrag || newModel.chordRubberBand /= Nothing || newModel.velocityDrag /= Nothing
 
         saveCmds =
             if projectChanged || newModel.selectedTrackId /= model.selectedTrackId then
@@ -2751,8 +2643,6 @@ resetToProject project maybeSelectedTrackId model =
                 , hoveredNote = Nothing
                 , hoveredFretCell = Nothing
                 , selectedChordKeys = Set.empty
-                , chordDrag = Nothing
-                , pendingChordDrag = Nothing
                 , chordRubberBand = Nothing
                 , pianoRollScrollX = 0
                 , pianoRollScrollY = 0
@@ -4057,19 +3947,14 @@ updateCore msg model =
                 )
 
         PressedChordToken key pos ->
-            let
-                {- 残留したpendingChordDragがあっても、次のクリックで必ず健全化するように先頭でリセットする。 -}
-                model1 =
-                    { model | pendingChordDrag = Nothing }
-            in
             if pos.shift then
-                ( { model1
+                ( { model
                     | selectedChordKeys =
-                        if Set.member key model1.selectedChordKeys then
-                            Set.remove key model1.selectedChordKeys
+                        if Set.member key model.selectedChordKeys then
+                            Set.remove key model.selectedChordKeys
 
                         else
-                            Set.insert key model1.selectedChordKeys
+                            Set.insert key model.selectedChordKeys
                   }
                 , Cmd.none
                 )
@@ -4077,64 +3962,22 @@ updateCore msg model =
             else
                 let
                     sel =
-                        if Set.member key model1.selectedChordKeys then
-                            model1.selectedChordKeys
+                        if Set.member key model.selectedChordKeys then
+                            model.selectedChordKeys
 
                         else
                             Set.singleton key
-
-                    timeline =
-                        Data.Project.timeline model1.project
-
-                    anchorSpan =
-                        Data.ChordTrack.tokenSpans timeline model1.project.chordTrack
-                            |> List.filter (\s -> s.key == key)
-                            |> List.head
-
-                    anchorCenterTicks =
-                        anchorSpan
-                            |> Maybe.map (\s -> s.startTicks + s.durationTicks // 2)
-                            |> Maybe.withDefault 0
-
-                    anchorToken =
-                        anchorSpan
-                            |> Maybe.map .token
-                            |> Maybe.withDefault ""
-
-                    ghostLabel =
-                        if Set.size sel > 1 then
-                            anchorToken ++ " ほか" ++ String.fromInt (Set.size sel - 1) ++ "個"
-
-                        else
-                            anchorToken
                 in
-                ( { model1
-                    | selectedChordKeys = sel
-                    , pendingChordDrag =
-                        Just
-                            { anchorKey = key
-                            , anchorCenterTicks = anchorCenterTicks
-                            , startClientX = pos.clientX
-                            , startClientY = pos.clientY
-                            , origText = model1.project.chordTrack.text
-                            , origKeys = sel
-                            , lastDeltaBars = 0
-                            , ghostLabel = ghostLabel
-                            }
-                  }
+                ( { model | selectedChordKeys = sel }
                 , Cmd.none
                 )
 
         PressedChordLane pos ->
-            let
-                model1 =
-                    { model | pendingChordDrag = Nothing }
-            in
-            if pos.seekMod || model1.touchMode == TouchSeek then
-                seekTo (snapFloor model1 (PianoRoll.pixelsToTicks model1.pianoRollZoom pos.offsetX)) model1
+            if pos.seekMod || model.touchMode == TouchSeek then
+                seekTo (snapFloor model (PianoRoll.pixelsToTicks model.pianoRollZoom pos.offsetX)) model
 
             else
-                ( { model1
+                ( { model
                     | chordRubberBand =
                         Just
                             { originX = pos.offsetX
@@ -4175,14 +4018,6 @@ updateCore msg model =
 
                 Nothing ->
                     legacyDraggedToTop pos model
-
-        DraggedOverChordBar bar ->
-            case model.chordDrag of
-                Just cd ->
-                    applyChordDragDelta (bar - Tuple.first cd.anchorKey) cd model
-
-                Nothing ->
-                    ( model, Cmd.none )
 
         ReleasedDrag ->
             case model.pendingLockMenuTap of
@@ -6915,15 +6750,10 @@ view model =
                         { clickedChord = pianoRollConfig.clickedChord
                         , doubleClickedToken = DoubleClickedChordToken
                         , pressedToken = PressedChordToken
-                        , draggedWhilePressing = DraggedTo
-                        , draggedOverBar = DraggedOverChordBar
-                        , releasedPress = ReleasedDrag
                         }
                         timeline
                         model.playheadTicks
                         model.selectedChordKeys
-                        (model.chordDrag /= Nothing)
-                        (model.chordDrag |> Maybe.map (\cd -> Tuple.first cd.anchorKey + cd.lastDeltaBars))
                         model.project.chordTrack
 
                   else
@@ -6934,15 +6764,12 @@ view model =
                             { pressedToken = PressedChordToken
                             , pressedLane = PressedChordLane
                             , doubleClickedToken = DoubleClickedChordToken
-                            , draggedWhilePressingToken = DraggedTo
-                            , releasedTokenPress = ReleasedDrag
                             }
                         , tokenSpans = Data.ChordTrack.tokenSpans timeline model.project.chordTrack
                         , selectedKeys = model.selectedChordKeys
                         , rubberBand =
                             model.chordRubberBand
                                 |> Maybe.map (\crb -> { x = Basics.min crb.originX crb.curX, w = abs (crb.curX - crb.originX) })
-                        , dragActive = model.chordDrag /= Nothing
                         }
                 ]
 
@@ -7755,16 +7582,23 @@ viewDragGhost model =
 -}
 ghostContent : Model -> Maybe String
 ghostContent model =
-    case model.chordDrag of
-        Just cd ->
-            Just cd.ghostLabel
+    case model.sectionMoveDrag of
+        Just d ->
+            if d.moved then
+                model.project.sections
+                    |> List.filter (\s -> s.id == d.sectionId)
+                    |> List.head
+                    |> Maybe.map .name
+
+            else
+                Nothing
 
         Nothing ->
-            case model.sectionMoveDrag of
+            case model.trackMoveDrag of
                 Just d ->
                     if d.moved then
-                        model.project.sections
-                            |> List.filter (\s -> s.id == d.sectionId)
+                        model.project.tracks
+                            |> List.filter (\t -> t.id == d.trackId)
                             |> List.head
                             |> Maybe.map .name
 
@@ -7772,66 +7606,54 @@ ghostContent model =
                         Nothing
 
                 Nothing ->
-                    case model.trackMoveDrag of
-                        Just d ->
-                            if d.moved then
-                                model.project.tracks
-                                    |> List.filter (\t -> t.id == d.trackId)
-                                    |> List.head
-                                    |> Maybe.map .name
-
-                            else
-                                Nothing
-
-                        Nothing ->
-                            case model.dragState of
-                                Dragging d ->
+                    case model.dragState of
+                        Dragging d ->
+                            let
+                                anchorNote =
+                                    selectedTrackKind model
+                                        |> Maybe.map notesOf
+                                        |> Maybe.withDefault []
+                                        |> List.filter (\n -> n.id == d.anchorId)
+                                        |> List.head
+                            in
+                            case anchorNote of
+                                Just n ->
                                     let
-                                        anchorNote =
-                                            selectedTrackKind model
-                                                |> Maybe.map notesOf
-                                                |> Maybe.withDefault []
-                                                |> List.filter (\n -> n.id == d.anchorId)
-                                                |> List.head
+                                        barBeat =
+                                            Data.Timeline.ticksToBarBeat n.start (Data.Project.timeline model.project)
                                     in
-                                    case anchorNote of
-                                        Just n ->
-                                            let
-                                                barBeat =
-                                                    Data.Timeline.ticksToBarBeat n.start (Data.Project.timeline model.project)
-                                            in
-                                            Just
-                                                (Data.Note.pitchLabel n.pitch
-                                                    ++ "  "
-                                                    ++ String.fromInt barBeat.bar
-                                                    ++ ":"
-                                                    ++ String.fromInt barBeat.beat
-                                                )
+                                    Just
+                                        (Data.Note.pitchLabel n.pitch
+                                            ++ "  "
+                                            ++ String.fromInt barBeat.bar
+                                            ++ ":"
+                                            ++ String.fromInt barBeat.beat
+                                        )
 
-                                        Nothing ->
-                                            Nothing
+                                Nothing ->
+                                    Nothing
 
-                                NoDrag ->
-                                    case model.velocityDrag of
-                                        Just vd ->
-                                            let
-                                                liveVelocity =
-                                                    vd.origVelocities
-                                                        |> Dict.keys
-                                                        |> List.head
-                                                        |> Maybe.andThen
-                                                            (\noteId ->
-                                                                selectedTrackKind model
-                                                                    |> Maybe.map notesOf
-                                                                    |> Maybe.withDefault []
-                                                                    |> List.filter (\n -> n.id == noteId)
-                                                                    |> List.head
-                                                            )
-                                            in
-                                            liveVelocity |> Maybe.map (\n -> String.fromInt n.velocity ++ "%")
+                        NoDrag ->
+                            case model.velocityDrag of
+                                Just vd ->
+                                    let
+                                        liveVelocity =
+                                            vd.origVelocities
+                                                |> Dict.keys
+                                                |> List.head
+                                                |> Maybe.andThen
+                                                    (\noteId ->
+                                                        selectedTrackKind model
+                                                            |> Maybe.map notesOf
+                                                            |> Maybe.withDefault []
+                                                            |> List.filter (\n -> n.id == noteId)
+                                                            |> List.head
+                                                    )
+                                    in
+                                    liveVelocity |> Maybe.map (\n -> String.fromInt n.velocity ++ "%")
 
-                                        Nothing ->
-                                            Nothing
+                                Nothing ->
+                                    Nothing
 
 
 {-| ノートホバー時のツールチップ。ホバー中ノートと同じトラック（通常ピアノロールなら選択中トラック、
@@ -8173,7 +7995,6 @@ isDragging model =
         /= Nothing
         || model.sectionLoopDrag
         /= Nothing
-        || (model.chordDrag /= Nothing && not model.chordBlockView)
         || model.chordRubberBand
         /= Nothing
         || model.velocityDrag
