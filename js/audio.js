@@ -143,37 +143,76 @@ const DRUM_ROLES = {
   59: ["ride", "cymbal", "cy"],
 };
 
+// グループ内でどのバリエーション（Tone/Decay ノブ相当）を鳴らすか。キーは解決したグループ名、値はそのグループの
+// フルサンプル名の末尾（例 "kick/bd5050" の "bd5050"）。タブレットのスピーカーで聞こえるかで調整する。
+const DRUM_PREFERRED_VARIANT = {
+  kick: "bd5050",
+  snare: "sd5050",
+  cymbal: "cy5050",
+  "hihat-open": "oh50",
+};
+
 let drumSampleCache = {};
 
-function drumSampleNamesFor(player) {
+function drumGroupNamesFor(player) {
   if (!player) return [];
+  if (typeof player.getGroupNames === "function") return player.getGroupNames();
   if (Array.isArray(player.sampleNames)) return player.sampleNames;
-  if (typeof player.getSampleNames === "function") return player.getSampleNames();
   return [];
+}
+
+function drumGroupVariations(player, group) {
+  if (typeof player.getSampleNamesForGroup === "function") {
+    return player.getSampleNamesForGroup(group);
+  }
+  if (typeof player.getSampleNames === "function") {
+    return player.getSampleNames().filter((n) => n.startsWith(group + "/"));
+  }
+  return [];
+}
+
+// グループ内のフルサンプル名一覧から鳴らすものを1つ選ぶ。DRUM_PREFERRED_VARIANT に一致するものがあればそれ、
+// 無ければ名前でソートした中央の要素（バリエーションが1つならそれがそのまま中央になる）。
+function pickDrumVariant(group, variations) {
+  if (variations.length === 0) return null;
+  const preferred = DRUM_PREFERRED_VARIANT[group];
+  const preferredMatch = preferred && variations.find((n) => n === `${group}/${preferred}` || n.endsWith(`/${preferred}`));
+  if (preferredMatch) return preferredMatch;
+  const sorted = [...variations].sort();
+  return sorted[Math.floor((sorted.length - 1) / 2)];
 }
 
 function resolveDrumSampleForPlayer(player, pitch, cache) {
   if (cache[pitch] !== undefined) return cache[pitch];
-  const names = drumSampleNamesFor(player);
+  const groups = drumGroupNamesFor(player);
   const candidates = DRUM_ROLES[pitch] || [];
-  let found = null;
+  let group = null;
   for (const cand of candidates) {
-    found = names.find((n) => n.toLowerCase().includes(cand)) || null;
-    if (found) break;
+    group = groups.find((n) => n.toLowerCase().includes(cand)) || null;
+    if (group) break;
+  }
+  let found = null;
+  if (group) {
+    const variations = drumGroupVariations(player, group);
+    found = variations.length > 0 ? pickDrumVariant(group, variations) : group;
   }
   cache[pitch] = found;
   if (!found) {
-    console.warn("[audio] ピッチに対応するドラムサンプルがない:", pitch, "候補:", names);
+    console.warn("[audio] ピッチに対応するドラムサンプルがない:", pitch, "候補グループ:", groups);
   }
   return found;
 }
 
 function drumSampleNames() {
-  return drumSampleNamesFor(players["drumKit"]);
+  return drumGroupNamesFor(players["drumKit"]);
 }
 
 function resolveDrumSample(pitch) {
   return resolveDrumSampleForPlayer(players["drumKit"], pitch, drumSampleCache);
+}
+
+if (import.meta.env.DEV) {
+  window.__otogakiAudio = { players, resolveDrumSample };
 }
 
 export function setElmSender(fn) {
@@ -282,7 +321,11 @@ function loadInstrument(name) {
     .then(() => {
       if (name === "drumKit") {
         drumSampleCache = {};
+        const resolved = Object.fromEntries(
+          Object.keys(DRUM_ROLES).map((pitch) => [pitch, resolveDrumSample(Number(pitch))])
+        );
         console.log("[audio] ドラムサンプル一覧:", drumSampleNames());
+        console.log("[audio] ドラムサンプル解決結果:", resolved);
       }
       send({ tag: "instrumentLoaded", payload: { instrument: name } });
     })
