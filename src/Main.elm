@@ -6936,6 +6936,7 @@ view model =
                                     , wheelZoomedRuler = WheelZoomedRuler
                                     , releasedRulerPress = ReleasedDrag
                                     , scrolled = ScrolledPianoRoll
+                                    , touched = TouchedScrollSurface
                                     , openedHelp = OpenedHelpTopic
                                     }
                                     { sections = sectionSpans model.project

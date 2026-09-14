@@ -33,6 +33,7 @@ type alias Config msg =
     , wheelZoomedRuler : { deltaY : Float, offsetX : Float } -> msg
     , releasedRulerPress : msg
     , scrolled : { scrollLeft : Float, scrollTop : Float, clientWidth : Float } -> msg
+    , touched : msg
     , openedHelp : Help.TopicId -> msg
     }
 
@@ -326,6 +327,9 @@ view config opts =
                 , HA.tabindex 0
                 , HA.attribute "aria-label" "ドラムステップグリッド"
                 , Html.Events.on "scroll" (PianoRoll.scrollDecoder config.scrolled)
+                , Html.Events.on "touchstart" (Decode.succeed config.touched)
+                , Html.Events.on "wheel" (Decode.succeed config.touched)
+                , Html.Events.on "pointerdown" (Decode.succeed config.touched)
                 ]
                 [ PianoRoll.rulerViewWith
                     False

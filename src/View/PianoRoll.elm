@@ -594,6 +594,9 @@ chordTrackView config opts previewNotes chordLane =
                     , HA.tabindex 0
                     , HA.attribute "aria-label" "コード進行トラック"
                     , Html.Events.on "scroll" (scrollDecoder config.scrolled)
+                    , Html.Events.on "touchstart" (Decode.succeed config.touched)
+                    , Html.Events.on "wheel" (Decode.succeed config.touched)
+                    , Html.Events.on "pointerdown" (Decode.succeed config.touched)
                     ]
                     [ rulerView config opts
                     , laneHtml 36
