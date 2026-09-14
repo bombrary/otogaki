@@ -1724,49 +1724,49 @@ legacyDraggedToRest pos model =
 
 releasedDragMain : Model -> ( Model, Cmd Msg )
 releasedDragMain model =
-            (case model.pendingEmptyTouch of
-                Just p ->
-                    {- タッチで空白を押したまま指を動かさず離した（＝スワイプではなくタップ）と判断し、ここで初めてノートを確定配置する。
-                       pendingNoteDragは付けず（指は既に離れているため）、押したまま伸ばすジェスチャはタッチでは提供しない。
+    (case model.pendingEmptyTouch of
+        Just p ->
+            {- タッチで空白を押したまま指を動かさず離した（＝スワイプではなくタップ）と判断し、ここで初めてノートを確定配置する。
+               pendingNoteDragは付けず（指は既に離れているため）、押したまま伸ばすジェスチャはタッチでは提供しない。
+            -}
+            let
+                ( placed, cmd, _ ) =
+                    insertNoteAt p { model | pendingEmptyTouch = Nothing }
+            in
+            ( placed, cmd )
+
+        Nothing ->
+            case model.pendingDrumTouch of
+                Just d ->
+                    {- タッチでドラムの空セルを押したまま離した（＝タップ）。ここで初めて確定配置する。
+                       ドラムグリッドは touch-action: none 固定なので pointercancel はほぼ起きないが、
+                       起きてもここには届かず配置されない（pointercancel は DrumEditor でも releasedCellPress
+                       ＝ReleasedDrag にマップされているので、実際にはこの分岐に入る）。
                     -}
                     let
-                        ( placed, cmd, _ ) =
-                            insertNoteAt p { model | pendingEmptyTouch = Nothing }
+                        grid =
+                            Data.Time.gridTicks model.gridUnit
+
+                        note =
+                            { id = model.project.nextId
+                            , pitch = d.pitch
+                            , start = d.tick
+                            , duration = grid
+                            , velocity = 100
+                            }
                     in
-                    ( placed, cmd )
+                    ( { model
+                        | project = Data.Project.addNote model.selectedTrackId note model.project
+                        , selectedNoteIds = Set.singleton note.id
+                        , pendingDrumTouch = Nothing
+                      }
+                    , Ports.toAudio (Performance.encodePreviewNote "drumKit" d.pitch)
+                    )
 
                 Nothing ->
-                    case model.pendingDrumTouch of
-                        Just d ->
-                            {- タッチでドラムの空セルを押したまま離した（＝タップ）。ここで初めて確定配置する。
-                               ドラムグリッドは touch-action: none 固定なので pointercancel はほぼ起きないが、
-                               起きてもここには届かず配置されない（pointercancel は DrumEditor でも releasedCellPress
-                               ＝ReleasedDrag にマップされているので、実際にはこの分岐に入る）。
-                            -}
-                            let
-                                grid =
-                                    Data.Time.gridTicks model.gridUnit
-
-                                note =
-                                    { id = model.project.nextId
-                                    , pitch = d.pitch
-                                    , start = d.tick
-                                    , duration = grid
-                                    , velocity = 100
-                                    }
-                            in
-                            ( { model
-                                | project = Data.Project.addNote model.selectedTrackId note model.project
-                                , selectedNoteIds = Set.singleton note.id
-                                , pendingDrumTouch = Nothing
-                              }
-                            , Ports.toAudio (Performance.encodePreviewNote "drumKit" d.pitch)
-                            )
-
-                        Nothing ->
-                            releasedDragFallback model
-            )
-                |> Tuple.mapFirst (\m -> { m | dragCursor = Nothing })
+                    releasedDragFallback model
+    )
+        |> Tuple.mapFirst (\m -> { m | dragCursor = Nothing })
 
 
 {-| pendingEmptyTouch以外の保留状態（pendingNoteDrag/pendingChordDrag/pendingVoicingDrag）を順に確認し、
@@ -5572,90 +5572,90 @@ updateCore msg model =
 
             else
                 case ( findDrumNoteAt { pitch = pitch, tick = tick } model, effShift ) of
-                ( Just note, True ) ->
-                    ( { model
-                        | selectedNoteIds =
-                            if Set.member note.id model.selectedNoteIds then
-                                Set.remove note.id model.selectedNoteIds
-
-                            else
-                                Set.insert note.id model.selectedNoteIds
-                        , drumDrag = Nothing
-                      }
-                    , Cmd.none
-                    )
-
-                ( Nothing, True ) ->
-                    ( { model
-                        | rubberBand =
-                            Just
-                                { originX = offsetX
-                                , originY = offsetY
-                                , startClientX = clientX
-                                , startClientY = clientY
-                                , curX = offsetX
-                                , curY = offsetY
-                                }
-                        , drumDrag = Nothing
-                      }
-                    , Cmd.none
-                    )
-
-                ( Just note, False ) ->
-                    if isTouch && Data.Tap.isDoubleTap (Data.Tap.TapDrumCell { pitch = pitch, tick = tick }) pos model.lastTap then
-                        -- タッチでのダブルタップ削除。DrumEditor の dblclick は iOS で発火しないため、
-                        -- RightClickedDrumCell/DoubleClickedDrumCell と同じ removeDrumNoteAt をここでも使う。
-                        removeDrumNoteAt { pitch = pitch, tick = tick } { model | lastTap = Nothing }
-
-                    else if isTouch then
-                        let
-                            ( model1, cmd ) =
-                                armLongPress (LongPressDrumNote { pitch = pitch, tick = tick }) { model | selectedNoteIds = Set.singleton note.id }
-                        in
-                        ( { model1 | lastTap = Data.Tap.record (Data.Tap.TapDrumCell { pitch = pitch, tick = tick }) pos }, cmd )
-
-                    else
-                        let
-                            anchor =
-                                { anchorOffsetX = offsetX, anchorOffsetY = offsetY, anchorClientX = clientX, anchorClientY = clientY }
-                        in
-                        ( { model | selectedNoteIds = Set.singleton note.id, drumDrag = Just (DrumMoveNoteDrag anchor note.id) }, Cmd.none )
-
-                ( Nothing, False ) ->
-                    if isTouch then
-                        -- 配置はpointerup（タップ確定）まで保留。長押しが完走すれば promoteLongPress が
-                        -- pendingDrumTouch を落として矩形選択に差し替える。
-                        let
-                            ( model1, armCmd ) =
-                                armLongPress (LongPressDrumBand { offsetX = offsetX, offsetY = offsetY, clientX = clientX, clientY = clientY }) model
-                        in
-                        ( { model1 | pendingDrumTouch = Just { pitch = pitch, tick = tick, offsetX = offsetX, offsetY = offsetY, clientX = clientX, clientY = clientY } }
-                        , armCmd
-                        )
-
-                    else
-                        let
-                            grid =
-                                Data.Time.gridTicks model.gridUnit
-
-                            note =
-                                { id = model.project.nextId
-                                , pitch = pitch
-                                , start = tick
-                                , duration = grid
-                                , velocity = 100
-                                }
-
-                            anchor =
-                                { anchorOffsetX = offsetX, anchorOffsetY = offsetY, anchorClientX = clientX, anchorClientY = clientY }
-                        in
+                    ( Just note, True ) ->
                         ( { model
-                            | project = Data.Project.addNote model.selectedTrackId note model.project
-                            , selectedNoteIds = Set.singleton note.id
-                            , drumDrag = Just (DrumPaintDrag anchor (Set.singleton ( pitch, tick )))
+                            | selectedNoteIds =
+                                if Set.member note.id model.selectedNoteIds then
+                                    Set.remove note.id model.selectedNoteIds
+
+                                else
+                                    Set.insert note.id model.selectedNoteIds
+                            , drumDrag = Nothing
                           }
-                        , Ports.toAudio (Performance.encodePreviewNote "drumKit" pitch)
+                        , Cmd.none
                         )
+
+                    ( Nothing, True ) ->
+                        ( { model
+                            | rubberBand =
+                                Just
+                                    { originX = offsetX
+                                    , originY = offsetY
+                                    , startClientX = clientX
+                                    , startClientY = clientY
+                                    , curX = offsetX
+                                    , curY = offsetY
+                                    }
+                            , drumDrag = Nothing
+                          }
+                        , Cmd.none
+                        )
+
+                    ( Just note, False ) ->
+                        if isTouch && Data.Tap.isDoubleTap (Data.Tap.TapDrumCell { pitch = pitch, tick = tick }) pos model.lastTap then
+                            -- タッチでのダブルタップ削除。DrumEditor の dblclick は iOS で発火しないため、
+                            -- RightClickedDrumCell/DoubleClickedDrumCell と同じ removeDrumNoteAt をここでも使う。
+                            removeDrumNoteAt { pitch = pitch, tick = tick } { model | lastTap = Nothing }
+
+                        else if isTouch then
+                            let
+                                ( model1, cmd ) =
+                                    armLongPress (LongPressDrumNote { pitch = pitch, tick = tick }) { model | selectedNoteIds = Set.singleton note.id }
+                            in
+                            ( { model1 | lastTap = Data.Tap.record (Data.Tap.TapDrumCell { pitch = pitch, tick = tick }) pos }, cmd )
+
+                        else
+                            let
+                                anchor =
+                                    { anchorOffsetX = offsetX, anchorOffsetY = offsetY, anchorClientX = clientX, anchorClientY = clientY }
+                            in
+                            ( { model | selectedNoteIds = Set.singleton note.id, drumDrag = Just (DrumMoveNoteDrag anchor note.id) }, Cmd.none )
+
+                    ( Nothing, False ) ->
+                        if isTouch then
+                            -- 配置はpointerup（タップ確定）まで保留。長押しが完走すれば promoteLongPress が
+                            -- pendingDrumTouch を落として矩形選択に差し替える。
+                            let
+                                ( model1, armCmd ) =
+                                    armLongPress (LongPressDrumBand { offsetX = offsetX, offsetY = offsetY, clientX = clientX, clientY = clientY }) model
+                            in
+                            ( { model1 | pendingDrumTouch = Just { pitch = pitch, tick = tick, offsetX = offsetX, offsetY = offsetY, clientX = clientX, clientY = clientY } }
+                            , armCmd
+                            )
+
+                        else
+                            let
+                                grid =
+                                    Data.Time.gridTicks model.gridUnit
+
+                                note =
+                                    { id = model.project.nextId
+                                    , pitch = pitch
+                                    , start = tick
+                                    , duration = grid
+                                    , velocity = 100
+                                    }
+
+                                anchor =
+                                    { anchorOffsetX = offsetX, anchorOffsetY = offsetY, anchorClientX = clientX, anchorClientY = clientY }
+                            in
+                            ( { model
+                                | project = Data.Project.addNote model.selectedTrackId note model.project
+                                , selectedNoteIds = Set.singleton note.id
+                                , drumDrag = Just (DrumPaintDrag anchor (Set.singleton ( pitch, tick )))
+                              }
+                            , Ports.toAudio (Performance.encodePreviewNote "drumKit" pitch)
+                            )
 
         RightClickedDrumCell target ->
             removeDrumNoteAt target model
@@ -6229,6 +6229,7 @@ updateCore msg model =
 
                         MaterialsPage ->
                             model.selectedTrackId
+
                 newModel =
                     { model | page = page, selectedTrackId = newSelectedTrackId }
             in
@@ -7122,10 +7123,22 @@ view model =
                 )
                 [ text "☰" ]
 
+        seekHomeButton =
+            button (Style.baseButton ++ [ onClick (SeekTo 0), Html.Attributes.title "曲の先頭へ", Html.Attributes.attribute "aria-label" "曲の先頭へ" ]) [ text "⏮" ]
+
         seekGroup =
             div groupStyle
-                [ button (Style.baseButton ++ [ onClick (SeekTo 0), Html.Attributes.title "曲の先頭へ", Html.Attributes.attribute "aria-label" "曲の先頭へ" ]) [ text "⏮" ]
+                [ seekHomeButton
                 , button (Style.baseButton ++ [ onClick SeekPrevSection, Html.Attributes.title "このセクションの頭へ（連打で前へ遡る）", Html.Attributes.attribute "aria-label" "前のセクションへ" ]) [ text "⏪" ]
+                , button (Style.baseButton ++ [ onClick SeekNextSection, Html.Attributes.title "次のセクションの頭へ", Html.Attributes.attribute "aria-label" "次のセクションへ" ]) [ text "⏩" ]
+                ]
+
+        seekHomeGroup =
+            div groupStyle [ seekHomeButton ]
+
+        seekPrevNextGroup =
+            div groupStyle
+                [ button (Style.baseButton ++ [ onClick SeekPrevSection, Html.Attributes.title "このセクションの頭へ（連打で前へ遡る）", Html.Attributes.attribute "aria-label" "前のセクションへ" ]) [ text "⏪" ]
                 , button (Style.baseButton ++ [ onClick SeekNextSection, Html.Attributes.title "次のセクションの頭へ", Html.Attributes.attribute "aria-label" "次のセクションへ" ]) [ text "⏩" ]
                 ]
 
@@ -7336,6 +7349,7 @@ view model =
     div
         [ style "display" "flex"
         , style "flex-direction" "column"
+
         -- 高さは .app-root（Theme.cssRules）で 100dvh と 100% フォールバックを定義。iOS Safari の
         -- 100vh は URL バーが隠れた状態の高さを指し可視領域より大きくなるため、document 自体がスクロールして
         -- ヘッダーごと流れることがあった。
@@ -7360,7 +7374,8 @@ view model =
                 h1 [ style "font-size" "1.3rem", style "margin" "0 0 0.3rem 0" ] [ text "音書き otogaki" ]
             , div [ style "display" "flex", style "flex-wrap" "wrap", style "gap" "0.5rem", style "align-items" "center" ]
                 (if isPageLayout model then
-                    [ playStopGroup
+                    [ seekHomeGroup
+                    , playStopGroup
                     , Style.divider
                     , bpmOnlyGroup
                     , Style.divider
@@ -7381,7 +7396,7 @@ view model =
                                                 []
                                            )
                                     )
-                                    [ seekGroup
+                                    [ seekPrevNextGroup
                                     , metronomeGroup
                                     , followGroup
                                     , themeGroup
