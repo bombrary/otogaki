@@ -6781,7 +6781,7 @@ view model =
                 [ span [ style "font-size" "0.9rem" ] [ text ("編集中: " ++ selectedTrackName ++ selectionInfo) ], durationSelect, gridSelect, toolToggle, pianoRollZoomButtons, touchModeToggleView model ]
 
         pianoRollView =
-            div [ Html.Attributes.class "pr-col pr-fill" ] [ editToolbar, PianoRoll.view pianoRollConfig pianoRollOpts ]
+            div [ Html.Attributes.class "pr-col pr-fill" ] [ editToolbar, withFollowOverlay model (PianoRoll.view pianoRollConfig pianoRollOpts) ]
 
         chordParseErrors =
             Data.ChordTrack.cells timeline model.project.chordTrack
@@ -6868,20 +6868,22 @@ view model =
                         model.project.chordTrack
 
                   else
-                    PianoRoll.chordTrackView pianoRollConfig
-                        pianoRollOpts
-                        (Just (Data.StrumExpand.previewNotes model.project.guitarFormEnabled (effectiveVoicings model) timeline model.project.chordTrack))
-                        { config =
-                            { pressedToken = PressedChordToken
-                            , pressedLane = PressedChordLane
-                            , doubleClickedToken = DoubleClickedChordToken
+                    withFollowOverlay model
+                        (PianoRoll.chordTrackView pianoRollConfig
+                            pianoRollOpts
+                            (Just (Data.StrumExpand.previewNotes model.project.guitarFormEnabled (effectiveVoicings model) timeline model.project.chordTrack))
+                            { config =
+                                { pressedToken = PressedChordToken
+                                , pressedLane = PressedChordLane
+                                , doubleClickedToken = DoubleClickedChordToken
+                                }
+                            , tokenSpans = Data.ChordTrack.tokenSpans timeline model.project.chordTrack
+                            , selectedKeys = model.selectedChordKeys
+                            , rubberBand =
+                                model.chordRubberBand
+                                    |> Maybe.map (\crb -> { x = Basics.min crb.originX crb.curX, w = abs (crb.curX - crb.originX) })
                             }
-                        , tokenSpans = Data.ChordTrack.tokenSpans timeline model.project.chordTrack
-                        , selectedKeys = model.selectedChordKeys
-                        , rubberBand =
-                            model.chordRubberBand
-                                |> Maybe.map (\crb -> { x = Basics.min crb.originX crb.curX, w = abs (crb.curX - crb.originX) })
-                        }
+                        )
                 ]
 
         editContent =
@@ -6919,42 +6921,44 @@ view model =
                             div []
                                 [ div [ style "display" "flex", style "flex-wrap" "wrap", style "align-items" "center", style "column-gap" "0.9rem", style "row-gap" "0.3rem" ]
                                     [ span [ style "font-size" "0.9rem" ] [ text ("編集中: " ++ selectedTrackName ++ selectionInfo) ], gridSelect, touchModeToggleView model ]
-                                , DrumEditor.view
-                                    { pressedCell = PressedDrumCell
-                                    , draggedWhilePressingCell = DraggedTo
-                                    , releasedCellPress = ReleasedDrag
-                                    , rightClickedCell = RightClickedDrumCell
-                                    , doubleClickedCell = DoubleClickedDrumCell
-                                    , pressedVelocityBar = PressedVelocityBar
-                                    , appliedPreset = AppliedDrumPreset
-                                    , changedFillBars = ChangedDrumFillBars
-                                    , changedApplyTarget = ChangedDrumApplyTarget
-                                    , changedApplyMode = ChangedDrumApplyMode
-                                    , toggledLane = ToggledDrumLane
-                                    , pressedRuler = PressedRuler
-                                    , pressedLoopHandle = PressedLoopHandle
-                                    , wheelZoomedRuler = WheelZoomedRuler
-                                    , releasedRulerPress = ReleasedDrag
-                                    , scrolled = ScrolledPianoRoll
-                                    , touched = TouchedScrollSurface
-                                    , openedHelp = OpenedHelpTopic
-                                    }
-                                    { sections = sectionSpans model.project
-                                    , totalBars = totalBarsFor model.project
-                                    , fillBars = model.drumFillBars
-                                    , notes = trackNotes model
-                                    , selectedIds = model.selectedNoteIds
-                                    , playheadTicks = model.playheadTicks
-                                    , pxPerSixteenth = model.pianoRollZoom
-                                    , gridUnit = model.gridUnit
-                                    , loop = displayedLoop model.loopDrag model
-                                    , loopEditable = model.loopMode == LoopRange
-                                    , rubberBand = rubberBandRect model.rubberBand
-                                    , applyTargetValue = drumApplyTargetToString model.drumApplyTarget
-                                    , applyModeValue = drumApplyModeToString model.drumApplyMode
-                                    , rangeLabel = drumRangeLabel model
-                                    , excludedLanes = model.drumApplyExcludedLanes
-                                    }
+                                , withFollowOverlay model
+                                    (DrumEditor.view
+                                        { pressedCell = PressedDrumCell
+                                        , draggedWhilePressingCell = DraggedTo
+                                        , releasedCellPress = ReleasedDrag
+                                        , rightClickedCell = RightClickedDrumCell
+                                        , doubleClickedCell = DoubleClickedDrumCell
+                                        , pressedVelocityBar = PressedVelocityBar
+                                        , appliedPreset = AppliedDrumPreset
+                                        , changedFillBars = ChangedDrumFillBars
+                                        , changedApplyTarget = ChangedDrumApplyTarget
+                                        , changedApplyMode = ChangedDrumApplyMode
+                                        , toggledLane = ToggledDrumLane
+                                        , pressedRuler = PressedRuler
+                                        , pressedLoopHandle = PressedLoopHandle
+                                        , wheelZoomedRuler = WheelZoomedRuler
+                                        , releasedRulerPress = ReleasedDrag
+                                        , scrolled = ScrolledPianoRoll
+                                        , touched = TouchedScrollSurface
+                                        , openedHelp = OpenedHelpTopic
+                                        }
+                                        { sections = sectionSpans model.project
+                                        , totalBars = totalBarsFor model.project
+                                        , fillBars = model.drumFillBars
+                                        , notes = trackNotes model
+                                        , selectedIds = model.selectedNoteIds
+                                        , playheadTicks = model.playheadTicks
+                                        , pxPerSixteenth = model.pianoRollZoom
+                                        , gridUnit = model.gridUnit
+                                        , loop = displayedLoop model.loopDrag model
+                                        , loopEditable = model.loopMode == LoopRange
+                                        , rubberBand = rubberBandRect model.rubberBand
+                                        , applyTargetValue = drumApplyTargetToString model.drumApplyTarget
+                                        , applyModeValue = drumApplyModeToString model.drumApplyMode
+                                        , rangeLabel = drumRangeLabel model
+                                        , excludedLanes = model.drumApplyExcludedLanes
+                                        }
+                                    )
                                 ]
                         ]
 
@@ -7122,17 +7126,6 @@ view model =
             div groupStyle
                 [ button (Style.toggleButton (model.playState == Playing) ++ [ onClick ClickedPlay, Html.Attributes.title "再生 (Space)" ]) [ text "▶ 再生" ]
                 , button (Style.baseButton ++ [ onClick ClickedStop, Html.Attributes.title "停止 (Space)" ]) [ text "■ 停止" ]
-                , if model.playState == Playing && not model.followPlayhead then
-                    button
-                        (Style.baseButton
-                            ++ [ onClick ResumedFollowPlayhead
-                               , Html.Attributes.title "再生位置までスクロールして追従を再開"
-                               ]
-                        )
-                        [ text "📌 再生位置へ" ]
-
-                  else
-                    text ""
                 ]
 
         metronomeGroup =
@@ -7995,6 +7988,33 @@ width == 0（起動直後）はデスクトップ扱い（False）。
 isPageLayout : Model -> Bool
 isPageLayout model =
     isTouchLayout model
+
+
+{-| 追従が外れている間だけ、スクロール面の右下に「📌 再生位置へ」を重ねる。
+ラッパーは `pr-col pr-fill` なので、親が `pr-col` のときは中の `.pr-fill`（scrollFrame）が残り高さに収まる契約をそのまま引き継ぐ。
+親が `pr-col` でないときは何もしない（`.pr-fill` 単体にスタイルはない）。
+-}
+withFollowOverlay : Model -> Html Msg -> Html Msg
+withFollowOverlay model surface =
+    div [ Html.Attributes.class "pr-col pr-fill", style "position" "relative" ]
+        [ surface
+        , if model.playState == Playing && not model.followPlayhead then
+            button
+                (Style.baseButton
+                    ++ [ onClick ResumedFollowPlayhead
+                       , Html.Attributes.title "再生位置までスクロールして追従を再開"
+                       , style "position" "absolute"
+                       , style "right" "16px"
+                       , style "bottom" "16px"
+                       , style "z-index" "5"
+                       , style "box-shadow" "0 2px 8px rgba(0,0,0,0.35)"
+                       ]
+                )
+                [ text "📌 再生位置へ" ]
+
+          else
+            text ""
+        ]
 
 
 {-| Shift/Alt/Ctrlなどの物理修飾キーを押せないタッチ環境向けの代替モード切替ボタン。
