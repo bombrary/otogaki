@@ -5281,10 +5281,19 @@ updateCore msg model =
         AppliedVoicingPreset index ->
             case ( Data.VoicingPreset.qualityByLabel model.voicingPresetQuality, Data.VoicingPreset.shapeByName model.voicingPresetShape ) of
                 ( Just quality, Just shape ) ->
+                    let
+                        bass =
+                            model.formPicker
+                                |> Maybe.andThen (\fp -> chordForToken fp.key model)
+                                |> Maybe.andThen Data.GuitarForm.bassInterval
+
+                        presetOffsets =
+                            Data.VoicingPreset.withBassLowest bass (Data.VoicingPreset.offsetsFor quality shape)
+                    in
                     ( { model
                         | project =
                             Data.Project.updateVoicing index
-                                (\v -> { v | offsets = Data.VoicingPreset.offsetsFor quality shape, stringPicks = Set.empty })
+                                (\v -> { v | offsets = presetOffsets, stringPicks = Set.empty })
                                 model.project
                       }
                     , Cmd.none

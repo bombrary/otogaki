@@ -22,6 +22,7 @@ import View.Theme as Theme
 「候補から選ぶ」(`CandidatesTab`)と「手で編集」(`EditTab`)の2タブを持つ。編集対象の実体
 (`View.ChordEditor.voicingEditorView` で組み立てた `Html msg`)は呼び出し側が `editor` として渡す
 (Main.elm が保持する編集ロジック・状態をこちらへ複製しないため)。
+
 -}
 type alias Config msg =
     { chose : GuitarForm.Candidate -> msg
@@ -46,6 +47,7 @@ type Tab
 (Enter か適用ボタンで確定するまでトラックへは反映されない)。
 
 `tab` で現在どちらのタブが開いているかを、`editor` で「手で編集」タブの中身(対象が無ければ `Nothing`)を渡す。
+
 -}
 view : Config msg -> { draft : String, tab : Tab, editor : Maybe (Html msg) } -> Html msg
 view config { draft, tab, editor } =
@@ -180,8 +182,7 @@ candidatesSection config chord =
                 [ span [ HA.style "font-size" "0.75rem", HA.style "color" Theme.onSurfaceVariant ]
                     [ text ("現在の登録: @" ++ name) ]
                 , button
-                    (Style.dangerButton ++ [ HE.onClick config.cleared, HA.title "このトークンの @NAME を外す(辞書のエントリ自体は残る)" ]
-                    )
+                    (Style.dangerButton ++ [ HE.onClick config.cleared, HA.title "このトークンの @NAME を外す(辞書のエントリ自体は残る)" ])
                     [ text "解除" ]
                 ]
 
@@ -235,7 +236,7 @@ shapeCard : Config msg -> Chord -> VoicingPreset.Shape -> Html msg
 shapeCard config chord shape =
     let
         offsets =
-            VoicingPreset.offsetsFor chord.quality shape
+            VoicingPreset.withBassLowest (GuitarForm.bassInterval chord) (VoicingPreset.offsetsFor chord.quality shape)
 
         rootPitch =
             anchorPitch + modBy 12 chord.root
