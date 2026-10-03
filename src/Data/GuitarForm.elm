@@ -4,6 +4,7 @@ module Data.GuitarForm exposing
     , Position(..)
     , StringPicks
     , Variant(..)
+    , bassInterval
     , bassSuffix
     , bestForm
     , candidateLabel
@@ -923,7 +924,14 @@ assignStrings strings pitches =
 
                 assignBranches =
                     pitches
-                        |> List.filter (\p -> let fret = p - openPitch in fret >= 0 && fret <= maxFretSearch)
+                        |> List.filter
+                            (\p ->
+                                let
+                                    fret =
+                                        p - openPitch
+                                in
+                                fret >= 0 && fret <= maxFretSearch
+                            )
                         |> List.concatMap
                             (\p ->
                                 let
@@ -973,7 +981,16 @@ bestForm : List Int -> Maybe Form
 bestForm pitches =
     let
         uniquePitches =
-            List.foldl (\p acc -> if List.member p acc then acc else acc ++ [ p ]) [] pitches
+            List.foldl
+                (\p acc ->
+                    if List.member p acc then
+                        acc
+
+                    else
+                        acc ++ [ p ]
+                )
+                []
+                pitches
     in
     if List.isEmpty uniquePitches || List.length uniquePitches > List.length openStrings then
         Nothing

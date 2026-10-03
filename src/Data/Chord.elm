@@ -1,4 +1,4 @@
-module Data.Chord exposing (Alteration(..), Chord, Extension(..), Quality(..), qualityIntervals, toPitches, toPitchesWith)
+module Data.Chord exposing (Alteration(..), Chord, Extension(..), Quality(..), qualityIntervals, toPitches, toPitchesWith, withSlashBass)
 
 import Data.Voicing exposing (Voicing)
 
@@ -177,12 +177,20 @@ toPitchesWith voicings chord =
             in
             -- ボイシングは anchorPitch（= 通常のベース音の位置）を基準に自分でベース音まで
             -- 含めて書ける前提なので、bass 指定が無ければ自動でベース音を足さない。
-            -- スラッシュコード（bass 指定あり）のときだけ、その音を明示的なベースとして先頭に足す。
-            case chord.bass of
-                Just bass ->
-                    (Data.Voicing.anchorPitch + modBy 12 bass) :: chordTones
+            -- スラッシュコード（bass 指定あり）のときだけ、最低音がそのベースの音名でなければ
+            -- anchorPitch 帯のベース音を先頭に足す（既存の辞書の鳴り方を変えないため、位置は無条件）。
+            case ( chord.bass, List.minimum chordTones ) of
+                ( Just bass, Just lowest ) ->
+                    if modBy 12 lowest == modBy 12 bass then
+                        chordTones
 
-                Nothing ->
+                    else
+                        (Data.Voicing.anchorPitch + modBy 12 bass) :: chordTones
+
+                ( Just bass, Nothing ) ->
+                    [ Data.Voicing.anchorPitch + modBy 12 bass ]
+
+                ( Nothing, _ ) ->
                     chordTones
 
         Nothing ->
@@ -201,3 +209,31 @@ toPitchesWith voicings chord =
                     36 + modBy 12 (Maybe.withDefault chord.root chord.bass)
             in
             bassMidi :: chordTones
+
+
+{-| ピッチ列にスラッシュコードのベース音を反映する（ギターフォーム・辞書ボイシング共通の規則）。
+最低音がすでにベース音と同じピッチクラスならそのまま、違えば最低音より低いオクターブで
+ベース音を先頭に追加する。
+-}
+withSlashBass : Maybe Int -> List Int -> List Int
+withSlashBass maybeBass pitches =
+    case ( maybeBass, List.minimum pitches ) of
+        ( Just bass, Just lowest ) ->
+            let
+                bassPc =
+                    modBy 12 bass
+
+                candidate =
+                    Data.Voicing.anchorPitch + bassPc
+            in
+            if modBy 12 lowest == bassPc then
+                pitches
+
+            else if candidate < lowest then
+                candidate :: pitches
+
+            else
+                (candidate - 12) :: pitches
+
+        _ ->
+            pitches

@@ -1,4 +1,4 @@
-module Data.VoicingPreset exposing (Shape(..), offsetsFor, qualities, qualityByLabel, qualityLabel, shapeByName, shapeLabel, shapeSuffix, shapes)
+module Data.VoicingPreset exposing (Shape(..), offsetsFor, qualities, qualityByLabel, qualityLabel, shapeByName, shapeLabel, shapeSuffix, shapes, withBassLowest)
 
 import Data.Chord exposing (Quality(..), qualityIntervals)
 
@@ -167,3 +167,33 @@ offsetsFor quality shape =
                         |> List.indexedMap (\i v -> v + 12 + 12 * modBy 2 i)
                         |> List.sort
                    )
+
+
+{-| スラッシュコードのベース音（`GuitarForm.bassInterval` の結果）を offsets の最低音にする。
+ベースと同じ音名の音があれば、その最も低いものを軸にして、それより低い音を 1 オクターブずつ上げる。
+無ければ（ハイブリッドコード）`interval - 12` を先頭に足す。ベース指定が無ければそのまま返す。
+-}
+withBassLowest : Maybe Int -> List Int -> List Int
+withBassLowest maybeInterval offsets =
+    case maybeInterval of
+        Nothing ->
+            offsets
+
+        Just interval ->
+            case List.filter (\o -> modBy 12 o == modBy 12 interval) offsets |> List.minimum of
+                Just pivot ->
+                    offsets
+                        |> List.map (liftAtLeast pivot)
+                        |> List.sort
+
+                Nothing ->
+                    (interval - 12) :: offsets
+
+
+liftAtLeast : Int -> Int -> Int
+liftAtLeast floor o =
+    if o < floor then
+        liftAtLeast floor (o + 12)
+
+    else
+        o

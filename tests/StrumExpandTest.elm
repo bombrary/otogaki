@@ -25,6 +25,30 @@ suite =
     Test.concat
         [ strumExpandSuite
         , previewNotesRhythmSuite
+        , slashBassVoicingSuite
+        ]
+
+
+slashBassVoicingSuite : Test
+slashBassVoicingSuite =
+    let
+        chordGSharpOnC =
+            { root = 8, quality = Maj, extensions = [], alterations = [], bass = Just 0, voicing = Just "v" }
+
+        voicingOf offsets =
+            { name = "v", offsets = offsets, stringPicks = Set.empty }
+    in
+    describe "辞書の最低音がスラッシュのベースと同じ音名のとき"
+        [ test "soundingPitches は C2 を足さない（bestForm が成功する3音）" <|
+            \_ ->
+                StrumExpand.soundingPitches True [ voicingOf [ 4, 7, 12 ] ] chordGSharpOnC
+                    |> List.minimum
+                    |> Expect.equal (Just 48)
+        , test "soundingPitches は C2 を足さない（bestForm が失敗する7音）" <|
+            \_ ->
+                StrumExpand.soundingPitches True [ voicingOf [ 4, 7, 12, 16, 19, 23, 26 ] ] chordGSharpOnC
+                    |> List.minimum
+                    |> Expect.equal (Just 48)
         ]
 
 
@@ -486,7 +510,16 @@ previewNotesRhythmSuite =
                         StrumExpand.previewNotes True [] timeline track
 
                     distinctStarts =
-                        notes |> List.map .start |> List.foldl (\s acc -> if List.member s acc then acc else s :: acc) []
+                        notes |> List.map .start
+                            |> List.foldl
+                                (\s acc ->
+                                    if List.member s acc then
+                                        acc
+
+                                    else
+                                        s :: acc
+                                )
+                                []
                 in
                 Expect.equal 1 (List.length distinctStarts)
         , test "rhythm = Just \"8ビート\" ならストロークで複数ステップに分かれて鳴る" <|
@@ -502,7 +535,16 @@ previewNotesRhythmSuite =
                         StrumExpand.previewNotes True [] timeline track
 
                     distinctStarts =
-                        notes |> List.map .start |> List.foldl (\s acc -> if List.member s acc then acc else s :: acc) []
+                        notes |> List.map .start
+                            |> List.foldl
+                                (\s acc ->
+                                    if List.member s acc then
+                                        acc
+
+                                    else
+                                        s :: acc
+                                )
+                                []
                 in
                 Expect.equal True (List.length distinctStarts > 1)
         ]

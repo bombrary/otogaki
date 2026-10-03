@@ -67,7 +67,15 @@ voicingFromForm rootPitch form name =
             picks
                 |> Set.toList
                 |> List.map Tuple.first
-                |> List.foldl (\o acc -> if List.member o acc then acc else o :: acc) []
+                |> List.foldl
+                    (\o acc ->
+                        if List.member o acc then
+                            acc
+
+                        else
+                            o :: acc
+                    )
+                    []
                 |> List.reverse
     in
     { name = name, offsets = offsets, stringPicks = picks }
@@ -81,38 +89,10 @@ soundingPitches : Bool -> List Voicing -> Data.Chord.Chord -> List Int
 soundingPitches guitarFormEnabled voicings chord =
     case formFor guitarFormEnabled voicings chord of
         Just form ->
-            withSlashBass chord.bass (GuitarForm.toPitches form)
+            Data.Chord.withSlashBass chord.bass (GuitarForm.toPitches form)
 
         Nothing ->
             Data.Chord.toPitchesWith voicings chord |> List.sort
-
-
-{-| フォーム由来のピッチ列にスラッシュコードのベース音を反映する。
-最低音がすでにベース音と同じピッチクラスならそのまま、違えば最低音より低いオクターブで
-ベース音を先頭に追加する。
--}
-withSlashBass : Maybe Int -> List Int -> List Int
-withSlashBass maybeBass pitches =
-    case ( maybeBass, List.minimum pitches ) of
-        ( Just bass, Just lowest ) ->
-            let
-                bassPc =
-                    modBy 12 bass
-
-                candidate =
-                    Data.Voicing.anchorPitch + bassPc
-            in
-            if modBy 12 lowest == bassPc then
-                pitches
-
-            else if candidate < lowest then
-                candidate :: pitches
-
-            else
-                (candidate - 12) :: pitches
-
-        _ ->
-            pitches
 
 
 {-| コード進行を実際にストローク展開して鳴らす場合のノート列を計算する純関数。`resolvedChords` は呼び出し側が
@@ -122,6 +102,7 @@ withSlashBass maybeBass pitches =
 soundingPitches（ギターフォーム探索を伴う重い処理）はコード区間ごとに1回だけ事前計算し、
 アルペジオ（StringIndex）のステップ番号（localArpeggioIndices）も strumStarts を一回走査するだけで
 事前計算する。どちらも「小節内全イベントのたびに全体を走査し直す」 O(N²) を避けるため。
+
 -}
 expand :
     { startTicks : Int, endTicks : Int }

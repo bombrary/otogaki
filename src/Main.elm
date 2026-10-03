@@ -3363,7 +3363,7 @@ registerCandidateForToken key candidate model =
                     voicing =
                         Data.StrumExpand.voicingFromForm rootPitch candidate.form name
                 in
-                ( insertVoicingForToken key voicing model, name )
+                ( insertVoicingForToken key voicing { model | voicingPreviewRoot = modBy 12 chord.root }, name )
             )
 
 
@@ -3381,11 +3381,11 @@ registerShapeForToken key shape model =
 
                     voicing =
                         { name = name
-                        , offsets = Data.VoicingPreset.offsetsFor chord.quality shape
+                        , offsets = Data.VoicingPreset.withBassLowest (Data.GuitarForm.bassInterval chord) (Data.VoicingPreset.offsetsFor chord.quality shape)
                         , stringPicks = Set.empty
                         }
                 in
-                ( insertVoicingForToken key voicing model, name )
+                ( insertVoicingForToken key voicing { model | voicingPreviewRoot = modBy 12 chord.root }, name )
             )
 
 
@@ -3401,11 +3401,11 @@ autoRegisterAndOpenEditTab key chord model =
 
         voicing =
             { name = name
-            , offsets = Data.VoicingPreset.offsetsFor chord.quality Data.VoicingPreset.Closed
+            , offsets = Data.VoicingPreset.withBassLowest (Data.GuitarForm.bassInterval chord) (Data.VoicingPreset.offsetsFor chord.quality Data.VoicingPreset.Closed)
             , stringPicks = Set.empty
             }
     in
-    finishRegistrationAndOpenEditTab name (insertVoicingForToken key voicing model)
+    finishRegistrationAndOpenEditTab name (insertVoicingForToken key voicing { model | voicingPreviewRoot = modBy 12 chord.root })
 
 
 showToast : Toast.Tone -> String -> Model -> ( Model, Cmd Msg )
@@ -4322,7 +4322,7 @@ updateCore msg model =
                                 Ok chord ->
                                     case chord.voicing |> Maybe.andThen (\name -> Data.Project.voicingIndexByName name committedModel.project.voicings) of
                                         Just index ->
-                                            openEditTab index committedModel
+                                            openEditTab index { committedModel | voicingPreviewRoot = modBy 12 chord.root }
 
                                         Nothing ->
                                             autoRegisterAndOpenEditTab fp.key chord committedModel
@@ -5031,8 +5031,8 @@ updateCore msg model =
                 currentOffsets =
                     List.drop index model1.project.voicings |> List.head |> Maybe.map .offsets |> Maybe.withDefault []
             in
-            if offset < 0 && not (List.member offset currentOffsets) then
-                -- root より低い空き行。offsets は常に 0 以上の不変式なので新規追加できない
+            if offset < -12 && not (List.member offset currentOffsets) then
+                -- root より 1 オクターブ以上低い空き行。offsets の下限は -12（スラッシュのベース用）なので新規追加できない
                 ( model1, Cmd.none )
 
             else if pos.shift && List.member offset currentOffsets then
@@ -5191,8 +5191,8 @@ updateCore msg model =
                 pick =
                     ( offset, stringIndex )
             in
-            if offset < 0 && not (List.member offset currentOffsets) then
-                -- root より低い空きセル。offsets は常に 0 以上の不変式なので新規追加できない
+            if offset < -12 && not (List.member offset currentOffsets) then
+                -- root より 1 オクターブ以上低い空きセル。offsets の下限は -12（スラッシュのベース用）なので新規追加できない
                 ( model, Cmd.none )
 
             else if not (List.member offset currentOffsets) then

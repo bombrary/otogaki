@@ -161,4 +161,34 @@ suite =
                 Expect.equal
                     Nothing
                     (Data.Voicing.findByName "nope" [ wideVoicing ])
+        , test "辞書の最低音がベースと同じ音名なら toPitchesWith は C2 を足さない（G#/C、7音）" <|
+            \_ ->
+                let
+                    v =
+                        { name = "v", offsets = [ 4, 7, 12, 16, 19, 23, 26 ], stringPicks = Set.empty }
+
+                    chord =
+                        { root = 8, quality = Chord.Maj, extensions = [], alterations = [], bass = Just 0, voicing = Just "v" }
+                in
+                Expect.equal (Data.Voicing.pitchesFor 8 v) (Chord.toPitchesWith [ v ] chord)
+        , test "辞書の最低音がベースと同じ音名なら toPitchesWith は C2 を足さない（G#/C、3音）" <|
+            \_ ->
+                let
+                    v =
+                        { name = "v", offsets = [ 4, 7, 12 ], stringPicks = Set.empty }
+
+                    chord =
+                        { root = 8, quality = Chord.Maj, extensions = [], alterations = [], bass = Just 0, voicing = Just "v" }
+                in
+                Expect.equal [ 48, 51, 56 ] (Chord.toPitchesWith [ v ] chord)
+        , test "辞書の最低音がベースでなければ toPitchesWith は従来どおり C2 帯に足す" <|
+            \_ ->
+                let
+                    v =
+                        { name = "v", offsets = [ 0, 4, 7 ], stringPicks = Set.empty }
+
+                    chord =
+                        { root = 8, quality = Chord.Maj, extensions = [], alterations = [], bass = Just 0, voicing = Just "v" }
+                in
+                Expect.equal [ 36, 44, 48, 51 ] (Chord.toPitchesWith [ v ] chord)
         ]

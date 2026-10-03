@@ -80,4 +80,13 @@ suite =
                         List.length suffixes == Set.size (Set.fromList suffixes)
                 in
                 Expect.equal ( True, True, True ) ( allNonEmpty, allAscii, noDuplicates )
+        , test "withBassLowest はベースなしなら offsets をそのまま返す" <|
+            \_ ->
+                Expect.equal [ 0, 4, 7 ] (VoicingPreset.withBassLowest Nothing [ 0, 4, 7 ])
+        , test "withBassLowest は転回形ならベースと同じ音名の最低音を一番下にする（G#/C 相当）" <|
+            \_ ->
+                Expect.equal [ 4, 7, 12 ] (VoicingPreset.withBassLowest (Just 4) [ 0, 4, 7 ])
+        , test "withBassLowest はハイブリッドなら interval - 12 を先頭に足す（F/G 相当）" <|
+            \_ ->
+                Expect.equal [ -10, 0, 4, 7 ] (VoicingPreset.withBassLowest (Just 2) [ 0, 4, 7 ])
         ]
