@@ -75,11 +75,12 @@ isWhite pitch =
     List.member (modBy 12 pitch) [ 0, 2, 4, 5, 7, 9, 11 ]
 
 
-{-| 表示上の root（displayRootPitch）からの相対半音。実際に置かれている最低音が基準なので常に 0 以上になる。
+{-| 本当のルート（rootPitch）からの度数ラベル。スラッシュコードでは最低音がルートと異なるので、
+最低音（displayRootPitch）基準にはしない。ルートより下の音は負の offset になる。
 -}
 offsetLabel : Int -> Int -> String
-offsetLabel displayRootPitch pitch =
-    Format.degreeLabelExtended (pitch - displayRootPitch)
+offsetLabel rootPitch pitch =
+    Format.degreeLabelExtended (pitch - rootPitch)
 
 
 {-| mousedown 用デコーダ。button フィルタを必ず入れる: これがないと右クリック（contextmenu で削除する
@@ -315,7 +316,7 @@ laneRow config hover displayRootPitch rootPitch placed selectedPitches pitch =
                 , HA.style "white-space" "nowrap"
                 , HA.style "pointer-events" "none"
                 ]
-                [ text (offsetLabel displayRootPitch pitch) ]
+                [ text (offsetLabel rootPitch pitch) ]
 
           else
             text ""

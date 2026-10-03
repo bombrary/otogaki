@@ -82,11 +82,31 @@ suite =
                 Expect.equal ( True, True, True ) ( allNonEmpty, allAscii, noDuplicates )
         , test "withBassLowest はベースなしなら offsets をそのまま返す" <|
             \_ ->
-                Expect.equal [ 0, 4, 7 ] (VoicingPreset.withBassLowest Nothing [ 0, 4, 7 ])
-        , test "withBassLowest は転回形ならベースと同じ音名の最低音を一番下にする（G#/C 相当）" <|
+                Expect.equal [ 0, 12, 16, 19 ] (VoicingPreset.withBassLowest Nothing [ 0, 12, 16, 19 ])
+        , test "withBassLowest はベース位置のルートをベースに差し替える（G#/C クローズド）" <|
             \_ ->
-                Expect.equal [ 4, 7, 12 ] (VoicingPreset.withBassLowest (Just 4) [ 0, 4, 7 ])
-        , test "withBassLowest はハイブリッドなら interval - 12 を先頭に足す（F/G 相当）" <|
+                Expect.equal [ 4, 12, 16, 19 ] (VoicingPreset.withBassLowest (Just 4) [ 0, 12, 16, 19 ])
+        , test "withBassLowest は最低音が既にベースの音名なら差し替えない" <|
             \_ ->
-                Expect.equal [ -10, 0, 4, 7 ] (VoicingPreset.withBassLowest (Just 2) [ 0, 4, 7 ])
+                Expect.equal [ 4, 12, 19 ] (VoicingPreset.withBassLowest (Just 4) [ 0, 4, 12, 19 ])
+        , test "withBassLowest はハイブリッド（F/G 相当）でもベースを差し替える" <|
+            \_ ->
+                Expect.equal [ 2, 12, 16, 19 ] (VoicingPreset.withBassLowest (Just 2) [ 0, 12, 16, 19 ])
+        , test "withBassLowest は 5 度ベースも差し替える" <|
+            \_ ->
+                Expect.equal [ 7, 12, 16, 19 ] (VoicingPreset.withBassLowest (Just 7) [ 0, 12, 16, 19 ])
+        , test "withBassLowest は上の和音より高いベースならルートより下に置く" <|
+            \_ ->
+                Expect.equal [ -7, 3, 7 ] (VoicingPreset.withBassLowest (Just 5) [ 0, 3, 7 ])
+        , test "Maj の Closed / Drop2 / Wide に Just 4 を掛けると最低音がベースの音名で重複しない" <|
+            \_ ->
+                let
+                    results =
+                        List.map (\( _, shape ) -> VoicingPreset.withBassLowest (Just 4) (VoicingPreset.offsetsFor Maj shape)) VoicingPreset.shapes
+
+                    ok offsets =
+                        (List.minimum offsets |> Maybe.map (\o -> modBy 12 o == 4) |> Maybe.withDefault False)
+                            && (List.length offsets == Set.size (Set.fromList offsets))
+                in
+                Expect.equal True (List.all ok results)
         ]

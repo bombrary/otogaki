@@ -169,9 +169,10 @@ offsetsFor quality shape =
                    )
 
 
-{-| スラッシュコードのベース音（`GuitarForm.bassInterval` の結果）を offsets の最低音にする。
-ベースと同じ音名の音があれば、その最も低いものを軸にして、それより低い音を 1 オクターブずつ上げる。
-無ければ（ハイブリッドコード）`interval - 12` を先頭に足す。ベース指定が無ければそのまま返す。
+{-| スラッシュコードのベース音（`GuitarForm.bassInterval` の結果）で、offsets のベース位置（offset 0 の低いルート）を差し替える。
+上の和音はそのまま残す。残りの最低音がベースと同じ音名なら、ベースは既に最低音にあるので差し替えない。
+最低音がベースより上ならベースをそのまま、そうでなければルートより下（interval - 12）に置く。
+ベース指定が無ければそのまま返す。
 -}
 withBassLowest : Maybe Int -> List Int -> List Int
 withBassLowest maybeInterval offsets =
@@ -180,20 +181,37 @@ withBassLowest maybeInterval offsets =
             offsets
 
         Just interval ->
-            case List.filter (\o -> modBy 12 o == modBy 12 interval) offsets |> List.minimum of
-                Just pivot ->
-                    offsets
-                        |> List.map (liftAtLeast pivot)
-                        |> List.sort
+            let
+                others =
+                    List.filter (\o -> o /= 0) offsets
 
-                Nothing ->
-                    (interval - 12) :: offsets
+                withBass =
+                    case List.minimum others of
+                        Nothing ->
+                            [ interval ]
+
+                        Just lowest ->
+                            if modBy 12 lowest == modBy 12 interval then
+                                others
+
+                            else if lowest > interval then
+                                interval :: others
+
+                            else
+                                (interval - 12) :: others
+            in
+            withBass |> List.sort |> dedupSorted
 
 
-liftAtLeast : Int -> Int -> Int
-liftAtLeast floor o =
-    if o < floor then
-        liftAtLeast floor (o + 12)
+dedupSorted : List Int -> List Int
+dedupSorted sorted =
+    case sorted of
+        a :: b :: rest ->
+            if a == b then
+                dedupSorted (b :: rest)
 
-    else
-        o
+            else
+                a :: dedupSorted (b :: rest)
+
+        _ ->
+            sorted
