@@ -1,6 +1,7 @@
 module Data.Note exposing (Note, mergeAdjacent, pitchLabel, splitAt)
 
 import Data.Chord.Format as Format
+import Data.PitchName as PitchName exposing (OctaveConvention)
 import Data.Time exposing (Ticks)
 
 
@@ -14,15 +15,15 @@ type alias Note =
 
 
 {-| MIDIピッチ番号を「E 2」のような音名＋オクターブ番号の表記に変換する。ノートホバーツールチップで使う。
-keyRow（View/PianoRoll.elm）と同じ pitch // 12 - 1 のオクターブ換算を使い、音名部分は Data.Chord.Format.pitchName に委ねる。
+オクターブ換算は Data.PitchName に集約し、音名部分は Data.Chord.Format.pitchName に委ねる。
 -}
-pitchLabel : Int -> String
-pitchLabel pitch =
-    Format.pitchName False (modBy 12 pitch) ++ " " ++ String.fromInt (pitch // 12 - 1)
+pitchLabel : OctaveConvention -> Int -> String
+pitchLabel convention pitch =
+    Format.pitchName False (modBy 12 pitch) ++ " " ++ String.fromInt (PitchName.octave convention pitch)
 
 
 {-| 指定 tick でノートを前半・後半に分割する純関数。tick が note.start〜note.start+duration の開区間に完全に含まれない（境界一致も含む）場合は
- Nothing。後半はこの時点では元の note と同じ id を持つまま返す（新規 id の発行は呼び出し側の責任。Data.Project.cutNotesAt が行う）。
+Nothing。後半はこの時点では元の note と同じ id を持つまま返す（新規 id の発行は呼び出し側の責任。Data.Project.cutNotesAt が行う）。
 -}
 splitAt : Ticks -> Note -> Maybe ( Note, Note )
 splitAt tick note =

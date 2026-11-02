@@ -1,6 +1,7 @@
 module View.Keyboard exposing (Config, view)
 
 import Data.Help as Help
+import Data.PitchName as PitchName exposing (OctaveConvention)
 import Html exposing (Html, button, div, span, text)
 import Html.Attributes as HA
 import Html.Events as HE
@@ -37,8 +38,8 @@ whiteKeyWidth =
     34
 
 
-view : Config msg -> Set Int -> Bool -> Html msg
-view config highlighted open =
+view : Config msg -> OctaveConvention -> Set Int -> Bool -> Html msg
+view config convention highlighted open =
     div [ HA.style "margin-top" "1rem" ]
         (button (Style.toggleButton open ++ [ HE.onClick config.toggled ])
             [ text
@@ -51,7 +52,7 @@ view config highlighted open =
             ]
             :: Style.helpButton { onClick = config.openedHelp Help.KeyboardPlay, label = "鍵盤" }
             :: (if open then
-                    [ pianoView config highlighted
+                    [ pianoView config convention highlighted
                     , div [ HA.style "font-size" "0.75rem", HA.style "color" Theme.onSurfaceVariant, HA.style "margin-top" "0.3rem" ]
                         [ text "キーボードでも弾ける: Z〜M = C3〜B3 / Q,2,W,3,E,R,5,T,6,Y,7,U = C4〜B4 / I = C5（選択中のトラックの音色）" ]
                     ]
@@ -69,8 +70,8 @@ whitesBelow pitch =
         |> List.length
 
 
-pianoView : Config msg -> Set Int -> Html msg
-pianoView config highlighted =
+pianoView : Config msg -> OctaveConvention -> Set Int -> Html msg
+pianoView config convention highlighted =
     let
         pitches =
             List.range lowPitch highPitch
@@ -106,7 +107,7 @@ pianoView config highlighted =
                 ]
                 [ text
                     (if modBy 12 pitch == 0 then
-                        "C" ++ String.fromInt (pitch // 12 - 1)
+                        "C" ++ String.fromInt (PitchName.octave convention pitch)
 
                      else
                         ""

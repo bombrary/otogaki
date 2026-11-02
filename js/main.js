@@ -3,6 +3,7 @@ import { clearRefBuffer, debugRawContext, ensureAudio, handleCommand, loadRefAud
 import * as audioCache from "./audioCache.js";
 import { loadProject, saveProject } from "./storage.js";
 import { loadTheme, saveTheme } from "./theme.js";
+import { loadOctave, saveOctave } from "./octave.js";
 
 // Elm 起動前に同期的に data-theme を付与し、テーマのフラッシュ（一瞬ライトで描画されてからダークに切り替わる）を避ける。
 const initialTheme = loadTheme();
@@ -20,6 +21,7 @@ const app = Elm.Main.init({
   flags: {
     ...(loadProject() ?? {}),
     theme: initialTheme,
+    octave: loadOctave() ?? "",
     // 幅だけでは iPad Pro 横向きなど幅の広いタッチ端末を拾えないので、pointer:coarse も併用する。
     pointerCoarse: window.matchMedia("(pointer: coarse)").matches || isIPadOS,
   },
@@ -70,6 +72,10 @@ app.ports.clearRefAudio.subscribe(() => {
 app.ports.setTheme.subscribe((theme) => {
   document.documentElement.setAttribute("data-theme", theme);
   saveTheme(theme);
+});
+
+app.ports.setOctaveConvention.subscribe((value) => {
+  saveOctave(value);
 });
 
 app.ports.copyToClipboard.subscribe((text) => {

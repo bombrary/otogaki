@@ -43,6 +43,7 @@ module View.PianoRoll exposing
 import Array exposing (Array)
 import Data.ChordTrack exposing (ChordSpan, TokenKey, TokenSpan)
 import Data.Note exposing (Note)
+import Data.PitchName as PitchName exposing (OctaveConvention)
 import Data.Time
 import Html exposing (Html)
 import Html.Attributes as HA
@@ -142,6 +143,7 @@ type alias ViewOpts =
     , chordSpans : List ChordSpan
     , tool : Tool
     , cutGuideTicks : Maybe Int
+    , octaveConvention : OctaveConvention
     , isNarrow : Bool
     , gridTouchAction : String
     , scrollLock : Bool
@@ -530,7 +532,7 @@ view config opts =
         , leftRows =
             List.range minPitch maxPitch
                 |> List.reverse
-                |> List.map (keyRow config opts.highlightedPitch opts.scalePitchClasses opts.isNarrow)
+                |> List.map (keyRow config opts.octaveConvention opts.highlightedPitch opts.scalePitchClasses opts.isNarrow)
         , body = gridView config opts
         , footer = Just { left = velLabelCell, cell = velocityLaneView config opts }
         }
@@ -621,7 +623,7 @@ chordTrackView config opts previewNotes chordLane =
                 , leftRows =
                     List.range minPitch maxPitch
                         |> List.reverse
-                        |> List.map (keyRow config opts.highlightedPitch opts.scalePitchClasses opts.isNarrow)
+                        |> List.map (keyRow config opts.octaveConvention opts.highlightedPitch opts.scalePitchClasses opts.isNarrow)
                 , body = chordTrackNoteGrid config opts notes
                 , footer =
                     Just
@@ -752,8 +754,8 @@ velLabelCell =
         [ Html.text "Vel" ]
 
 
-keyRow : Config msg -> Set Int -> Set Int -> Bool -> Int -> Html msg
-keyRow config highlightedPitch scalePitchClasses isNarrow pitch =
+keyRow : Config msg -> OctaveConvention -> Set Int -> Set Int -> Bool -> Int -> Html msg
+keyRow config convention highlightedPitch scalePitchClasses isNarrow pitch =
     let
         isBlack =
             List.member (modBy 12 pitch) [ 1, 3, 6, 8, 10 ]
@@ -766,7 +768,7 @@ keyRow config highlightedPitch scalePitchClasses isNarrow pitch =
 
         label =
             if modBy 12 pitch == 0 then
-                "C" ++ String.fromInt (pitch // 12 - 1)
+                "C" ++ String.fromInt (PitchName.octave convention pitch)
 
             else
                 ""

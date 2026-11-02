@@ -4,6 +4,7 @@ import Data.Chord exposing (Chord)
 import Data.Chord.Format as ChordFormat
 import Data.Chord.Parser as ChordParser
 import Data.GuitarForm as GuitarForm
+import Data.PitchName exposing (OctaveConvention)
 import Data.Voicing exposing (anchorPitch)
 import Data.VoicingPreset as VoicingPreset
 import Html exposing (Html, button, div, input, span, text)
@@ -33,6 +34,7 @@ type alias Config msg =
     , changedDraft : String -> msg
     , submittedDraft : msg
     , selectedTab : Tab -> msg
+    , octaveConvention : OctaveConvention
     }
 
 
@@ -222,6 +224,7 @@ candidateCard config rootPitch candidate =
         , div [ HA.style "font-size" "0.7rem", HA.style "color" Theme.onSurfaceVariant ]
             [ text ("最大 " ++ String.fromInt (GuitarForm.maxFret candidate.form) ++ "F") ]
         , Fretboard.viewReadOnly
+            config.octaveConvention
             { hoveredFret = config.hoveredFret, unhoveredFret = config.unhoveredFret }
             (Fretboard.formData rootPitch candidate.form)
         ]

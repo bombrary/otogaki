@@ -2,6 +2,7 @@ module View.Fretboard exposing (Config, HoverConfig, formData, view, viewReadOnl
 
 import Data.Chord.Format as Format
 import Data.GuitarForm as GuitarForm
+import Data.PitchName as PitchName exposing (OctaveConvention)
 import Html exposing (Html, div, text)
 import Html.Attributes as HA
 import Html.Events as HE
@@ -65,11 +66,6 @@ type alias HoverConfig msg =
     }
 
 
-pitchName : Int -> String
-pitchName pitch =
-    Format.pitchName False pitch ++ String.fromInt (pitch // 12 - 1)
-
-
 {-| Form をこのモジュールの view/viewReadOnly に渡す入力に変換する。rootPitch は呼び出し側が
 （通常 `Data.Voicing.anchorPitch + modBy 12 chord.root` で）求める。`View.ChordEditor.formToFretboardData`
 と `Data.StrumExpand.voicingFromForm` の両方がこれと同じロジックを使う。
@@ -91,22 +87,22 @@ formData rootPitch form =
 同じ音に到達できる位置のうち、`picks` に入っている位置だけを青丸で、他を灰丸で描画する。
 弦は高音側（最後の要素）が上に来るように反転して描画する（TAB 譜・鍵盤の上下と向きを揃えるため）。
 -}
-view : Config msg -> HoverConfig msg -> { rootPitch : Int, selected : Set Int, picks : GuitarForm.StringPicks } -> Html msg
-view config hover sel =
-    viewInternal (Just config) hover sel
+view : Config msg -> OctaveConvention -> HoverConfig msg -> { rootPitch : Int, selected : Set Int, picks : GuitarForm.StringPicks } -> Html msg
+view config convention hover sel =
+    viewInternal (Just config) convention hover sel
 
 
 {-| クリック不可の読み取り専用表示。config を Nothing にした viewInternal を呼ぶだけ。
 「今のコードの運指を見せるだけ」の用途（コード進行サイドバーの現在コード表示、FormPicker の候補カード）に使う。
 読み取り専用でもホバー（hover）は常時有効。
 -}
-viewReadOnly : HoverConfig msg -> { rootPitch : Int, selected : Set Int, picks : GuitarForm.StringPicks } -> Html msg
+viewReadOnly : OctaveConvention -> HoverConfig msg -> { rootPitch : Int, selected : Set Int, picks : GuitarForm.StringPicks } -> Html msg
 viewReadOnly =
     viewInternal Nothing
 
 
-viewInternal : Maybe (Config msg) -> HoverConfig msg -> { rootPitch : Int, selected : Set Int, picks : GuitarForm.StringPicks } -> Html msg
-viewInternal config hover { rootPitch, selected, picks } =
+viewInternal : Maybe (Config msg) -> OctaveConvention -> HoverConfig msg -> { rootPitch : Int, selected : Set Int, picks : GuitarForm.StringPicks } -> Html msg
+viewInternal config convention hover { rootPitch, selected, picks } =
     let
         indexedStrings =
             List.indexedMap Tuple.pair GuitarForm.openStrings
@@ -120,21 +116,21 @@ viewInternal config hover { rootPitch, selected, picks } =
         , HA.style "padding" "0.4rem"
         , HA.style "display" "inline-block"
         ]
-        (List.map (stringRow config hover rootPitch selected picks) displayStrings
+        (List.map (stringRow config convention hover rootPitch selected picks) displayStrings
             ++ [ markerRow, numberRow ]
         )
 
 
-stringRow : Maybe (Config msg) -> HoverConfig msg -> Int -> Set Int -> GuitarForm.StringPicks -> ( Int, Int ) -> Html msg
-stringRow config hover rootPitch selected picks ( stringIndex, openPitch ) =
+stringRow : Maybe (Config msg) -> OctaveConvention -> HoverConfig msg -> Int -> Set Int -> GuitarForm.StringPicks -> ( Int, Int ) -> Html msg
+stringRow config convention hover rootPitch selected picks ( stringIndex, openPitch ) =
     div [ HA.style "display" "flex" ]
-        (openLabelCell openPitch
+        (openLabelCell convention openPitch
             :: List.map (fretCell config hover rootPitch selected picks stringIndex openPitch) (List.range 0 fretCount)
         )
 
 
-openLabelCell : Int -> Html msg
-openLabelCell openPitch =
+openLabelCell : OctaveConvention -> Int -> Html msg
+openLabelCell convention openPitch =
     div
         [ HA.style "width" (String.fromInt openLabelWidth ++ "px")
         , HA.style "height" (String.fromInt rowHeight ++ "px")
@@ -147,7 +143,7 @@ openLabelCell openPitch =
         , HA.style "color" Theme.onSurfaceVariant
         , HA.style "user-select" "none"
         ]
-        [ text (pitchName openPitch) ]
+        [ text (PitchName.label convention openPitch) ]
 
 
 fretCell : Maybe (Config msg) -> HoverConfig msg -> Int -> Set Int -> GuitarForm.StringPicks -> Int -> Int -> Int -> Html msg

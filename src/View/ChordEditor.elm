@@ -6,6 +6,7 @@ import Data.ChordSheet
 import Data.ChordTrack exposing (ChordCell, ChordTrack, TokenKind(..))
 import Data.GuitarForm as GuitarForm
 import Data.Help as Help
+import Data.PitchName exposing (OctaveConvention)
 import Data.StrumExpand
 import Data.StrumPattern
 import Data.Timeline exposing (Timeline)
@@ -23,7 +24,8 @@ import View.VoicingKeyboard as VoicingKeyboard
 
 
 type alias Config msg =
-    { changedChordSheetText : String -> msg
+    { octaveConvention : OctaveConvention
+    , changedChordSheetText : String -> msg
     , convertToTrack : msg
     , changedRhythm : Maybe String -> msg
     , toggledVoicingEnabled : msg
@@ -70,8 +72,8 @@ type alias VoicingState =
 （直前コードとの比較・保持弦/移動弦の色分け）はしない。単一コードの運指のみ。
 `hover` は Fretboard のホバー（常時有効）をそのまま中継するだけ。
 -}
-currentChordView : Timeline -> Int -> VoicingState -> ChordTrack -> Fretboard.HoverConfig msg -> Html msg
-currentChordView timeline playheadTicks voicingState track hover =
+currentChordView : OctaveConvention -> Timeline -> Int -> VoicingState -> ChordTrack -> Fretboard.HoverConfig msg -> Html msg
+currentChordView convention timeline playheadTicks voicingState track hover =
     let
         activeChord =
             Data.ChordTrack.resolved timeline track
@@ -95,7 +97,7 @@ currentChordView timeline playheadTicks voicingState track hover =
                 [ div Style.headingText [ text ("🎸 " ++ Format.format { preferFlat = False } chord) ]
                 , case Data.StrumExpand.formFor voicingState.guitarFormEnabled effectiveVoicings chord of
                     Just form ->
-                        Fretboard.viewReadOnly hover (formToFretboardData chord form)
+                        Fretboard.viewReadOnly convention hover (formToFretboardData chord form)
 
                     Nothing ->
                         div [ HA.style "font-size" "0.75rem", HA.style "color" Theme.onSurfaceVariant ] [ text "（運指を決められません）" ]
@@ -162,7 +164,7 @@ view config timeline playheadTicks voicingState track =
                     )
                 ]
             ]
-        , currentChordView timeline playheadTicks voicingState track { hoveredFret = config.hoveredFretCell, unhoveredFret = config.unhoveredFretCell }
+        , currentChordView config.octaveConvention timeline playheadTicks voicingState track { hoveredFret = config.hoveredFretCell, unhoveredFret = config.unhoveredFretCell }
         , voicingsSection config voicingState (Data.ChordTrack.cells timeline track)
         ]
 
@@ -374,6 +376,7 @@ voicingEditorView config voicingState index voicing =
                 , draggedWhilePressingOffset = config.draggedWhilePressingVoicingOffset
                 , releasedOffsetPress = config.releasedVoicingOffsetPress
                 }
+                config.octaveConvention
                 { hoveredKey = config.hoveredFretCell, unhoveredKey = config.unhoveredFretCell }
                 { rootPitch = rootPitch
                 , displayRootPitch = displayRootPitch
@@ -384,6 +387,7 @@ voicingEditorView config voicingState index voicing =
                 { pressedFret = config.pressedFretboardCell index
                 , doubleClickedFret = config.doubleClickedFretboardCell index
                 }
+                config.octaveConvention
                 { hoveredFret = config.hoveredFretCell, unhoveredFret = config.unhoveredFretCell }
                 { rootPitch = rootPitch, selected = selected, picks = voicing.stringPicks }
             ]

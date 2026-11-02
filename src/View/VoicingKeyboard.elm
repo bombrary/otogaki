@@ -1,6 +1,7 @@
 module View.VoicingKeyboard exposing (Config, HoverConfig, containerHeight, maxPitch, minPitch, rowHeight, scrollId, view)
 
 import Data.Chord.Format as Format
+import Data.PitchName as PitchName exposing (OctaveConvention)
 import Html exposing (Html, div, text)
 import Html.Attributes as HA
 import Html.Events as HE
@@ -134,8 +135,8 @@ laneMoveDecoder =
             )
 
 
-view : Config msg -> HoverConfig msg -> { rootPitch : Int, displayRootPitch : Int, placed : Set Int, selectedPitches : Set Int } -> Html msg
-view config hover { rootPitch, displayRootPitch, placed, selectedPitches } =
+view : Config msg -> OctaveConvention -> HoverConfig msg -> { rootPitch : Int, displayRootPitch : Int, placed : Set Int, selectedPitches : Set Int } -> Html msg
+view config convention hover { rootPitch, displayRootPitch, placed, selectedPitches } =
     let
         pitches =
             List.range minPitch maxPitch |> List.reverse
@@ -150,15 +151,15 @@ view config hover { rootPitch, displayRootPitch, placed, selectedPitches } =
         ]
         [ div [ HA.style "display" "flex" ]
             [ div [ HA.style "flex" ("0 0 " ++ String.fromInt keyColumnWidth ++ "px") ]
-                (List.map (keyRow config displayRootPitch rootPitch) pitches)
+                (List.map (keyRow config convention displayRootPitch rootPitch) pitches)
             , div [ HA.style "flex" ("0 0 " ++ String.fromInt laneWidth ++ "px"), HA.style "position" "relative" ]
                 (List.map (laneRow config hover displayRootPitch rootPitch placed selectedPitches) pitches)
             ]
         ]
 
 
-keyRow : Config msg -> Int -> Int -> Int -> Html msg
-keyRow config displayRootPitch rootPitch pitch =
+keyRow : Config msg -> OctaveConvention -> Int -> Int -> Int -> Html msg
+keyRow config convention displayRootPitch rootPitch pitch =
     let
         isBlack =
             not (isWhite pitch)
@@ -171,7 +172,7 @@ keyRow config displayRootPitch rootPitch pitch =
 
         label =
             if modBy 12 pitch == 0 then
-                "C" ++ String.fromInt (pitch // 12 - 1)
+                "C" ++ String.fromInt (PitchName.octave convention pitch)
 
             else
                 ""

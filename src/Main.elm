@@ -19,6 +19,7 @@ import Data.Help as Help
 import Data.Key
 import Data.Meter
 import Data.Note
+import Data.PitchName as PitchName exposing (OctaveConvention)
 import Data.Project exposing (Project)
 import Data.ReferenceAudio
 import Data.StrumExpand
@@ -251,6 +252,7 @@ type alias Model =
     , tool : PianoRoll.Tool
     , cutGuideTicks : Maybe Int
     , themePreference : Theme.ThemePreference
+    , octaveConvention : OctaveConvention
     , guideKeyOverride : Maybe Data.Key.Key
     , windowSize : { width : Int, height : Int }
     , pointerCoarse : Bool
@@ -519,6 +521,7 @@ type Msg
     | LongPressFired Int
     | ExpiredTouchTooltip Int
     | ClickedThemeToggle
+    | ClickedOctaveConventionToggle
     | ChangedGuideKeyTonic String
     | ChangedGuideKeyMode String
     | DismissedToast Int
@@ -555,6 +558,13 @@ init flags =
                 |> Result.toMaybe
                 |> Maybe.andThen Theme.themeFromString
                 |> Maybe.withDefault Theme.SystemTheme
+
+        restoredOctaveConvention =
+            flags
+                |> Decode.decodeValue (Decode.field "octave" Decode.string)
+                |> Result.toMaybe
+                |> Maybe.map PitchName.fromString
+                |> Maybe.withDefault PitchName.default
 
         restoredPointerCoarse =
             flags
@@ -647,6 +657,7 @@ init flags =
       , tool = PianoRoll.PointerTool
       , cutGuideTicks = Nothing
       , themePreference = restoredThemePreference
+      , octaveConvention = restoredOctaveConvention
       , guideKeyOverride = Nothing
       , windowSize = { width = 0, height = 0 }
       , pointerCoarse = restoredPointerCoarse
@@ -3498,6 +3509,20 @@ updateCore msg model =
             in
             ( { model | themePreference = nextPreference }
             , Ports.setTheme (Theme.themeToString nextPreference)
+            )
+
+        ClickedOctaveConventionToggle ->
+            let
+                next =
+                    case model.octaveConvention of
+                        PitchName.C3Is60 ->
+                            PitchName.C4Is60
+
+                        PitchName.C4Is60 ->
+                            PitchName.C3Is60
+            in
+            ( { model | octaveConvention = next }
+            , Ports.setOctaveConvention (PitchName.toString next)
             )
 
         ChangedGuideKeyTonic raw ->
@@ -6379,6 +6404,16 @@ dragMove pos d model =
 
 {-| 手動テーマトグルのボタンラベル。現在の状態を絵文字付きで表示する。
 -}
+octaveToggleLabel : OctaveConvention -> String
+octaveToggleLabel convention =
+    case convention of
+        PitchName.C3Is60 ->
+            "音名 C3=60"
+
+        PitchName.C4Is60 ->
+            "音名 C4=60"
+
+
 themeToggleLabel : Theme.ThemePreference -> String
 themeToggleLabel pref =
     case pref of
@@ -6443,7 +6478,8 @@ view model =
             [ style "display" "flex", style "align-items" "center", style "gap" "0.3rem" ]
 
         chordEditorConfig =
-            { changedChordSheetText = ChangedChordSheetText
+            { octaveConvention = model.octaveConvention
+            , changedChordSheetText = ChangedChordSheetText
             , convertToTrack = ClickedConvertChords
             , changedRhythm = ChangedChordRhythm
             , toggledVoicingEnabled = ToggledVoicingEnabled
@@ -6692,7 +6728,8 @@ view model =
             }
 
         pianoRollOpts =
-            { notes = trackNotes model
+            { octaveConvention = model.octaveConvention
+            , notes = trackNotes model
             , selectedIds = model.selectedNoteIds
             , playheadTicks = model.playheadTicks
             , sections = sectionSpans model.project
@@ -6980,6 +7017,7 @@ view model =
                 , toggled = ToggledKeyboard
                 , openedHelp = OpenedHelpTopic
                 }
+                model.octaveConvention
                 (Set.union model.highlightedPitches model.heldKeyPitches)
                 model.showKeyboard
 
@@ -7201,6 +7239,14 @@ view model =
                            ]
                     )
                     [ text (themeToggleLabel model.themePreference) ]
+                , button
+                    (Style.baseButton
+                        ++ [ onClick ClickedOctaveConventionToggle
+                           , Html.Attributes.title "中央ド（MIDI 60）の表記。Studio One / Cubase は C3、国際式は C4。音や MIDI の内容は変わらない"
+                           , Html.Attributes.attribute "aria-label" "音名のオクターブ表記切替"
+                           ]
+                    )
+                    [ text (octaveToggleLabel model.octaveConvention) ]
                 ]
 
         loopOnlyGroup =
@@ -7609,6 +7655,7 @@ view model =
                                 , changedDraft = ChangedFormPickerDraft
                                 , submittedDraft = SubmittedFormPickerDraft
                                 , selectedTab = SelectedFormPickerTab
+                                , octaveConvention = model.octaveConvention
                                 }
                                 { draft = fp.draft, tab = fp.tab, editor = editorHtml }
                             ]
@@ -7737,7 +7784,7 @@ ghostContent model =
                                             Data.Timeline.ticksToBarBeat n.start (Data.Project.timeline model.project)
                                     in
                                     Just
-                                        (Data.Note.pitchLabel n.pitch
+                                        (Data.Note.pitchLabel model.octaveConvention n.pitch
                                             ++ "  "
                                             ++ String.fromInt barBeat.bar
                                             ++ ":"
@@ -7825,7 +7872,7 @@ hoveredNoteTooltipView model timeline =
                 ]
                 (div []
                     [ text
-                        (Data.Note.pitchLabel h.note.pitch
+                        (Data.Note.pitchLabel model.octaveConvention h.note.pitch
                             ++ ": 長さ: "
                             ++ Data.Time.formatDuration h.note.duration
                             ++ " | ベロシティー: "
@@ -7949,7 +7996,7 @@ hoveredFretCellTooltipView model =
                 , style "white-space" "nowrap"
                 ]
                 [ text
-                    (Data.Note.pitchLabel h.pitch
+                    (Data.Note.pitchLabel model.octaveConvention h.pitch
                         ++ " ・ "
                         ++ ChordFormat.degreeLabel h.interval
                         ++ " (+"
