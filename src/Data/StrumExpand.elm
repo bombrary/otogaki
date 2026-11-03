@@ -226,6 +226,8 @@ expand cfg guitarFormEnabled voicings pattern resolvedChords =
 リズムパターン（ストローク）が設定されていれば `expand` で展開し、なければ各コード区間を
 そのまま1本のロングノートにする。内部では `expand`（コードトラック展開の中核）と同じロジックを
 共有しているので、プレビューと実際の再生・MIDI化の結果は常に一致する。
+`track.octaveShift` のシフトもここで掛ける（`Codec.Performance.chordEvents` と同じ出口処理）ので、
+ピアノロールのプレビュー・「→ MIDIトラック化」・再生の音域が揃う。
 -}
 previewNotes : Bool -> List Voicing -> Timeline -> Data.ChordTrack.ChordTrack -> List Note
 previewNotes guitarFormEnabled voicings timeline track =
@@ -253,4 +255,4 @@ previewNotes guitarFormEnabled voicings timeline track =
     in
     rawNotes
         |> List.indexedMap
-            (\i n -> { id = i, pitch = n.pitch, start = n.start, duration = n.duration, velocity = n.velocity })
+            (\i n -> { id = i, pitch = Data.ChordTrack.shiftPitch track.octaveShift n.pitch, start = n.start, duration = n.duration, velocity = n.velocity })

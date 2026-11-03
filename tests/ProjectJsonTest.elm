@@ -175,4 +175,52 @@ suite =
                     |> Decode.decodeValue ProjectJson.decoder
                     |> Result.map (.chordTrack >> .rhythm)
                     |> Expect.equal (Ok Nothing)
+        , describe "chordTrack.octaveShift"
+            [ test "encode → decode で保持される" <|
+                \_ ->
+                    let
+                        project =
+                            Data.Project.demo
+
+                        ct =
+                            project.chordTrack
+                    in
+                    { project | chordTrack = { ct | octaveShift = -1 } }
+                        |> ProjectJson.encode
+                        |> Decode.decodeValue ProjectJson.decoder
+                        |> Result.map (.chordTrack >> .octaveShift)
+                        |> Expect.equal (Ok -1)
+            , test "欠落した旧データは 1（C3 帯）になる" <|
+                \_ ->
+                    chordTrackJson []
+                        |> Decode.decodeValue ProjectJson.decoder
+                        |> Result.map (.chordTrack >> .octaveShift)
+                        |> Expect.equal (Ok 1)
+            , test "範囲外は clamp される" <|
+                \_ ->
+                    chordTrackJson [ ( "octaveShift", Encode.int 5 ) ]
+                        |> Decode.decodeValue ProjectJson.decoder
+                        |> Result.map (.chordTrack >> .octaveShift)
+                        |> Expect.equal (Ok 2)
+            ]
+        ]
+
+
+chordTrackJson : List ( String, Encode.Value ) -> Encode.Value
+chordTrackJson extra =
+    Encode.object
+        [ ( "version", Encode.int 1 )
+        , ( "name", Encode.string "旧曲" )
+        , ( "bpm", Encode.int 120 )
+        , ( "tracks", Encode.list identity [] )
+        , ( "nextId", Encode.int 1 )
+        , ( "chordTrack"
+          , Encode.object
+                ([ ( "text", Encode.string "C | G" )
+                 , ( "instrument", Encode.string "piano" )
+                 , ( "muted", Encode.bool False )
+                 ]
+                    ++ extra
+                )
+          )
         ]

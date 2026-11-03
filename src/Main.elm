@@ -408,6 +408,7 @@ type Msg
     | ChangedChordSheetText String
     | ChangedChordInstrument String
     | ChangedChordRhythm (Maybe String)
+    | ChangedChordOctaveShift Int
     | ToggledChordMute
     | ToggledVoicingEnabled
     | ToggledGuitarFormEnabled
@@ -1322,6 +1323,9 @@ describeMsg msg =
 
         ChangedChordRhythm _ ->
             "コードリズム変更"
+
+        ChangedChordOctaveShift _ ->
+            "コード音域変更"
 
         AppliedDrumPreset _ ->
             "ドラムパターン適用"
@@ -4452,7 +4456,7 @@ updateCore msg model =
 
         PressedVoicingKeyboardKey pitch ->
             ( model
-            , Ports.toAudio (Performance.encodePreviewNote (Data.Track.instrumentToString model.project.chordTrack.instrument) pitch)
+            , Ports.toAudio (Performance.encodePreviewNote (Data.Track.instrumentToString model.project.chordTrack.instrument) (Data.ChordTrack.shiftPitch model.project.chordTrack.octaveShift pitch))
             )
 
         GotKey k ->
@@ -4981,6 +4985,11 @@ updateCore msg model =
             , Cmd.none
             )
 
+        ChangedChordOctaveShift n ->
+            ( { model | project = Data.Project.updateChordTrack (\ct -> { ct | octaveShift = Data.ChordTrack.clampOctaveShift n }) model.project }
+            , Cmd.none
+            )
+
         ToggledChordMute ->
             let
                 newMuted =
@@ -5122,7 +5131,7 @@ updateCore msg model =
                                     , origPicks = currentPicks
                                     }
                           }
-                        , Ports.toAudio (Performance.encodePreviewNote (Data.Track.instrumentToString model1.project.chordTrack.instrument) pitch)
+                        , Ports.toAudio (Performance.encodePreviewNote (Data.Track.instrumentToString model1.project.chordTrack.instrument) (Data.ChordTrack.shiftPitch model1.project.chordTrack.octaveShift pitch))
                         )
                 in
                 if pos.isTouch then
@@ -5170,7 +5179,7 @@ updateCore msg model =
                             , origPicks = currentPicks
                             }
                   }
-                , Ports.toAudio (Performance.encodePreviewNote (Data.Track.instrumentToString model1.project.chordTrack.instrument) pitch)
+                , Ports.toAudio (Performance.encodePreviewNote (Data.Track.instrumentToString model1.project.chordTrack.instrument) (Data.ChordTrack.shiftPitch model1.project.chordTrack.octaveShift pitch))
                 )
 
         DoubleClickedVoicingOffset index pitch ->
@@ -5232,7 +5241,7 @@ updateCore msg model =
                             model.project
                     , voicingSelectedOffsets = Set.singleton offset
                   }
-                , Ports.toAudio (Performance.encodePreviewNote (Data.Track.instrumentToString model.project.chordTrack.instrument) pitch)
+                , Ports.toAudio (Performance.encodePreviewNote (Data.Track.instrumentToString model.project.chordTrack.instrument) (Data.ChordTrack.shiftPitch model.project.chordTrack.octaveShift pitch))
                 )
 
             else if Set.member pick currentPicks then
@@ -5292,7 +5301,13 @@ updateCore msg model =
                         instrument =
                             Data.Track.instrumentToString model.project.chordTrack.instrument
                     in
-                    ( model, Cmd.batch (List.map (Ports.toAudio << Performance.encodePreviewNote instrument) pitches) )
+                    ( model
+                    , Cmd.batch
+                        (List.map
+                            (Ports.toAudio << Performance.encodePreviewNote instrument << Data.ChordTrack.shiftPitch model.project.chordTrack.octaveShift)
+                            pitches
+                        )
+                    )
 
                 Nothing ->
                     ( model, Cmd.none )
@@ -6494,6 +6509,7 @@ view model =
             , changedChordSheetText = ChangedChordSheetText
             , convertToTrack = ClickedConvertChords
             , changedRhythm = ChangedChordRhythm
+            , changedOctaveShift = ChangedChordOctaveShift
             , toggledVoicingEnabled = ToggledVoicingEnabled
             , toggledGuitarFormEnabled = ToggledGuitarFormEnabled
             , clickedCopyText = ClickedCopyChordText
@@ -6902,6 +6918,8 @@ view model =
                     , Style.divider
                     , span [ style "font-size" "0.75rem", style "color" Theme.onSurfaceVariant ] [ text "リズム:" ]
                     , ChordEditor.rhythmSelect chordEditorConfig model.project.chordTrack.rhythm
+                    , span [ style "font-size" "0.75rem", style "color" Theme.onSurfaceVariant ] [ text "音域:" ]
+                    , ChordEditor.octaveShiftSelect chordEditorConfig model.octaveConvention model.project.chordTrack.octaveShift
                     ]
                 , if model.chordProgressionModalOpen then
                     ChordEditor.progressionEditorView chordEditorConfig (Maybe.withDefault "" model.chordSheetDraft) model.chordSheetError

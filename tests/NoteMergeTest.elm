@@ -22,7 +22,7 @@ baseProject notes =
     , bpm = 120.0
     , tracks =
         [ { id = 1, name = "track", instrument = Piano, muted = False, volume = 100, kind = NoteTrack notes } ]
-    , chordTrack = { text = "", instrument = Piano, muted = False, volume = 100, rhythm = Nothing }
+    , chordTrack = { text = "", instrument = Piano, muted = False, volume = 100, rhythm = Nothing, octaveShift = 0 }
     , sections = [ { id = 2, name = "s", lengthBars = 4, memo = "", key = Key.default, meter = Meter.default } ]
     , scraps = []
     , referenceAudio = ReferenceAudio.empty

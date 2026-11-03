@@ -39,7 +39,7 @@ suite =
                     project =
                         { demo
                             | tracks = []
-                            , chordTrack = { text = "C | G | Am | F", instrument = Piano, muted = False, volume = 100, rhythm = Nothing }
+                            , chordTrack = { text = "C | G | Am | F", instrument = Piano, muted = False, volume = 100, rhythm = Nothing, octaveShift = 0 }
                         }
 
                     demo =
@@ -59,4 +59,58 @@ suite =
                 Performance.toEvents Project.empty
                     |> List.any (\e -> e.trackId == Performance.metronomeTrackId)
                     |> Expect.equal False
+        , describe "コード進行の音域（octaveShift）"
+            [ test "octaveShift 0 と 1 では pitch だけが +12 で他は同じ（ベタうち・ストローク両方）" <|
+                \_ ->
+                    let
+                        eventsWith rhythm shift =
+                            Performance.toEvents (chordProject rhythm shift)
+                                |> List.filter (\e -> e.trackId == Data.ChordTrack.trackId)
+
+                        check rhythm =
+                            let
+                                a =
+                                    eventsWith rhythm 0
+
+                                b =
+                                    eventsWith rhythm 1
+                            in
+                            Expect.all
+                                [ \_ -> Expect.greaterThan 0 (List.length a)
+                                , \_ -> Expect.equal (List.length a) (List.length b)
+                                , \_ -> Expect.equal (List.map (\e -> e.pitch + 12) a) (List.map .pitch b)
+                                , \_ -> Expect.equal (List.map (\e -> { e | pitch = 0 }) a) (List.map (\e -> { e | pitch = 0 }) b)
+                                ]
+                                ()
+                    in
+                    Expect.all [ \_ -> check Nothing, \_ -> check (Just "8ビート") ] ()
+            , test "octaveShift 2 でも pitch は 127 を超えない" <|
+                \_ ->
+                    Performance.toEvents (chordProject Nothing 2)
+                        |> List.filter (\e -> e.trackId == Data.ChordTrack.trackId)
+                        |> List.all (\e -> e.pitch <= 127 && e.pitch >= 0)
+                        |> Expect.equal True
+            , test "通常トラックのノートは octaveShift に影響されない" <|
+                \_ ->
+                    let
+                        pitchesOf shift =
+                            Performance.toEvents (chordProject Nothing shift)
+                                |> List.filter (\e -> e.trackId == 1)
+                                |> List.map .pitch
+                    in
+                    Expect.equal (pitchesOf 0) (pitchesOf 2)
+            ]
         ]
+
+
+chordProject : Maybe String -> Int -> Project.Project
+chordProject rhythm shift =
+    { emptyProject
+        | tracks = [ { id = 1, name = "t", instrument = Piano, muted = False, volume = 100, kind = NoteTrack [ note 1 0 240 ] } ]
+        , chordTrack = { text = "C | G | Am | F", instrument = Piano, muted = False, volume = 100, rhythm = rhythm, octaveShift = shift }
+    }
+
+
+emptyProject : Project.Project
+emptyProject =
+    Project.empty

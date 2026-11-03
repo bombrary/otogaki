@@ -8,16 +8,18 @@ module Data.ChordTrack exposing
     , TokenSpan
     , barCount
     , cells
+    , clampOctaveShift
     , empty
     , moveTokens
     , namedSpans
     , removeTokens
     , resolved
+    , shiftPitch
     , stripComments
+    , toPlainText
     , tokenKeyAtTicks
     , tokenKeysInTickRange
     , tokenSpans
-    , toPlainText
     , trackId
     , transpose
     , transposeBars
@@ -37,12 +39,17 @@ import Dict exposing (Dict)
 import Set exposing (Set)
 
 
+{-| `octaveShift` はコード進行の構成音を置くオクターブのずらし量（-1 / 0 / 1 / 2）。
+構成音帯は 48〜59 + 12 × octaveShift。既定 1 で MIDI 60〜71（Studio One 表記 C3 帯）。
+`anchorPitch` とボイシング辞書は動かさず、出口（`Performance.chordEvents` と試聴）でだけ足す。
+-}
 type alias ChordTrack =
     { text : String
     , instrument : Instrument
     , muted : Bool
     , volume : Int
     , rhythm : Maybe String
+    , octaveShift : Int
     }
 
 
@@ -61,7 +68,20 @@ empty =
     , muted = False
     , volume = 100
     , rhythm = Nothing
+    , octaveShift = 1
     }
+
+
+clampOctaveShift : Int -> Int
+clampOctaveShift n =
+    clamp -1 2 n
+
+
+{-| 出口で pitch にオクターブのずらしを足す。MIDI の範囲 0〜127 に収める。
+-}
+shiftPitch : Int -> Int -> Int
+shiftPitch octaveShift pitch =
+    clamp 0 127 (pitch + 12 * octaveShift)
 
 
 type TokenKind
@@ -409,7 +429,7 @@ tokenKeyAtTicks timeline ticks track =
 {-| 選択トークンを deltaBars 小節移動してテキストを再構成する。選択が単一小節に収まり、移動先の小節が空でない場合は移動先の既存トークンと
 入れ替える（swap、長さを保持）。それ以外（複数小節にまたがる選択、または移動先が空）は末尾追記（上書き・
 押し出しなし）。% と = は移動前の resolvedName（実コード名）に展開して移動する（参照先が変わる事故を防ぐため。
-swapで押し出される側も同様に展開する）。_ と Err はリテラルのまま。変更した小節だけ正規化再構成し、無変更の
+swapで押し出される側も同様に展開する）。\_ と Err はリテラルのまま。変更した小節だけ正規化再構成し、無変更の
 小節は生チャンク（コメント含む）を温存する。deltaBars が 0（クランプ後も含む）または選択が空なら何もしない。
 -}
 moveTokens : Timeline -> Int -> Set TokenKey -> ChordTrack -> { track : ChordTrack, movedKeys : Set TokenKey }
@@ -830,6 +850,7 @@ toPlainText track =
 再整形されたチャンクの先頭小節が空文字列の場合は行頭に `"| "` を前置する。`Data.ChordSheet.parse` の
 `barsOfContent` は行頭・行末の空チャンクをそれぞれ1つ落とす仕様（`toSheetText.barsLine` と同じ規約）なので、
 これを省くと再パース時に空小節が1つ失われる。4小節超の行のみ小節内の空白が正規化される点に注意。
+
 -}
 wrapBarLines : Int -> String -> String
 wrapBarLines barsPerLine text =

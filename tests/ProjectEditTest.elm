@@ -28,7 +28,7 @@ baseProject sections notes chordText =
     , tracks =
         [ { id = 1, name = "track", instrument = Piano, muted = False, volume = 100, kind = NoteTrack notes }
         ]
-    , chordTrack = { text = chordText, instrument = Piano, muted = False, volume = 100, rhythm = Nothing }
+    , chordTrack = { text = chordText, instrument = Piano, muted = False, volume = 100, rhythm = Nothing, octaveShift = 0 }
     , sections = sections
     , scraps = []
     , referenceAudio = ReferenceAudio.empty

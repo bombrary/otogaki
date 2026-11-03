@@ -1,4 +1,4 @@
-module View.ChordEditor exposing (Config, progressionEditorView, rhythmSelect, view, voicingEditorView)
+module View.ChordEditor exposing (Config, octaveShiftSelect, progressionEditorView, rhythmSelect, view, voicingEditorView)
 
 import Data.Chord exposing (Chord)
 import Data.Chord.Format as Format
@@ -6,7 +6,7 @@ import Data.ChordSheet
 import Data.ChordTrack exposing (ChordCell, ChordTrack, TokenKind(..))
 import Data.GuitarForm as GuitarForm
 import Data.Help as Help
-import Data.PitchName exposing (OctaveConvention)
+import Data.PitchName as PitchName exposing (OctaveConvention)
 import Data.StrumExpand
 import Data.StrumPattern
 import Data.Timeline exposing (Timeline)
@@ -28,6 +28,7 @@ type alias Config msg =
     , changedChordSheetText : String -> msg
     , convertToTrack : msg
     , changedRhythm : Maybe String -> msg
+    , changedOctaveShift : Int -> msg
     , toggledVoicingEnabled : msg
     , toggledGuitarFormEnabled : msg
     , clickedCopyText : msg
@@ -417,6 +418,34 @@ rhythmSelect config rhythm =
                     option [ HA.value p.name, HA.selected (rhythm == Just p.name) ] [ text p.name ]
                 )
                 Data.StrumPattern.patterns
+        )
+
+
+{-| コード進行の構成音を置くオクターブ。ラベルは構成音帯の下端（48 + 12 × shift）を現在の音名表記で出す。
+-}
+octaveShiftSelect : Config msg -> OctaveConvention -> Int -> Html msg
+octaveShiftSelect config convention octaveShift =
+    select
+        [ HE.onInput (\raw -> config.changedOctaveShift (String.toInt raw |> Maybe.withDefault 1))
+        , HA.title "コード進行の構成音を置く高さ。再生・WAV・MIDI 書出・ピアノロールのプレビュー・試聴に効く。ボイシング鍵盤と指板の表示は基準のまま"
+        ]
+        (List.map
+            (\shift ->
+                option
+                    [ HA.value (String.fromInt shift), HA.selected (shift == octaveShift) ]
+                    [ text
+                        (PitchName.label convention (48 + 12 * shift)
+                            ++ "〜"
+                            ++ (if shift == 1 then
+                                    "（標準）"
+
+                                else
+                                    ""
+                               )
+                        )
+                    ]
+            )
+            [ -1, 0, 1, 2 ]
         )
 
 

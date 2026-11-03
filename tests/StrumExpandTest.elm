@@ -504,13 +504,14 @@ previewNotesRhythmSuite =
                         Data.Timeline.fromSections { minBars = 1 } [ { id = 1, name = "A", lengthBars = 1, memo = "", key = Key.default, meter = Meter.default } ]
 
                     track =
-                        { text = "C", instrument = Piano, muted = False, volume = 100, rhythm = Nothing }
+                        { text = "C", instrument = Piano, muted = False, volume = 100, rhythm = Nothing, octaveShift = 0 }
 
                     notes =
                         StrumExpand.previewNotes True [] timeline track
 
                     distinctStarts =
-                        notes |> List.map .start
+                        notes
+                            |> List.map .start
                             |> List.foldl
                                 (\s acc ->
                                     if List.member s acc then
@@ -522,6 +523,30 @@ previewNotesRhythmSuite =
                                 []
                 in
                 Expect.equal 1 (List.length distinctStarts)
+        , test "octaveShift = 1 なら pitch だけが +12 され、start / duration / velocity / 件数は変わらない" <|
+            \_ ->
+                let
+                    timeline =
+                        Data.Timeline.fromSections { minBars = 1 } [ { id = 1, name = "A", lengthBars = 1, memo = "", key = Key.default, meter = Meter.default } ]
+
+                    base =
+                        { text = "C | G", instrument = Piano, muted = False, volume = 100, rhythm = Just "8ビート", octaveShift = 0 }
+
+                    notes0 =
+                        StrumExpand.previewNotes True [] timeline base
+
+                    notes1 =
+                        StrumExpand.previewNotes True [] timeline { base | octaveShift = 1 }
+
+                    strip n =
+                        { start = n.start, duration = n.duration, velocity = n.velocity }
+                in
+                Expect.all
+                    [ \_ -> Expect.equal (List.map (\n -> n.pitch + 12) notes0) (List.map .pitch notes1)
+                    , \_ -> Expect.equal (List.map strip notes0) (List.map strip notes1)
+                    , \_ -> Expect.greaterThan 0 (List.length notes0)
+                    ]
+                    ()
         , test "rhythm = Just \"8ビート\" ならストロークで複数ステップに分かれて鳴る" <|
             \_ ->
                 let
@@ -529,13 +554,14 @@ previewNotesRhythmSuite =
                         Data.Timeline.fromSections { minBars = 1 } [ { id = 1, name = "A", lengthBars = 1, memo = "", key = Key.default, meter = Meter.default } ]
 
                     track =
-                        { text = "C", instrument = Piano, muted = False, volume = 100, rhythm = Just "8ビート" }
+                        { text = "C", instrument = Piano, muted = False, volume = 100, rhythm = Just "8ビート", octaveShift = 0 }
 
                     notes =
                         StrumExpand.previewNotes True [] timeline track
 
                     distinctStarts =
-                        notes |> List.map .start
+                        notes
+                            |> List.map .start
                             |> List.foldl
                                 (\s acc ->
                                     if List.member s acc then

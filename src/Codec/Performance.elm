@@ -1,6 +1,7 @@
 module Codec.Performance exposing
     ( Event
     , Loop
+    , contentEndTicks
     , encodeLoadInstruments
     , encodePlay
     , encodePreviewNote
@@ -12,7 +13,6 @@ module Codec.Performance exposing
     , encodeSetVolume
     , encodeStop
     , encodeUpdateEvents
-    , contentEndTicks
     , metronomeEvents
     , metronomeTrackId
     , toEvents
@@ -339,7 +339,7 @@ chordEvents guitarFormEnabled voicings timeline chordTrack =
                             (\n ->
                                 { ticks = n.start
                                 , durationTicks = n.duration
-                                , pitch = n.pitch
+                                , pitch = Data.ChordTrack.shiftPitch chordTrack.octaveShift n.pitch
                                 , velocity = n.velocity
                                 , instrument = instrument
                                 , trackId = -1
@@ -358,7 +358,7 @@ chordEvents guitarFormEnabled voicings timeline chordTrack =
                                 (\pitch ->
                                     { ticks = ev.startTicks
                                     , durationTicks = ev.durationTicks
-                                    , pitch = pitch
+                                    , pitch = Data.ChordTrack.shiftPitch chordTrack.octaveShift pitch
                                     , velocity = 90
                                     , instrument = instrument
                                     , trackId = -1

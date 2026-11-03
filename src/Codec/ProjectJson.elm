@@ -143,6 +143,7 @@ encodeChordTrack ct =
                 Nothing ->
                     Encode.null
           )
+        , ( "octaveShift", Encode.int ct.octaveShift )
         ]
 
 
@@ -399,7 +400,7 @@ scrapDecoder =
 
 chordTrackDecoder : Decode.Decoder ChordTrack
 chordTrackDecoder =
-    Decode.map5 ChordTrack
+    Decode.map6 ChordTrack
         (Decode.field "text" Decode.string)
         (Decode.field "instrument" instrumentDecoder)
         (Decode.field "muted" Decode.bool)
@@ -411,6 +412,11 @@ chordTrackDecoder =
         (Decode.oneOf
             [ Decode.field "rhythm" (Decode.nullable Decode.string)
             , Decode.succeed Nothing
+            ]
+        )
+        (Decode.oneOf
+            [ Decode.field "octaveShift" Decode.int |> Decode.map Data.ChordTrack.clampOctaveShift
+            , Decode.succeed 1
             ]
         )
 

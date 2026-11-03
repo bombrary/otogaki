@@ -177,6 +177,7 @@ demo =
         , muted = False
         , volume = 100
         , rhythm = Nothing
+        , octaveShift = 1
         }
     , sections =
         [ { id = 2, name = "Aメロ", lengthBars = 4, memo = "", key = Data.Key.default, meter = Data.Meter.default }
