@@ -747,20 +747,10 @@ ghostNoteGroups model timeline =
 
         chordGroup =
             if Set.member -1 model.project.ghostTrackIds then
-                [ Data.ChordTrack.resolved timeline model.project.chordTrack
-                    |> List.concatMap
-                        (\ev ->
-                            Data.Chord.toPitchesWith (effectiveVoicings model) ev.chord
-                                |> List.map
-                                    (\p ->
-                                        { id = -1
-                                        , pitch = p
-                                        , start = ev.startTicks
-                                        , duration = ev.durationTicks
-                                        , velocity = 80
-                                        }
-                                    )
-                        )
+                -- ピアノロールのコードプレビュー・「→ MIDIトラック化」と同じ previewNotes を使う。
+                -- octaveShift・リズムプリセット・ギターフォームが全部反映されるので、ゴーストと実際に鳴る音がずれない。
+                [ Data.StrumExpand.previewNotes model.project.guitarFormEnabled (effectiveVoicings model) timeline model.project.chordTrack
+                    |> List.map (\n -> { n | id = -1 })
                 ]
 
             else
