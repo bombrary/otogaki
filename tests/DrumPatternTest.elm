@@ -68,7 +68,7 @@ notesFor presetName =
     case DrumPattern.byName presetName of
         Just pattern ->
             DrumPattern.apply
-                { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar, mode = DrumPattern.Replace, lanes = DrumPattern.AllLanes }
+                { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar, mode = DrumPattern.Replace, lanes = DrumPattern.AllLanes, velocity = DrumPattern.FromPattern }
                 pattern
                 baseProject
                 |> notesInTrack 1
@@ -146,7 +146,7 @@ suite =
 
                         result =
                             DrumPattern.apply
-                                { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar * 2, mode = DrumPattern.Replace, lanes = DrumPattern.AllLanes }
+                                { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar * 2, mode = DrumPattern.Replace, lanes = DrumPattern.AllLanes, velocity = DrumPattern.FromPattern }
                                 pattern
                                 baseProject
 
@@ -167,7 +167,7 @@ suite =
 
                         result =
                             DrumPattern.apply
-                                { trackId = 1, startTicks = 0, endTicks = oneBeat, mode = DrumPattern.Replace, lanes = DrumPattern.AllLanes }
+                                { trackId = 1, startTicks = 0, endTicks = oneBeat, mode = DrumPattern.Replace, lanes = DrumPattern.AllLanes, velocity = DrumPattern.FromPattern }
                                 pattern
                                 baseProject
 
@@ -192,7 +192,7 @@ suite =
 
                         result =
                             DrumPattern.apply
-                                { trackId = 1, startTicks = offset, endTicks = offset + Data.Time.ticksPerBar, mode = DrumPattern.Replace, lanes = DrumPattern.AllLanes }
+                                { trackId = 1, startTicks = offset, endTicks = offset + Data.Time.ticksPerBar, mode = DrumPattern.Replace, lanes = DrumPattern.AllLanes, velocity = DrumPattern.FromPattern }
                                 pattern
                                 baseProject
                     in
@@ -208,7 +208,7 @@ suite =
 
                         result =
                             DrumPattern.apply
-                                { trackId = 1, startTicks = 500, endTicks = 500, mode = DrumPattern.Replace, lanes = DrumPattern.AllLanes }
+                                { trackId = 1, startTicks = 500, endTicks = 500, mode = DrumPattern.Replace, lanes = DrumPattern.AllLanes, velocity = DrumPattern.FromPattern }
                                 pattern
                                 existingProject
                     in
@@ -226,7 +226,7 @@ suite =
 
                         result =
                             DrumPattern.apply
-                                { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar, mode = DrumPattern.Replace, lanes = DrumPattern.AllLanes }
+                                { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar, mode = DrumPattern.Replace, lanes = DrumPattern.AllLanes, velocity = DrumPattern.FromPattern }
                                 pattern
                                 project
                     in
@@ -242,7 +242,7 @@ suite =
 
                         result =
                             DrumPattern.apply
-                                { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar, mode = DrumPattern.ReplaceLanes, lanes = DrumPattern.AllLanes }
+                                { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar, mode = DrumPattern.ReplaceLanes, lanes = DrumPattern.AllLanes, velocity = DrumPattern.FromPattern }
                                 pattern
                                 project
                     in
@@ -254,7 +254,7 @@ suite =
                             patternOrEmpty "8ビート"
 
                         cfg =
-                            { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar, mode = DrumPattern.ReplaceLanes, lanes = DrumPattern.AllLanes }
+                            { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar, mode = DrumPattern.ReplaceLanes, lanes = DrumPattern.AllLanes, velocity = DrumPattern.FromPattern }
 
                         once =
                             DrumPattern.apply cfg pattern baseProject
@@ -280,7 +280,7 @@ suite =
 
                         result =
                             DrumPattern.apply
-                                { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar, mode = DrumPattern.Merge, lanes = DrumPattern.AllLanes }
+                                { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar, mode = DrumPattern.Merge, lanes = DrumPattern.AllLanes, velocity = DrumPattern.FromPattern }
                                 pattern
                                 project
 
@@ -299,7 +299,7 @@ suite =
 
                         result =
                             DrumPattern.apply
-                                { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar, mode = DrumPattern.Merge, lanes = DrumPattern.AllLanes }
+                                { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar, mode = DrumPattern.Merge, lanes = DrumPattern.AllLanes, velocity = DrumPattern.FromPattern }
                                 pattern
                                 project
                     in
@@ -315,7 +315,7 @@ suite =
 
                         result =
                             DrumPattern.apply
-                                { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar, mode = DrumPattern.Merge, lanes = DrumPattern.AllLanes }
+                                { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar, mode = DrumPattern.Merge, lanes = DrumPattern.AllLanes, velocity = DrumPattern.FromPattern }
                                 pattern
                                 project
                     in
@@ -333,7 +333,7 @@ suite =
 
                         result =
                             DrumPattern.apply
-                                { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar, mode = DrumPattern.ReplaceLanes, lanes = DrumPattern.OnlyLanes (Set.fromList [ 36 ]) }
+                                { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar, mode = DrumPattern.ReplaceLanes, lanes = DrumPattern.OnlyLanes (Set.fromList [ 36 ]), velocity = DrumPattern.FromPattern }
                                 pattern
                                 project
 
@@ -354,7 +354,7 @@ suite =
 
                         result =
                             DrumPattern.apply
-                                { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar, mode = DrumPattern.ReplaceLanes, lanes = DrumPattern.OnlyLanes Set.empty }
+                                { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar, mode = DrumPattern.ReplaceLanes, lanes = DrumPattern.OnlyLanes Set.empty, velocity = DrumPattern.FromPattern }
                                 pattern
                                 baseProject
                     in
@@ -375,7 +375,7 @@ suite =
 
                         result =
                             DrumPattern.apply
-                                { trackId = 1, startTicks = 0, endTicks = 1440 * 3, mode = DrumPattern.Replace, lanes = DrumPattern.AllLanes }
+                                { trackId = 1, startTicks = 0, endTicks = 1440 * 3, mode = DrumPattern.Replace, lanes = DrumPattern.AllLanes, velocity = DrumPattern.FromPattern }
                                 pattern
                                 project
 
@@ -398,7 +398,7 @@ suite =
 
                         result =
                             DrumPattern.apply
-                                { trackId = 1, startTicks = 0, endTicks = 1440, mode = DrumPattern.Replace, lanes = DrumPattern.AllLanes }
+                                { trackId = 1, startTicks = 0, endTicks = 1440, mode = DrumPattern.Replace, lanes = DrumPattern.AllLanes, velocity = DrumPattern.FromPattern }
                                 pattern
                                 project
 
@@ -423,7 +423,7 @@ suite =
 
                         result =
                             DrumPattern.apply
-                                { trackId = 1, startTicks = 0, endTicks = 1440 * 2 + 1920 * 2, mode = DrumPattern.Replace, lanes = DrumPattern.AllLanes }
+                                { trackId = 1, startTicks = 0, endTicks = 1440 * 2 + 1920 * 2, mode = DrumPattern.Replace, lanes = DrumPattern.AllLanes, velocity = DrumPattern.FromPattern }
                                 pattern
                                 project
 
@@ -447,7 +447,7 @@ suite =
 
                         result =
                             DrumPattern.apply
-                                { trackId = 1, startTicks = 0, endTicks = 2400, mode = DrumPattern.Replace, lanes = DrumPattern.AllLanes }
+                                { trackId = 1, startTicks = 0, endTicks = 2400, mode = DrumPattern.Replace, lanes = DrumPattern.AllLanes, velocity = DrumPattern.FromPattern }
                                 pattern
                                 project
 
@@ -460,4 +460,36 @@ suite =
                         ]
                         ()
             ]
+        , describe "velocity の扱い"
+            [ test "Flat では書き込まれた全ノートの velocity が 100 になる" <|
+                \_ ->
+                    applyWith DrumPattern.Flat
+                        |> List.all (\n -> n.velocity == 100)
+                        |> Expect.equal True
+            , test "FromPattern では強弱が残る（velocity が 2 種類以上）" <|
+                \_ ->
+                    applyWith DrumPattern.FromPattern
+                        |> List.map .velocity
+                        |> Set.fromList
+                        |> Set.size
+                        |> (\n -> Expect.equal True (n > 1))
+            , test "Flat でもノート数と pitch/start は FromPattern と同じ" <|
+                \_ ->
+                    let
+                        key n =
+                            ( n.pitch, n.start )
+                    in
+                    Expect.equal
+                        (applyWith DrumPattern.FromPattern |> List.map key)
+                        (applyWith DrumPattern.Flat |> List.map key)
+            ]
         ]
+
+
+applyWith : DrumPattern.Velocity -> List { id : Int, pitch : Int, start : Int, duration : Int, velocity : Int }
+applyWith velocity =
+    DrumPattern.apply
+        { trackId = 1, startTicks = 0, endTicks = Data.Time.ticksPerBar, mode = DrumPattern.Replace, lanes = DrumPattern.AllLanes, velocity = velocity }
+        (patternOrEmpty "8ビート")
+        baseProject
+        |> notesInTrack 1

@@ -1,4 +1,4 @@
-module Data.DrumPattern exposing (Lanes(..), Mode(..), Pattern, apply, byName, patterns)
+module Data.DrumPattern exposing (Lanes(..), Mode(..), Pattern, Velocity(..), apply, byName, flatVelocity, patterns)
 
 import Data.Meter
 import Data.Project exposing (Project)
@@ -163,12 +163,28 @@ cyclesHelp timeline startTicks endTicks guard acc =
             cyclesHelp timeline (startTicks + barLength) endTicks (guard + 1) ({ start = startTicks, length = cycleLength } :: acc)
 
 
+{-| プリセット適用時のベロシティの扱い。
+`FromPattern` は打点ごとの強弱をそのまま使い、`Flat` は全打点を `flatVelocity` にする。
+-}
+type Velocity
+    = FromPattern
+    | Flat
+
+
+{-| 手で置いたドラムノートと同じベロシティ。
+-}
+flatVelocity : Int
+flatVelocity =
+    100
+
+
 apply :
     { trackId : Int
     , startTicks : Int
     , endTicks : Int
     , mode : Mode
     , lanes : Lanes
+    , velocity : Velocity
     }
     -> Pattern
     -> Project
@@ -180,6 +196,14 @@ apply cfg pattern project =
 
         touchedPitches =
             activeHits |> List.map .pitch |> Set.fromList
+
+        hitVelocity h =
+            case cfg.velocity of
+                FromPattern ->
+                    h.velocity
+
+                Flat ->
+                    flatVelocity
 
         placedHits =
             cycles (Data.Project.timeline project) cfg.startTicks cfg.endTicks
@@ -195,7 +219,7 @@ apply cfg pattern project =
                                     -- サイクルの長さ（その拍子の小節長、末尾は endTicks で切り詰められている）を超える
                                     -- ステップは落とす。例：3/4（12ステップ）なら step 12〜15 はここで消える。
                                     if tick < cycle.start + cycle.length then
-                                        Just { pitch = h.pitch, start = tick, velocity = h.velocity }
+                                        Just { pitch = h.pitch, start = tick, velocity = hitVelocity h }
 
                                     else
                                         Nothing

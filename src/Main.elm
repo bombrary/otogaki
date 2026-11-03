@@ -187,6 +187,7 @@ type alias Model =
     , drumFillBars : Int
     , drumApplyTarget : DrumApplyTarget
     , drumApplyMode : Data.DrumPattern.Mode
+    , drumApplyVelocity : Bool
     , drumApplyExcludedLanes : Set Int
     , refOffsetInput : String
     , refLoaded : Bool
@@ -441,6 +442,7 @@ type Msg
     | ChangedDrumFillBars String
     | ChangedDrumApplyTarget String
     | ChangedDrumApplyMode String
+    | ToggledDrumApplyVelocity
     | ToggledDrumLane Int
     | ClickedExportMidi
     | ClickedExportWav
@@ -592,6 +594,7 @@ init flags =
       , drumFillBars = 4
       , drumApplyTarget = ApplySection
       , drumApplyMode = Data.DrumPattern.ReplaceLanes
+      , drumApplyVelocity = False
       , drumApplyExcludedLanes = Set.empty
       , refOffsetInput = String.fromInt project.referenceAudio.offsetMs
       , refLoaded = False
@@ -5656,6 +5659,12 @@ updateCore msg model =
                                 , endTicks = range.endTicks
                                 , mode = model.drumApplyMode
                                 , lanes = Data.DrumPattern.OnlyLanes (Set.diff rowPitches model.drumApplyExcludedLanes)
+                                , velocity =
+                                    if model.drumApplyVelocity then
+                                        Data.DrumPattern.FromPattern
+
+                                    else
+                                        Data.DrumPattern.Flat
                                 }
                                 pattern
                                 model.project
@@ -5686,6 +5695,9 @@ updateCore msg model =
 
         ChangedDrumApplyMode raw ->
             ( { model | drumApplyMode = drumApplyModeFromString raw }, Cmd.none )
+
+        ToggledDrumApplyVelocity ->
+            ( { model | drumApplyVelocity = not model.drumApplyVelocity }, Cmd.none )
 
         ToggledDrumLane pitch ->
             ( { model
@@ -6979,6 +6991,7 @@ view model =
                                         , changedFillBars = ChangedDrumFillBars
                                         , changedApplyTarget = ChangedDrumApplyTarget
                                         , changedApplyMode = ChangedDrumApplyMode
+                                        , toggledApplyVelocity = ToggledDrumApplyVelocity
                                         , toggledLane = ToggledDrumLane
                                         , pressedRuler = PressedRuler
                                         , pressedLoopHandle = PressedLoopHandle
@@ -7001,6 +7014,7 @@ view model =
                                         , rubberBand = rubberBandRect model.rubberBand
                                         , applyTargetValue = drumApplyTargetToString model.drumApplyTarget
                                         , applyModeValue = drumApplyModeToString model.drumApplyMode
+                                        , applyVelocity = model.drumApplyVelocity
                                         , rangeLabel = drumRangeLabel model
                                         , excludedLanes = model.drumApplyExcludedLanes
                                         }

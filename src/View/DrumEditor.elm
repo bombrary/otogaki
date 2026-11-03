@@ -4,7 +4,7 @@ import Data.DrumPattern
 import Data.Help as Help
 import Data.Note exposing (Note)
 import Data.Time
-import Html exposing (Html, button, div, option, select, span, text)
+import Html exposing (Html, button, div, input, label, option, select, span, text)
 import Html.Attributes as HA
 import Html.Events
 import Json.Decode as Decode
@@ -27,6 +27,7 @@ type alias Config msg =
     , changedFillBars : String -> msg
     , changedApplyTarget : String -> msg
     , changedApplyMode : String -> msg
+    , toggledApplyVelocity : msg
     , toggledLane : Int -> msg
     , pressedRuler : { offsetX : Float, clientX : Float, shift : Bool, isTouch : Bool } -> msg
     , pressedLoopHandle : Bool -> Float -> msg
@@ -52,6 +53,7 @@ type alias ViewOpts =
     , rubberBand : Maybe { x : Float, y : Float, w : Float, h : Float }
     , applyTargetValue : String
     , applyModeValue : String
+    , applyVelocity : Bool
     , rangeLabel : String
     , excludedLanes : Set Int
     }
@@ -287,6 +289,16 @@ view config opts =
             , span [ HA.style "font-size" "0.85rem", HA.style "color" Theme.onSurfaceVariant ] [ text opts.rangeLabel ]
             , span [ HA.style "font-size" "0.85rem" ] [ text " 適用方法: " ]
             , labeledSelect config.changedApplyMode "差し替え＝そのパターンが使う楽器の行だけ範囲内を消してから書く（何度押しても同じ結果）／重ねる＝既存を消さずに足す／全消去して差し替え＝楽器を問わず範囲内を全部消してから書く" opts.applyModeValue modeOptions
+            , label
+                [ HA.style "font-size" "0.85rem"
+                , HA.style "display" "flex"
+                , HA.style "align-items" "center"
+                , HA.style "gap" "0.2rem"
+                , HA.title "ON＝プリセットが持つ打点ごとの強弱（アクセント）を書き込む。OFF＝全部 100 で書き込む（手で置いたノートと同じ）"
+                ]
+                [ input [ HA.type_ "checkbox", HA.checked opts.applyVelocity, Html.Events.onClick config.toggledApplyVelocity ] []
+                , text "強弱"
+                ]
             , Style.helpButton { onClick = config.openedHelp Help.DrumApply, label = "ドラムの適用先・適用方法" }
             ]
         , div [ HA.style "display" "flex", HA.style "gap" "0.4rem", HA.style "align-items" "center", HA.style "flex-wrap" "wrap", HA.style "margin-top" "0.3rem" ]
